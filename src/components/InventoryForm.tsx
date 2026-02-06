@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { InventoryRecord, NewInventoryRecord } from '@/lib/supabase';
+import type { Entry, NewEntry } from '@/lib/supabase';
 import { Save, X, Hash, FileText, Boxes, Package, Ruler, User, Calendar } from 'lucide-react';
 
 interface InventoryFormProps {
