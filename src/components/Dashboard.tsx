@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, InventoryRecord, NewInventoryRecord } from '@/lib/supabase';
+import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { InventoryForm } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
