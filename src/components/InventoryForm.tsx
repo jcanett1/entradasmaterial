@@ -1,15 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import type { Entry, NewEntry } from '@/lib/supabase';
 import {
-  Save,
-  X,
   Hash,
   FileText,
-  Boxes,
-  Package,
-  Ruler,
-  User,
-  Calendar,
 } from 'lucide-react';
 
 interface InventoryFormProps {
@@ -32,7 +25,6 @@ export function InventoryForm({
     total_boxes: 0,
     unit_of_measure: '',
     registered_by: userEmail,
-    registered_at: new Date().toISOString(),
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -46,7 +38,6 @@ export function InventoryForm({
         total_boxes: record.total_boxes,
         unit_of_measure: record.unit_of_measure,
         registered_by: record.registered_by,
-        registered_at: record.registered_at,
       });
     }
   }, [record]);
@@ -112,8 +103,8 @@ export function InventoryForm({
     <form onSubmit={handleSubmit} className="p-6 space-y-5">
       {/* Part Number */}
       <div>
-        <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-1.5">
-          <Hash className="h-4 w-4 text-gray-400" />
+        <label className="flex items-center gap-2 text-sm font-medium mb-1.5">
+          <Hash className="h-4 w-4" />
           Part Number *
         </label>
         <input
@@ -124,15 +115,12 @@ export function InventoryForm({
             errors.part_number ? 'border-red-500' : 'border-gray-300'
           }`}
         />
-        {errors.part_number && (
-          <p className="mt-1 text-sm text-red-500">{errors.part_number}</p>
-        )}
       </div>
 
       {/* Description */}
       <div>
-        <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-1.5">
-          <FileText className="h-4 w-4 text-gray-400" />
+        <label className="flex items-center gap-2 text-sm font-medium mb-1.5">
+          <FileText className="h-4 w-4" />
           Descripción *
         </label>
         <textarea
