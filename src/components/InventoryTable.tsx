@@ -1,15 +1,20 @@
 import React from 'react';
-import type { Entry, NewEntry } from '@/lib/supabase';
+import type { Entry } from '@/lib/supabase';
 import { Edit2, Trash2, Package, Loader2 } from 'lucide-react';
 
 interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
   onEdit: (record: Entry) => void;
-  onDelete: (id: number) => void; // ✅
+  onDelete: (id: string) => void; // ✅ UUID
 }
 
-export function InventoryTable({ records, loading, onEdit, onDelete }: InventoryTableProps) {
+export function InventoryTable({
+  records,
+  loading,
+  onEdit,
+  onDelete,
+}: InventoryTableProps) {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
@@ -24,7 +29,9 @@ export function InventoryTable({ records, loading, onEdit, onDelete }: Inventory
       <div className="flex flex-col items-center justify-center py-16">
         <Package className="h-16 w-16 text-gray-300 mb-4" />
         <p className="text-gray-500 text-lg">No hay registros</p>
-        <p className="text-gray-400 text-sm mt-1">Crea tu primer registro de inventario</p>
+        <p className="text-gray-400 text-sm mt-1">
+          Crea tu primer registro de inventario
+        </p>
       </div>
     );
   }
@@ -34,87 +41,85 @@ export function InventoryTable({ records, loading, onEdit, onDelete }: Inventory
       <table className="w-full">
         <thead>
           <tr className="bg-gray-50 border-b border-gray-200">
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
               Part Number
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
               Descripción
             </th>
-            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
               Unidades
             </th>
-            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
               Cajas
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
               Unidad de Medida
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
               Registrado Por
             </th>
-            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
               Fecha de Registro
             </th>
-            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">
               Acciones
             </th>
           </tr>
         </thead>
+
         <tbody className="divide-y divide-gray-100">
           {records.map((record) => (
-            <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+            <tr key={record.id} className="hover:bg-gray-50">
               <td className="px-4 py-4">
-                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-mono text-sm font-medium">
+                <span className="inline-flex px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-mono text-sm">
                   {record.part_number}
                 </span>
               </td>
+
               <td className="px-4 py-4">
-                <p className="text-gray-900 text-sm max-w-xs truncate" title={record.description}>
+                <p
+                  className="text-gray-900 text-sm max-w-xs truncate"
+                  title={record.description}
+                >
                   {record.description}
                 </p>
               </td>
+
               <td className="px-4 py-4 text-center">
-                <span className="text-gray-900 font-medium">
-                  {record.total_units.toLocaleString()}
-                </span>
+                {record.total_units.toLocaleString()}
               </td>
+
               <td className="px-4 py-4 text-center">
-                <span className="text-gray-900 font-medium">
-                  {record.total_boxes.toLocaleString()}
-                </span>
+                {record.total_boxes.toLocaleString()}
               </td>
+
               <td className="px-4 py-4">
-                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
+                <span className="px-2 py-1 rounded-full bg-gray-100 text-xs">
                   {record.unit_of_measure}
                 </span>
               </td>
-              <td className="px-4 py-4">
-                <p className="text-gray-600 text-sm">{record.registered_by}</p>
+
+              <td className="px-4 py-4 text-sm text-gray-600">
+                {record.registered_by}
               </td>
-              <td className="px-4 py-4">
-                <p className="text-gray-600 text-sm">
-                  {new Date(record.registered_at).toLocaleDateString('es-ES', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </p>
+
+              <td className="px-4 py-4 text-sm text-gray-600">
+                {new Date(record.registered_at).toLocaleString('es-ES')}
               </td>
+
               <td className="px-4 py-4">
-                <div className="flex items-center justify-center gap-2">
+                <div className="flex justify-center gap-2">
                   <button
                     onClick={() => onEdit(record)}
-                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    title="Editar"
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
                   >
                     <Edit2 className="h-4 w-4" />
                   </button>
+
                   <button
                     onClick={() => onDelete(record.id)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Eliminar"
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
