@@ -134,12 +134,12 @@ export function InventoryForm({
         />
       </div>
 
-    {/* Cantidad / Pallets */}
+    {/* UNIDADES / CAJAS */}
 <div className="grid grid-cols-2 gap-4">
   {/* UNIDADES */}
   <div>
     <label className="block text-sm font-medium mb-1.5">
-      Cantidad
+      UNIDADES
     </label>
     <input
       type="number"
@@ -154,7 +154,7 @@ export function InventoryForm({
   {/* CAJAS */}
   <div>
     <label className="block text-sm font-medium mb-1.5">
-      Pallets
+      CAJAS
     </label>
     <input
       type="number"
