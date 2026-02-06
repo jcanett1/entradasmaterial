@@ -14,10 +14,10 @@ import { saveAs } from 'file-saver';
 export function Dashboard() {
   const { user, signOut } = useAuth();
   const [records, setRecords] = useState<Entry[]>([]);
-  const [filteredRecords, setFilteredRecords] = useState<InventoryRecord[]>([]);
+  const [filteredRecords, setFilteredRecords] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<InventoryRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<Entry | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [stats, setStats] = useState({ total: 0, units: 0, boxes: 0 });
 
@@ -98,7 +98,7 @@ export function Dashboard() {
     fetchRecords();
   };
 
-  const handleEdit = (record: InventoryRecord) => {
+  const handleEdit = (record: Entry) => {
     setEditingRecord(record);
     setShowForm(true);
   };
