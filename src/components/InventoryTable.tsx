@@ -3,9 +3,9 @@ import type { Entry, NewEntry } from '@/lib/supabase';
 import { Edit2, Trash2, Package, Loader2 } from 'lucide-react';
 
 interface InventoryTableProps {
-  records: InventoryRecord[];
+  records: Entry[];
   loading: boolean;
-  onEdit: (record: InventoryRecord) => void;
+  onEdit: (record: Entry) => void;
   onDelete: (id: string) => void;
 }
 
