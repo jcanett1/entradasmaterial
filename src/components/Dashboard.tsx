@@ -66,7 +66,7 @@ export function Dashboard() {
     setStats({ total: records.length, units: totalUnits, boxes: totalBoxes });
   };
 
-  const handleSave = async (record: NewInventoryRecord) => {
+  const handleCreate = async (data: NewEntry) => {
     if (editingRecord) {
       const { error } = await supabase
         .from('inventory_records')
