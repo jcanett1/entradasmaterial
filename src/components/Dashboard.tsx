@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { InventoryForm } from './InventoryForm';
@@ -12,7 +13,7 @@ import { saveAs } from 'file-saver';
 
 export function Dashboard() {
   const { user, signOut } = useAuth();
-  const [records, setRecords] = useState<InventoryRecord[]>([]);
+  const [records, setRecords] = useState<Entry[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<InventoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
