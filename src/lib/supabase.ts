@@ -11,21 +11,18 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIU
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export type InventoryRecord = {
-  id: string;
+export type Entry = {
+  id: number;
   part_number: string;
-  description: string;
+  description: string | null;
   total_units: number;
   total_boxes: number;
-  unit_of_measure: string;
-  registered_by: string;
-  registered_at: string;
-  created_at: string;
-  updated_at: string;
+  unit_of_measure: string | null;
+  registered_by: string | null;
+  registered_at: string; // viene de Postgres
 };
 
-export type NewInventoryRecord = Omit<InventoryRecord, 'id' | 'created_at' | 'updated_at'>;
-
+export type NewEntry = Omit<Entry, 'id' | 'registered_at'>;
 // Nuevo: Tipo para usuarioalmacen
 export type UsuarioAlmacen = {
   id: string;
