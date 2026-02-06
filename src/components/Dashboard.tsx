@@ -130,7 +130,7 @@ export function Dashboard() {
     setShowForm(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('¿Estás seguro de eliminar este registro?')) return;
 
     const { error } = await supabase
