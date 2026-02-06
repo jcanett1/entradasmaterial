@@ -86,16 +86,19 @@ export function InventoryTable({
                 </p>
               </td>
 
-              <td className="px-4 py-4 text-center">
-                {record.total_units.toLocaleString()}
-              </td>
-
-              <td className="px-4 py-4 text-center">
-                {record.total_boxes.toLocaleString()}
-              </td>
+             <td className="px-4 py-4 text-center">
+  <span className="inline-flex items-center justify-center min-w-[60px] px-3 py-1 rounded-full bg-blue-50 text-blue-700 font-semibold text-sm">
+    {record.total_units.toLocaleString()}
+  </span>
+</td>
+             <td className="px-4 py-4 text-center">
+  <span className="inline-flex items-center justify-center min-w-[40px] px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 font-semibold text-sm">
+    {record.total_boxes}
+  </span>
+</td>
 
               <td className="px-4 py-4">
-                <span className="px-2 py-1 rounded-full bg-gray-100 text-xs">
+                <span className="inline-flex px-3 py-1 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
                   {record.unit_of_measure}
                 </span>
               </td>
