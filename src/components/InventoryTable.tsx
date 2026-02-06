@@ -6,7 +6,7 @@ interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
   onEdit: (record: Entry) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: number) => void; // ✅
 }
 
 export function InventoryTable({ records, loading, onEdit, onDelete }: InventoryTableProps) {
