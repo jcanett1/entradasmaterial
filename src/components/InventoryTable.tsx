@@ -6,7 +6,7 @@ interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
   onEdit: (record: Entry) => void;
-  onDelete: (id: string) => void; // ✅ UUID
+  onDelete: (id: number) => void;
 }
 
 export function InventoryTable({
