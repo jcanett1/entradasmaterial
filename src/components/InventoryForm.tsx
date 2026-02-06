@@ -134,40 +134,38 @@ export function InventoryForm({
         />
       </div>
 
-      {/* Units / Boxes */}
-      <div className="grid grid-cols-2 gap-4">
-        <input
-          type="number"
-          name="total_units"
-          value={formData.total_units}
-          onChange={handleChange}
-          min={0}
-          className="border rounded-lg px-4 py-2.5"
-        />
-        <input
-          type="number"
-          name="total_boxes"
-          value={formData.total_boxes}
-          onChange={handleChange}
-          min={0}
-          className="border rounded-lg px-4 py-2.5"
-        />
-      </div>
+    {/* Cantidad / Pallets */}
+<div className="grid grid-cols-2 gap-4">
+  {/* Cantidad */}
+  <div>
+    <label className="block text-sm font-medium mb-1.5">
+      Cantidad
+    </label>
+    <input
+      type="number"
+      name="total_units"
+      value={formData.total_units}
+      onChange={handleChange}
+      min={0}
+      className="w-full border rounded-lg px-4 py-2.5"
+    />
+  </div>
 
-      {/* Unit */}
-      <select
-        name="unit_of_measure"
-        value={formData.unit_of_measure}
-        onChange={handleChange}
-        className="w-full border rounded-lg px-4 py-2.5"
-      >
-        <option value="">Selecciona una unidad</option>
-        {unitOptions.map((u) => (
-          <option key={u} value={u}>
-            {u}
-          </option>
-        ))}
-      </select>
+  {/* Pallets */}
+  <div>
+    <label className="block text-sm font-medium mb-1.5">
+      Pallets
+    </label>
+    <input
+      type="number"
+      name="total_boxes"
+      value={formData.total_boxes}
+      onChange={handleChange}
+      min={0}
+      className="w-full border rounded-lg px-4 py-2.5"
+    />
+  </div>
+</div>
 
       {/* Buttons */}
       <div className="flex gap-3 pt-4 border-t">
