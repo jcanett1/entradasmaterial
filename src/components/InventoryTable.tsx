@@ -1,5 +1,5 @@
 import React from 'react';
-import { InventoryRecord } from '@/lib/supabase';
+import type { Entry, NewEntry } from '@/lib/supabase';
 import { Edit2, Trash2, Package, Loader2 } from 'lucide-react';
 
 interface InventoryTableProps {
