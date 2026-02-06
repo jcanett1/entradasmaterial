@@ -25,3 +25,15 @@ export type InventoryRecord = {
 };
 
 export type NewInventoryRecord = Omit<InventoryRecord, 'id' | 'created_at' | 'updated_at'>;
+
+// Nuevo: Tipo para usuarioalmacen
+export type UsuarioAlmacen = {
+  id: string;
+  user_id: string;
+  nombre_completo: string | null;
+  departamento: string | null;
+  rol: 'admin' | 'supervisor' | 'operador';
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+};
