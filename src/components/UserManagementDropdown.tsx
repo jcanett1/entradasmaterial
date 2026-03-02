@@ -302,7 +302,7 @@ export function UserManagementDropdown({
             </span>
           </div>
           <span className="hidden sm:inline max-w-[160px] truncate">{currentUserEmail}</span>
-          <Shield className="h-3.5 w-3.5 text-yellow-300" title="Admin" />
+          <span title="Administrador"><Shield className="h-3.5 w-3.5 text-yellow-300" /></span>
           <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
         </button>
 
