@@ -31,45 +31,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /* =============================================
-     SIGN IN — busca en usuarioalmacen por email + password
+     SIGN IN
+     Usa .limit(1) en lugar de .single() para evitar
+     el error 406 cuando no hay resultados.
   ============================================= */
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
-    // Buscar usuario activo con ese email
-    const { data, error } = await supabase
+    const emailNorm = email.trim().toLowerCase();
+
+    // Buscar usuario por email — usamos limit(1) para evitar error 406
+    const { data, error: fetchError } = await supabase
       .from('usuarioalmacen')
       .select('id, email, nombre_completo, departamento, rol, activo, password')
-      .eq('email', email.trim().toLowerCase())
-      .eq('activo', true)
-      .single();
+      .eq('email', emailNorm)
+      .limit(1);
 
-    if (error || !data) {
+    // Error de red o de Supabase
+    if (fetchError) {
+      console.error('Supabase fetch error:', fetchError);
+      return { error: 'Error al conectar con el servidor. Intenta de nuevo.' };
+    }
+
+    // Sin resultados — usuario no existe
+    if (!data || data.length === 0) {
       return { error: 'Correo o contraseña incorrectos' };
     }
 
-    // Verificar contraseña — comparamos con la función RPC verify_password
-    // Si no existe la función, comparamos directamente (texto plano como fallback)
-    let passwordOk = false;
+    const user = data[0];
 
-    const { data: verifyData, error: verifyError } = await supabase
-      .rpc('verify_user_password', { p_email: email.trim().toLowerCase(), p_password: password });
-
-    if (!verifyError && verifyData === true) {
-      passwordOk = true;
-    } else {
-      // Fallback: comparación directa si la RPC no existe
-      passwordOk = data.password === password;
+    // Usuario inactivo
+    if (!user.activo) {
+      return { error: 'Tu cuenta está desactivada. Contacta al administrador.' };
     }
 
-    if (!passwordOk) {
+    // Verificar contraseña
+    if (user.password !== password) {
       return { error: 'Correo o contraseña incorrectos' };
     }
 
+    // Login exitoso — guardar sesión
     const newSession: AlmacenSession = {
-      id: data.id,
-      email: data.email,
-      nombre_completo: data.nombre_completo,
-      rol: data.rol as 'admin' | 'supervisor' | 'operador',
-      departamento: data.departamento,
+      id: user.id,
+      email: user.email,
+      nombre_completo: user.nombre_completo,
+      rol: user.rol as 'admin' | 'supervisor' | 'operador',
+      departamento: user.departamento,
     };
 
     setLocalSession(newSession);
