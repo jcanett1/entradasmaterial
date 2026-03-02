@@ -20,6 +20,8 @@ import {
   BadgeCheck,
   AlertCircle,
   LogOut,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface UserManagementDropdownProps {
@@ -73,6 +75,7 @@ export function UserManagementDropdown({
   const [form, setForm] = useState<UserFormData>(defaultForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -96,33 +99,17 @@ export function UserManagementDropdown({
   }, [toast]);
 
   /* =============================================
-     FETCH — obtiene usuarios + email via RPC o vista
-     Usamos una consulta a usuarioalmacen y luego
-     enriquecemos con el email del usuario autenticado
-     que tenemos disponible en auth.users via
-     la función get_users_with_email (si existe),
-     o simplemente mostramos lo que hay.
+     FETCH USUARIOS — directo desde usuarioalmacen
   ============================================= */
   const fetchUsers = async () => {
     setLoadingUsers(true);
+    const { data, error } = await supabase
+      .from('usuarioalmacen')
+      .select('id, email, nombre_completo, departamento, rol, activo, created_at, updated_at')
+      .order('created_at', { ascending: false });
 
-    // Intentar obtener usuarios con email via función RPC
-    const { data: rpcData, error: rpcError } = await supabase
-      .rpc('get_users_with_email');
-
-    if (!rpcError && rpcData) {
-      setUsers(rpcData as UsuarioAlmacen[]);
-    } else {
-      // Fallback: solo datos de usuarioalmacen sin email
-      const { data, error } = await supabase
-        .from('usuarioalmacen')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!error) setUsers(data ?? []);
-      else console.error('Error fetching users:', error);
-    }
-
+    if (!error) setUsers((data ?? []) as UsuarioAlmacen[]);
+    else console.error('Error fetching users:', error);
     setLoadingUsers(false);
   };
 
@@ -139,6 +126,7 @@ export function UserManagementDropdown({
   const openCreate = () => {
     setForm(defaultForm);
     setErrors({});
+    setShowPassword(false);
     setMode('create');
     setShowModal(true);
     setOpen(false);
@@ -155,6 +143,7 @@ export function UserManagementDropdown({
       activo: u.activo,
     });
     setErrors({});
+    setShowPassword(false);
     setMode('edit');
   };
 
@@ -173,7 +162,7 @@ export function UserManagementDropdown({
     if (mode === 'create') {
       if (!form.email.trim()) e.email = 'El correo es requerido';
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Correo inválido';
-      if (!form.password || form.password.length < 6) e.password = 'Mínimo 6 caracteres';
+      if (!form.password || form.password.length < 4) e.password = 'Mínimo 4 caracteres';
     }
     if (!form.nombre_completo.trim()) e.nombre_completo = 'El nombre es requerido';
     setErrors(e);
@@ -181,25 +170,32 @@ export function UserManagementDropdown({
   };
 
   /* =============================================
-     CREAR USUARIO
+     CREAR USUARIO — directo en usuarioalmacen
+     sin pasar por auth.users
   ============================================= */
   const handleCreate = async () => {
     if (!validate()) return;
     setSaving(true);
 
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-    });
+    // Verificar que el email no exista ya
+    const { data: existing } = await supabase
+      .from('usuarioalmacen')
+      .select('id')
+      .eq('email', form.email.trim().toLowerCase())
+      .single();
 
-    if (signUpError || !signUpData.user) {
-      setToast({ msg: signUpError?.message ?? 'Error al crear usuario', type: 'error' });
+    if (existing) {
+      setErrors({ email: 'Ya existe un usuario con ese correo' });
       setSaving(false);
       return;
     }
 
+    // Insertar directamente en usuarioalmacen
+    // La contraseña se guarda en texto plano en el campo "password"
+    // (Para producción se recomienda usar una función RPC con hash)
     const { error: dbError } = await supabase.from('usuarioalmacen').insert([{
-      user_id: signUpData.user.id,
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
       nombre_completo: form.nombre_completo.trim(),
       departamento: form.departamento.trim() || null,
       rol: form.rol,
@@ -223,14 +219,21 @@ export function UserManagementDropdown({
     if (!validate() || !editingUser) return;
     setSaving(true);
 
+    const updateData: Record<string, any> = {
+      nombre_completo: form.nombre_completo.trim(),
+      departamento: form.departamento.trim() || null,
+      rol: form.rol,
+      activo: form.activo,
+    };
+
+    // Solo actualizar contraseña si se ingresó una nueva
+    if (form.password && form.password.length >= 4) {
+      updateData.password = form.password;
+    }
+
     const { error } = await supabase
       .from('usuarioalmacen')
-      .update({
-        nombre_completo: form.nombre_completo.trim(),
-        departamento: form.departamento.trim() || null,
-        rol: form.rol,
-        activo: form.activo,
-      })
+      .update(updateData)
       .eq('id', editingUser.id);
 
     if (error) {
@@ -248,7 +251,7 @@ export function UserManagementDropdown({
      ELIMINAR USUARIO
   ============================================= */
   const handleDelete = async (u: UsuarioAlmacen) => {
-    if (!confirm(`¿Eliminar al usuario "${u.nombre_completo ?? u.email ?? u.user_id}"? Esta acción no se puede deshacer.`)) return;
+    if (!confirm(`¿Eliminar al usuario "${u.nombre_completo ?? u.email}"? Esta acción no se puede deshacer.`)) return;
 
     const { error } = await supabase
       .from('usuarioalmacen')
@@ -292,7 +295,7 @@ export function UserManagementDropdown({
     <>
       {/* ---- Toast ---- */}
       {toast && (
-        <div className={`fixed top-5 right-5 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium border animate-in ${
+        <div className={`fixed top-5 right-5 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium border ${
           toast.type === 'success'
             ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
             : 'bg-red-50 text-red-800 border-red-200'
@@ -333,15 +336,13 @@ export function UserManagementDropdown({
 
         {/* ---- Menú desplegable ---- */}
         {open && (
-          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 z-50 overflow-hidden animate-in">
-            {/* Info del usuario actual */}
+          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 z-50 overflow-hidden">
             <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
               <p className="text-xs font-semibold text-gray-800 truncate">{currentUserEmail}</p>
               <p className="text-xs text-gray-400 mt-0.5">{ROL_LABEL[userRol ?? ''] ?? 'Sin rol asignado'}</p>
             </div>
 
-            {/* Opciones de gestión — solo admin */}
-            {isAdmin ? (
+            {isAdmin && (
               <>
                 <button
                   onClick={openList}
@@ -358,11 +359,8 @@ export function UserManagementDropdown({
                   Agregar usuario
                 </button>
               </>
-            ) : (
-              <div className="px-4 py-2 border-b border-gray-100" />
             )}
 
-            {/* Cerrar sesión */}
             <button
               onClick={() => { setOpen(false); onSignOut(); }}
               className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
@@ -379,7 +377,7 @@ export function UserManagementDropdown({
       ============================================= */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-gray-100 animate-in max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-gray-100 max-h-[90vh] flex flex-col">
 
             {/* Header del modal */}
             <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 flex-shrink-0">
@@ -421,9 +419,7 @@ export function UserManagementDropdown({
                 <>
                   <div className="px-6 py-4 flex justify-between items-center border-b border-gray-50">
                     <p className="text-sm text-gray-500">
-                      {loadingUsers
-                        ? 'Cargando...'
-                        : `${users.length} usuario${users.length !== 1 ? 's' : ''}`}
+                      {loadingUsers ? 'Cargando...' : `${users.length} usuario${users.length !== 1 ? 's' : ''}`}
                     </p>
                     <button
                       onClick={() => { setForm(defaultForm); setErrors({}); setMode('create'); }}
@@ -451,9 +447,8 @@ export function UserManagementDropdown({
                       {users.map((u) => (
                         <div key={u.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
                           <div className="flex items-start justify-between gap-3">
-                            {/* Info del usuario */}
+                            {/* Info */}
                             <div className="flex items-start gap-3 min-w-0">
-                              {/* Avatar */}
                               <div className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm mt-0.5 ${
                                 u.rol === 'admin'      ? 'bg-purple-100 text-purple-700' :
                                 u.rol === 'supervisor' ? 'bg-blue-100 text-blue-700' :
@@ -463,28 +458,21 @@ export function UserManagementDropdown({
                               </div>
 
                               <div className="min-w-0 flex-1">
-                                {/* Nombre */}
                                 <p className="text-sm font-semibold text-gray-900 truncate">
                                   {u.nombre_completo || <span className="text-gray-400 italic font-normal">Sin nombre</span>}
                                 </p>
-
-                                {/* Email */}
                                 {u.email && (
                                   <p className="text-xs text-gray-500 truncate mt-0.5 flex items-center gap-1">
                                     <Mail className="h-3 w-3 flex-shrink-0" />
                                     {u.email}
                                   </p>
                                 )}
-
-                                {/* Departamento */}
                                 {u.departamento && (
                                   <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                                     <Building2 className="h-3 w-3 flex-shrink-0" />
                                     {u.departamento}
                                   </p>
                                 )}
-
-                                {/* Rol + Estado */}
                                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                                   {rolBadge(u.rol)}
                                   {u.activo ? (
@@ -529,58 +517,60 @@ export function UserManagementDropdown({
               {(mode === 'create' || mode === 'edit') && (
                 <div className="px-6 py-5 space-y-4">
 
-                  {/* Email (solo crear) */}
-                  {mode === 'create' && (
-                    <div>
-                      <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
-                        <Mail className="h-3.5 w-3.5 text-indigo-400" />
-                        Correo electrónico <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="email"
-                        value={form.email}
-                        onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-                        placeholder="usuario@empresa.com"
-                        className={inputCls('email')}
-                      />
-                      {errors.email && <p className="text-red-500 text-xs mt-1.5">⚠ {errors.email}</p>}
-                    </div>
-                  )}
+                  {/* Email */}
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                      <Mail className="h-3.5 w-3.5 text-indigo-400" />
+                      Correo electrónico <span className="text-red-400">*</span>
+                    </label>
+                    {mode === 'create' ? (
+                      <>
+                        <input
+                          type="email"
+                          value={form.email}
+                          onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+                          placeholder="usuario@empresa.com"
+                          className={inputCls('email')}
+                        />
+                        {errors.email && <p className="text-red-500 text-xs mt-1.5">⚠ {errors.email}</p>}
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="email"
+                          value={form.email}
+                          readOnly
+                          className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-500 cursor-not-allowed"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">El correo no se puede modificar.</p>
+                      </>
+                    )}
+                  </div>
 
-                  {/* Email (solo editar — readonly) */}
-                  {mode === 'edit' && form.email && (
-                    <div>
-                      <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
-                        <Mail className="h-3.5 w-3.5 text-gray-400" />
-                        Correo electrónico
-                      </label>
+                  {/* Contraseña */}
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                      <Lock className="h-3.5 w-3.5 text-indigo-400" />
+                      {mode === 'create' ? <>Contraseña <span className="text-red-400">*</span></> : 'Nueva contraseña (opcional)'}
+                    </label>
+                    <div className="relative">
                       <input
-                        type="email"
-                        value={form.email}
-                        readOnly
-                        className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-100 text-gray-500 cursor-not-allowed"
-                      />
-                      <p className="text-xs text-gray-400 mt-1">El correo no se puede modificar desde aquí.</p>
-                    </div>
-                  )}
-
-                  {/* Contraseña (solo crear) */}
-                  {mode === 'create' && (
-                    <div>
-                      <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
-                        <Lock className="h-3.5 w-3.5 text-indigo-400" />
-                        Contraseña <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="password"
+                        type={showPassword ? 'text' : 'password'}
                         value={form.password}
                         onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                        placeholder="Mínimo 6 caracteres"
-                        className={inputCls('password')}
+                        placeholder={mode === 'create' ? 'Mínimo 4 caracteres' : 'Dejar vacío para no cambiar'}
+                        className={inputCls('password') + ' pr-10'}
                       />
-                      {errors.password && <p className="text-red-500 text-xs mt-1.5">⚠ {errors.password}</p>}
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
                     </div>
-                  )}
+                    {errors.password && <p className="text-red-500 text-xs mt-1.5">⚠ {errors.password}</p>}
+                  </div>
 
                   {/* Nombre completo */}
                   <div>

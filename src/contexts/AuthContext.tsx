@@ -1,103 +1,98 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import type { User, Session } from '@supabase/supabase-js';
+import { supabase, getLocalSession, setLocalSession, clearLocalSession } from '@/lib/supabase';
+import type { AlmacenSession } from '@/lib/supabase';
 
+/* =============================================
+   TIPOS
+============================================= */
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
+  session: AlmacenSession | null;
   loading: boolean;
   userRol: 'admin' | 'supervisor' | 'operador' | null;
   isAdmin: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signUp: (email: string, password: string) => Promise<{ error: any }>;
-  signOut: () => Promise<void>;
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signOut: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/* =============================================
+   PROVIDER
+============================================= */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<AlmacenSession | null>(null);
   const [loading, setLoading] = useState(true);
-  const [userRol, setUserRol] = useState<'admin' | 'supervisor' | 'operador' | null>(null);
 
-  /* ---- Obtener rol desde usuarioalmacen ---- */
-  const fetchUserRol = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('usuarioalmacen')
-      .select('rol')
-      .eq('user_id', userId)
-      .single();
-
-    if (!error && data) {
-      setUserRol(data.rol as 'admin' | 'supervisor' | 'operador');
-    } else {
-      setUserRol(null);
-    }
-  };
-
+  /* ---- Restaurar sesión desde localStorage ---- */
   useEffect(() => {
-    // Obtener sesión actual
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchUserRol(session.user.id);
-      }
-      setLoading(false);
-    });
-
-    // Escuchar cambios de autenticación
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchUserRol(session.user.id);
-      } else {
-        setUserRol(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    const saved = getLocalSession();
+    if (saved) setSession(saved);
+    setLoading(false);
   }, []);
 
-  const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { error };
+  /* =============================================
+     SIGN IN — busca en usuarioalmacen por email + password
+  ============================================= */
+  const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
+    // Buscar usuario activo con ese email
+    const { data, error } = await supabase
+      .from('usuarioalmacen')
+      .select('id, email, nombre_completo, departamento, rol, activo, password')
+      .eq('email', email.trim().toLowerCase())
+      .eq('activo', true)
+      .single();
+
+    if (error || !data) {
+      return { error: 'Correo o contraseña incorrectos' };
+    }
+
+    // Verificar contraseña — comparamos con la función RPC verify_password
+    // Si no existe la función, comparamos directamente (texto plano como fallback)
+    let passwordOk = false;
+
+    const { data: verifyData, error: verifyError } = await supabase
+      .rpc('verify_user_password', { p_email: email.trim().toLowerCase(), p_password: password });
+
+    if (!verifyError && verifyData === true) {
+      passwordOk = true;
+    } else {
+      // Fallback: comparación directa si la RPC no existe
+      passwordOk = data.password === password;
+    }
+
+    if (!passwordOk) {
+      return { error: 'Correo o contraseña incorrectos' };
+    }
+
+    const newSession: AlmacenSession = {
+      id: data.id,
+      email: data.email,
+      nombre_completo: data.nombre_completo,
+      rol: data.rol as 'admin' | 'supervisor' | 'operador',
+      departamento: data.departamento,
+    };
+
+    setLocalSession(newSession);
+    setSession(newSession);
+    return { error: null };
   };
 
-  const signUp = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          nombre_completo: email.split('@')[0],
-        },
-      },
-    });
-    return { error };
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
+  /* =============================================
+     SIGN OUT
+  ============================================= */
+  const signOut = () => {
+    clearLocalSession();
+    setSession(null);
   };
 
   return (
     <AuthContext.Provider
       value={{
-        user,
         session,
         loading,
-        userRol,
-        isAdmin: userRol === 'admin',
+        userRol: session?.rol ?? null,
+        isAdmin: session?.rol === 'admin',
         signIn,
-        signUp,
         signOut,
       }}
     >
@@ -106,6 +101,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* =============================================
+   HOOK
+============================================= */
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {

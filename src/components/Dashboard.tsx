@@ -19,7 +19,7 @@ import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
 export function Dashboard() {
-  const { user, signOut, isAdmin, userRol } = useAuth();
+  const { session, signOut, isAdmin, userRol } = useAuth();
 
   const [records, setRecords] = useState<Entry[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<Entry[]>([]);
@@ -167,9 +167,9 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Dropdown de usuario — siempre visible, opciones de admin solo para admin */}
+          {/* Dropdown de usuario */}
           <UserManagementDropdown
-            currentUserEmail={user?.email ?? ''}
+            currentUserEmail={session?.email ?? ''}
             isAdmin={isAdmin}
             userRol={userRol}
             onSignOut={signOut}
@@ -288,7 +288,7 @@ export function Dashboard() {
 
             <InventoryForm
               record={editingRecord}
-              userEmail={user?.email || ''}
+              userEmail={session?.email || ''}
               onSave={handleCreate}
               onCancel={closeForm}
             />
