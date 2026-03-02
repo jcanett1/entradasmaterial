@@ -7,7 +7,6 @@ import { InventoryTable } from './InventoryTable';
 import { UserManagementDropdown } from './UserManagementDropdown';
 import {
   Package,
-  LogOut,
   Plus,
   X,
   RefreshCw,
@@ -20,7 +19,7 @@ import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
 export function Dashboard() {
-  const { user, signOut, isAdmin } = useAuth();
+  const { user, signOut, isAdmin, userRol } = useAuth();
 
   const [records, setRecords] = useState<Entry[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<Entry[]>([]);
@@ -70,28 +69,20 @@ export function Dashboard() {
       setFilteredRecords(records);
       return;
     }
-
     const term = searchTerm.toLowerCase();
-
     const filtered = records.filter((record) =>
       record.part_number.toLowerCase().includes(term) ||
       (record.description ?? '').toLowerCase().includes(term) ||
       (record.unit_of_measure ?? '').toLowerCase().includes(term) ||
       (record.registered_by ?? '').toLowerCase().includes(term)
     );
-
     setFilteredRecords(filtered);
   };
 
   const calculateStats = () => {
     const totalUnits = records.reduce((sum, r) => sum + r.total_units, 0);
     const totalBoxes = records.reduce((sum, r) => sum + r.total_boxes, 0);
-
-    setStats({
-      total: records.length,
-      units: totalUnits,
-      boxes: totalBoxes
-    });
+    setStats({ total: records.length, units: totalUnits, boxes: totalBoxes });
   };
 
   /* =======================
@@ -103,24 +94,11 @@ export function Dashboard() {
         .from('entries')
         .update(data)
         .eq('id', editingRecord.id);
-
-      if (error) {
-        console.error('Error updating record:', error);
-        alert('Error al actualizar el registro');
-        return;
-      }
+      if (error) { alert('Error al actualizar el registro'); return; }
     } else {
-      const { error } = await supabase
-        .from('entries')
-        .insert([data]);
-
-      if (error) {
-        console.error('Error creating record:', error);
-        alert('Error al crear el registro');
-        return;
-      }
+      const { error } = await supabase.from('entries').insert([data]);
+      if (error) { alert('Error al crear el registro'); return; }
     }
-
     setShowForm(false);
     setEditingRecord(null);
     fetchRecords();
@@ -136,18 +114,8 @@ export function Dashboard() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('¿Estás seguro de eliminar este registro?')) return;
-
-    const { error } = await supabase
-      .from('entries')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error deleting record:', error);
-      alert('Error al eliminar el registro');
-      return;
-    }
-
+    const { error } = await supabase.from('entries').delete().eq('id', id);
+    if (error) { alert('Error al eliminar el registro'); return; }
     fetchRecords();
   };
 
@@ -164,10 +132,8 @@ export function Dashboard() {
       'Registrado Por': record.registered_by ?? '',
       'Fecha de Registro': new Date(record.registered_at).toLocaleString('es-ES')
     }));
-
     const csv = Papa.unparse(exportData);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-
     saveAs(blob, `inventario_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
@@ -197,30 +163,17 @@ export function Dashboard() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-white tracking-wide">Sistema de Inventario</h1>
-              <p className="text-xs text-indigo-200 hidden sm:block">{user?.email}</p>
+              <p className="text-xs text-indigo-200 hidden sm:block">Control de entradas de material</p>
             </div>
           </div>
 
-          {/* Acciones del header */}
-          <div className="flex items-center gap-2">
-            {/* Dropdown de gestión de usuarios (solo admin) */}
-            <UserManagementDropdown
-              currentUserEmail={user?.email ?? ''}
-              isAdmin={isAdmin}
-            />
-
-            {/* Separador visual */}
-            {isAdmin && <div className="h-6 w-px bg-white/20 mx-1" />}
-
-            {/* Botón cerrar sesión */}
-            <button
-              onClick={signOut}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-white/90 hover:bg-white/15 transition-all duration-200 font-medium text-sm border border-white/20"
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Cerrar sesión</span>
-            </button>
-          </div>
+          {/* Dropdown de usuario — siempre visible, opciones de admin solo para admin */}
+          <UserManagementDropdown
+            currentUserEmail={user?.email ?? ''}
+            isAdmin={isAdmin}
+            userRol={userRol}
+            onSignOut={signOut}
+          />
         </div>
       </header>
 
@@ -249,7 +202,6 @@ export function Dashboard() {
 
         {/* Actions Bar */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-5 py-4 mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
-          {/* Search */}
           <div className="relative w-full sm:max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
@@ -261,9 +213,7 @@ export function Dashboard() {
             />
           </div>
 
-          {/* Buttons */}
           <div className="flex gap-2.5 flex-wrap justify-end">
-            {/* Actualizar */}
             <button
               onClick={fetchRecords}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 shadow-sm transition-all duration-200 active:scale-95"
@@ -272,7 +222,6 @@ export function Dashboard() {
               <span>Actualizar</span>
             </button>
 
-            {/* Descargar CSV */}
             <button
               onClick={handleExportCSV}
               disabled={!filteredRecords.length}
@@ -282,7 +231,6 @@ export function Dashboard() {
               <span>Descargar CSV</span>
             </button>
 
-            {/* Nuevo */}
             <button
               onClick={() => setShowForm(true)}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all duration-200 active:scale-95"
