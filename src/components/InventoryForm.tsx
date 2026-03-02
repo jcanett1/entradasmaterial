@@ -3,6 +3,11 @@ import type { Entry, NewEntry } from '@/lib/supabase';
 import {
   Hash,
   FileText,
+  Boxes,
+  Archive,
+  Ruler,
+  Save,
+  X,
 } from 'lucide-react';
 
 interface InventoryFormProps {
@@ -99,87 +104,135 @@ export function InventoryForm({
     'Otro',
   ];
 
+  const inputClass = (field: string) =>
+    `w-full px-4 py-2.5 border rounded-xl text-sm transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent bg-gray-50 ${
+      errors[field]
+        ? 'border-red-400 bg-red-50 focus:ring-red-400'
+        : 'border-gray-200 hover:border-gray-300'
+    }`;
+
   return (
-    <form onSubmit={handleSubmit} className="p-6 space-y-5">
+    <form onSubmit={handleSubmit} className="px-6 pb-6 pt-5 space-y-4">
       {/* Part Number */}
       <div>
-        <label className="flex items-center gap-2 text-sm font-medium mb-1.5">
-          <Hash className="h-4 w-4" />
-          Part Number *
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+          <Hash className="h-3.5 w-3.5 text-indigo-400" />
+          Part Number <span className="text-red-400">*</span>
         </label>
         <input
           name="part_number"
           value={formData.part_number}
           onChange={handleChange}
-          className={`w-full px-4 py-2.5 border rounded-lg ${
-            errors.part_number ? 'border-red-500' : 'border-gray-300'
-          }`}
+          placeholder="Ej. ABC-12345"
+          className={inputClass('part_number')}
         />
+        {errors.part_number && (
+          <p className="text-red-500 text-xs mt-1.5 flex items-center gap-1">
+            <span>⚠</span> {errors.part_number}
+          </p>
+        )}
       </div>
 
       {/* Description */}
       <div>
-        <label className="flex items-center gap-2 text-sm font-medium mb-1.5">
-          <FileText className="h-4 w-4" />
-          Descripción *
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+          <FileText className="h-3.5 w-3.5 text-indigo-400" />
+          Descripción <span className="text-red-400">*</span>
         </label>
         <textarea
           name="description"
           value={formData.description}
           onChange={handleChange}
           rows={2}
-          className={`w-full px-4 py-2.5 border rounded-lg ${
-            errors.description ? 'border-red-500' : 'border-gray-300'
-          }`}
+          placeholder="Descripción del material..."
+          className={inputClass('description') + ' resize-none'}
         />
+        {errors.description && (
+          <p className="text-red-500 text-xs mt-1.5 flex items-center gap-1">
+            <span>⚠</span> {errors.description}
+          </p>
+        )}
       </div>
 
-    {/* UNIDADES / CAJAS */}
-<div className="grid grid-cols-2 gap-4">
-  {/* UNIDADES */}
-  <div>
-    <label className="block text-sm font-medium mb-1.5">
-      UNIDADES
-    </label>
-    <input
-      type="number"
-      name="total_units"
-      value={formData.total_units}
-      onChange={handleChange}
-      min={0}
-      className="w-full border rounded-lg px-4 py-2.5"
-    />
-  </div>
+      {/* Unidades / Cajas */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+            <Boxes className="h-3.5 w-3.5 text-blue-400" />
+            Unidades
+          </label>
+          <input
+            type="number"
+            name="total_units"
+            value={formData.total_units}
+            onChange={handleChange}
+            min={0}
+            className={inputClass('total_units')}
+          />
+          {errors.total_units && (
+            <p className="text-red-500 text-xs mt-1.5">{errors.total_units}</p>
+          )}
+        </div>
 
-  {/* CAJAS */}
-  <div>
-    <label className="block text-sm font-medium mb-1.5">
-      CAJAS
-    </label>
-    <input
-      type="number"
-      name="total_boxes"
-      value={formData.total_boxes}
-      onChange={handleChange}
-      min={0}
-      className="w-full border rounded-lg px-4 py-2.5"
-    />
-  </div>
-</div>
+        <div>
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+            <Archive className="h-3.5 w-3.5 text-emerald-400" />
+            Cajas
+          </label>
+          <input
+            type="number"
+            name="total_boxes"
+            value={formData.total_boxes}
+            onChange={handleChange}
+            min={0}
+            className={inputClass('total_boxes')}
+          />
+          {errors.total_boxes && (
+            <p className="text-red-500 text-xs mt-1.5">{errors.total_boxes}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Unidad de Medida */}
+      <div>
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+          <Ruler className="h-3.5 w-3.5 text-amber-400" />
+          Unidad de Medida <span className="text-red-400">*</span>
+        </label>
+        <select
+          name="unit_of_measure"
+          value={formData.unit_of_measure}
+          onChange={handleChange}
+          className={inputClass('unit_of_measure') + ' cursor-pointer'}
+        >
+          <option value="">Seleccionar unidad...</option>
+          {unitOptions.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+        {errors.unit_of_measure && (
+          <p className="text-red-500 text-xs mt-1.5 flex items-center gap-1">
+            <span>⚠</span> {errors.unit_of_measure}
+          </p>
+        )}
+      </div>
 
       {/* Buttons */}
-      <div className="flex gap-3 pt-4 border-t">
+      <div className="flex gap-3 pt-4 border-t border-gray-100">
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 border rounded-lg py-2"
+          className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-150 active:scale-95"
         >
+          <X className="h-4 w-4" />
           Cancelar
         </button>
         <button
           type="submit"
-          className="flex-1 bg-indigo-600 text-white rounded-lg py-2"
+          className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all duration-150 active:scale-95 shadow-md"
+          style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', boxShadow: '0 4px 14px 0 rgba(79,70,229,0.35)' }}
         >
+          <Save className="h-4 w-4" />
           {record ? 'Actualizar' : 'Guardar'}
         </button>
       </div>
