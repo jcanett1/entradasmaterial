@@ -33,4 +33,6 @@ export type UsuarioAlmacen = {
   activo: boolean;
   created_at: string;
   updated_at: string;
+  // Campo virtual: email del usuario (join con auth.users via vista o RPC)
+  email?: string | null;
 };
