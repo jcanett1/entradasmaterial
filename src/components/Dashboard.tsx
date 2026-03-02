@@ -4,6 +4,7 @@ import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { InventoryForm } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
+import { UserManagementDropdown } from './UserManagementDropdown';
 import {
   Package,
   LogOut,
@@ -19,7 +20,7 @@ import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
 export function Dashboard() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isAdmin } = useAuth();
 
   const [records, setRecords] = useState<Entry[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<Entry[]>([]);
@@ -181,28 +182,45 @@ export function Dashboard() {
   return (
     <div className="min-h-screen" style={{ background: 'linear-gradient(135deg, #f0f4ff 0%, #f8fafc 60%, #eef2ff 100%)' }}>
       {/* Header */}
-      <header style={{
-        background: 'linear-gradient(90deg, #3730a3 0%, #4f46e5 60%, #6366f1 100%)',
-        boxShadow: '0 4px 24px 0 rgba(79,70,229,0.18)'
-      }} className="sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center">
-          <div className="flex items-center gap-3">
+      <header
+        style={{
+          background: 'linear-gradient(90deg, #3730a3 0%, #4f46e5 60%, #6366f1 100%)',
+          boxShadow: '0 4px 24px 0 rgba(79,70,229,0.18)'
+        }}
+        className="sticky top-0 z-40"
+      >
+        <div className="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center gap-4">
+          {/* Logo + Título */}
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="bg-white/20 backdrop-blur p-2 rounded-xl shadow">
               <Package className="h-6 w-6 text-white" />
             </div>
             <div>
               <h1 className="text-lg font-bold text-white tracking-wide">Sistema de Inventario</h1>
-              <p className="text-xs text-indigo-200">{user?.email}</p>
+              <p className="text-xs text-indigo-200 hidden sm:block">{user?.email}</p>
             </div>
           </div>
 
-          <button
-            onClick={signOut}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-white/90 hover:bg-white/15 transition-all duration-200 font-medium text-sm border border-white/20"
-          >
-            <LogOut className="h-4 w-4" />
-            <span className="hidden sm:inline">Cerrar sesión</span>
-          </button>
+          {/* Acciones del header */}
+          <div className="flex items-center gap-2">
+            {/* Dropdown de gestión de usuarios (solo admin) */}
+            <UserManagementDropdown
+              currentUserEmail={user?.email ?? ''}
+              isAdmin={isAdmin}
+            />
+
+            {/* Separador visual */}
+            {isAdmin && <div className="h-6 w-px bg-white/20 mx-1" />}
+
+            {/* Botón cerrar sesión */}
+            <button
+              onClick={signOut}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-white/90 hover:bg-white/15 transition-all duration-200 font-medium text-sm border border-white/20"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Cerrar sesión</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -214,21 +232,18 @@ export function Dashboard() {
             label="Total Registros"
             value={stats.total}
             color="indigo"
-            gradient="from-indigo-500 to-indigo-600"
           />
           <StatCard
             icon={<Package className="h-6 w-6" />}
             label="Total Unidades"
             value={stats.units}
             color="blue"
-            gradient="from-blue-500 to-blue-600"
           />
           <StatCard
             icon={<LayoutDashboard className="h-6 w-6" />}
             label="Total Cajas"
             value={stats.boxes}
             color="emerald"
-            gradient="from-emerald-500 to-emerald-600"
           />
         </div>
 
@@ -281,7 +296,6 @@ export function Dashboard() {
 
         {/* Table Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          {/* Table header bar */}
           <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ClipboardList className="h-5 w-5 text-indigo-500" />
@@ -303,10 +317,10 @@ export function Dashboard() {
         </div>
       </main>
 
-      {/* Modal */}
+      {/* Modal Nuevo/Editar Registro */}
       {showForm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100 animate-in">
             <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
@@ -345,18 +359,16 @@ function StatCard({
   label,
   value,
   color,
-  gradient
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   color: string;
-  gradient: string;
 }) {
   const colorMap: Record<string, { bg: string; text: string; shadow: string }> = {
-    indigo: { bg: 'bg-indigo-50', text: 'text-indigo-600', shadow: 'rgba(99,102,241,0.15)' },
-    blue:   { bg: 'bg-blue-50',   text: 'text-blue-600',   shadow: 'rgba(59,130,246,0.15)' },
-    emerald:{ bg: 'bg-emerald-50',text: 'text-emerald-600',shadow: 'rgba(16,185,129,0.15)' },
+    indigo:  { bg: 'bg-indigo-50',  text: 'text-indigo-600',  shadow: 'rgba(99,102,241,0.15)' },
+    blue:    { bg: 'bg-blue-50',    text: 'text-blue-600',    shadow: 'rgba(59,130,246,0.15)' },
+    emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', shadow: 'rgba(16,185,129,0.15)' },
   };
   const c = colorMap[color] ?? colorMap['indigo'];
 

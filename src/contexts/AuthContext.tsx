@@ -6,6 +6,8 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  userRol: 'admin' | 'supervisor' | 'operador' | null;
+  isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
@@ -17,12 +19,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userRol, setUserRol] = useState<'admin' | 'supervisor' | 'operador' | null>(null);
+
+  /* ---- Obtener rol desde usuarioalmacen ---- */
+  const fetchUserRol = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('usuarioalmacen')
+      .select('rol')
+      .eq('user_id', userId)
+      .single();
+
+    if (!error && data) {
+      setUserRol(data.rol as 'admin' | 'supervisor' | 'operador');
+    } else {
+      setUserRol(null);
+    }
+  };
 
   useEffect(() => {
     // Obtener sesión actual
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchUserRol(session.user.id);
+      }
       setLoading(false);
     });
 
@@ -32,6 +53,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchUserRol(session.user.id);
+      } else {
+        setUserRol(null);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -51,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       password,
       options: {
         data: {
-          nombre_completo: email.split('@')[0], // Opcional: extraer nombre del email
+          nombre_completo: email.split('@')[0],
         },
       },
     });
@@ -63,7 +89,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        session,
+        loading,
+        userRol,
+        isAdmin: userRol === 'admin',
+        signIn,
+        signUp,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
