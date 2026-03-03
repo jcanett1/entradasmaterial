@@ -162,7 +162,7 @@ export function Dashboard() {
               <Package className="h-6 w-6 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-white tracking-wide">Sistema de Inventario</h1>
+              <h1 className="text-lg font-bold text-white tracking-wide">Sistema de Inventario PXG INTERNO</h1>
               <p className="text-xs text-indigo-200 hidden sm:block">Control de entradas de material</p>
             </div>
           </div>
