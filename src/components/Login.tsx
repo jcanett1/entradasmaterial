@@ -90,7 +90,7 @@ export function Login() {
             <div className="bg-white/20 p-4 rounded-2xl mb-4 backdrop-blur">
               <Package className="h-10 w-10 text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-white tracking-wide">Sistema de Inventario</h1>
+            <h1 className="text-2xl font-bold text-white tracking-wide">Sistema de Inventario PXG INTERNO</h1>
             <p className="text-indigo-200 mt-1 text-sm">Inicia sesión para continuar</p>
           </div>
 
@@ -166,7 +166,7 @@ export function Login() {
             </form>
 
             <p className="text-center text-xs text-gray-400 mt-6">
-              ¿No tienes acceso? Contacta al administrador del sistema.
+              ¿No tienes acceso? Contacta al administrador del sistema Julio canett.
             </p>
           </div>
         </div>
