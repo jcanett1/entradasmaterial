@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Package, Mail, Lock, LogIn, AlertCircle, Eye, EyeOff } from 'lucide-react';
+
+const backgroundImages = [
+  '/bodega1.jpg',
+  '/bodega2.jpg',
+  '/bodega3.jpg',
+];
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -8,7 +14,21 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [fadeIn, setFadeIn] = useState(true);
   const { signIn } = useAuth();
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFadeIn(false);
+      setTimeout(() => {
+        setCurrentImageIndex((prev) => (prev + 1) % backgroundImages.length);
+        setFadeIn(true);
+      }, 600);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,12 +45,42 @@ export function Login() {
   };
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center p-4"
-      style={{ background: 'linear-gradient(135deg, #eef2ff 0%, #f8fafc 50%, #ede9fe 100%)' }}
-    >
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Slideshow de fondo */}
+      <div
+        className="absolute inset-0 bg-cover bg-center transition-opacity duration-700"
+        style={{
+          backgroundImage: `url('${backgroundImages[currentImageIndex]}')`,
+          opacity: fadeIn ? 1 : 0,
+        }}
+      />
+      {/* Overlay oscuro para mejorar legibilidad */}
+      <div className="absolute inset-0 bg-black/50" />
+
+      {/* Indicadores de imagen */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+        {backgroundImages.map((_, idx) => (
+          <button
+            key={idx}
+            onClick={() => {
+              setFadeIn(false);
+              setTimeout(() => {
+                setCurrentImageIndex(idx);
+                setFadeIn(true);
+              }, 300);
+            }}
+            className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+              idx === currentImageIndex
+                ? 'bg-white scale-125'
+                : 'bg-white/50 hover:bg-white/75'
+            }`}
+          />
+        ))}
+      </div>
+
+      {/* Tarjeta de login */}
+      <div className="w-full max-w-md relative z-10">
+        <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
           {/* Banner superior */}
           <div
             className="px-8 py-8 flex flex-col items-center"
