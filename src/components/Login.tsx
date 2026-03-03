@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Package, Mail, Lock, LogIn, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const backgroundImages = [
-  '/bodega1.jpg',
-  '/bodega2.jpg',
-  '/bodega3.jpg',
+  `${base}/bodega1.jpg`,
+  `${base}/bodega2.jpg`,
+  `${base}/bodega3.jpg`,
 ];
 
 export function Login() {
