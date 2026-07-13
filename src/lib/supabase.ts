@@ -17,6 +17,7 @@ export type Entry = {
   unit_of_measure: string | null;
   registered_by: string | null;
   registered_at: string;
+  po: string | null;
 };
 
 export type NewEntry = Omit<Entry, 'id' | 'registered_at'>;

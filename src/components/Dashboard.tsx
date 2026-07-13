@@ -74,7 +74,8 @@ export function Dashboard() {
       record.part_number.toLowerCase().includes(term) ||
       (record.description ?? '').toLowerCase().includes(term) ||
       (record.unit_of_measure ?? '').toLowerCase().includes(term) ||
-      (record.registered_by ?? '').toLowerCase().includes(term)
+      (record.registered_by ?? '').toLowerCase().includes(term) ||
+      (record.po ?? '').toLowerCase().includes(term)
     );
     setFilteredRecords(filtered);
   };
@@ -126,6 +127,7 @@ export function Dashboard() {
     const exportData = filteredRecords.map((record) => ({
       'Part Number': record.part_number,
       'Descripción': record.description ?? '',
+      'PO': record.po ?? '',
       'Unidades Totales': record.total_units,
       'Cajas Totales': record.total_boxes,
       'Unidad de Medida': record.unit_of_measure ?? '',

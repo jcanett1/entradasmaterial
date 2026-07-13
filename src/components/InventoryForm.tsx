@@ -8,6 +8,7 @@ import {
   Ruler,
   Save,
   X,
+  ClipboardList,
 } from 'lucide-react';
 
 interface InventoryFormProps {
@@ -30,6 +31,7 @@ export function InventoryForm({
     total_boxes: 0,
     unit_of_measure: '',
     registered_by: userEmail,
+    po: '',
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -43,6 +45,7 @@ export function InventoryForm({
         total_boxes: record.total_boxes,
         unit_of_measure: record.unit_of_measure,
         registered_by: record.registered_by,
+        po: record.po ?? '',
       });
     }
   }, [record]);
@@ -53,7 +56,7 @@ export function InventoryForm({
     if (!formData.part_number.trim()) {
       newErrors.part_number = 'El Part Number es requerido';
     }
-    if (!formData.description.trim()) {
+    if (!formData.description?.trim()) {
       newErrors.description = 'La descripción es requerida';
     }
     if (formData.total_units < 0) {
@@ -62,7 +65,7 @@ export function InventoryForm({
     if (formData.total_boxes < 0) {
       newErrors.total_boxes = 'Las cajas no pueden ser negativas';
     }
-    if (!formData.unit_of_measure.trim()) {
+    if (!formData.unit_of_measure?.trim()) {
       newErrors.unit_of_measure = 'La unidad de medida es requerida';
     }
 
@@ -141,7 +144,7 @@ export function InventoryForm({
         </label>
         <textarea
           name="description"
-          value={formData.description}
+          value={formData.description ?? ''}
           onChange={handleChange}
           rows={2}
           placeholder="Descripción del material..."
@@ -152,6 +155,21 @@ export function InventoryForm({
             <span>⚠</span> {errors.description}
           </p>
         )}
+      </div>
+
+      {/* PO */}
+      <div>
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+          <ClipboardList className="h-3.5 w-3.5 text-purple-400" />
+          PO (Orden de Compra)
+        </label>
+        <input
+          name="po"
+          value={formData.po ?? ''}
+          onChange={handleChange}
+          placeholder="Ej. PO-2024-001"
+          className={inputClass('po')}
+        />
       </div>
 
       {/* Unidades / Cajas */}
@@ -201,7 +219,7 @@ export function InventoryForm({
         </label>
         <select
           name="unit_of_measure"
-          value={formData.unit_of_measure}
+          value={formData.unit_of_measure ?? ''}
           onChange={handleChange}
           className={inputClass('unit_of_measure') + ' cursor-pointer'}
         >

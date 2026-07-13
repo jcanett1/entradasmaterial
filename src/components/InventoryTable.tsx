@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Entry } from '@/lib/supabase';
-import { Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes, Archive, Ruler, User, Calendar, Settings2 } from 'lucide-react';
+import { Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes, Archive, Ruler, User, Calendar, Settings2, ClipboardList } from 'lucide-react';
 
 interface InventoryTableProps {
   records: Entry[];
@@ -49,6 +49,7 @@ export function InventoryTable({
           <tr style={{ background: 'linear-gradient(90deg, #f8f9ff 0%, #f0f4ff 100%)' }}>
             <Th icon={<Hash className="h-3.5 w-3.5" />} label="Part Number" />
             <Th icon={<AlignLeft className="h-3.5 w-3.5" />} label="Descripción" />
+            <Th icon={<ClipboardList className="h-3.5 w-3.5" />} label="PO" />
             <Th icon={<Boxes className="h-3.5 w-3.5" />} label="Unidades" center />
             <Th icon={<Archive className="h-3.5 w-3.5" />} label="Cajas" center />
             <Th icon={<Ruler className="h-3.5 w-3.5" />} label="Unidad de Medida" />
@@ -80,6 +81,17 @@ export function InventoryTable({
                 >
                   {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
                 </p>
+              </td>
+
+              {/* PO */}
+              <td className="px-5 py-4">
+                {record.po ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">
+                    {record.po}
+                  </span>
+                ) : (
+                  <span className="text-gray-400 italic text-sm">—</span>
+                )}
               </td>
 
               {/* Unidades */}
