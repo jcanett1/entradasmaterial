@@ -26,45 +26,31 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
   });
 
   useEffect(() => {
-    generateFifoLabel();
+    loadFifoLabel();
   }, []);
 
-  const generateFifoLabel = async () => {
+  // Solo LEER el FIFO ya asignado — no crear uno nuevo
+  const loadFifoLabel = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      // Obtener el último número FIFO registrado
-      const { data: lastLabel, error: fetchError } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('fifo_labels')
         .select('fifo_number')
-        .order('fifo_number', { ascending: false })
-        .limit(1)
+        .eq('entry_id', record.id)
         .maybeSingle();
 
       if (fetchError) throw fetchError;
 
-      const nextFifo = (lastLabel?.fifo_number ?? 0) + 1;
-
-      // Insertar el nuevo registro de etiqueta
-      const { error: insertError } = await supabase.from('fifo_labels').insert([
-        {
-          fifo_number: nextFifo,
-          entry_id: record.id,
-          part_number: record.part_number,
-          description: record.description,
-          qty: record.total_units,
-          po: record.po,
-          registered_at: record.registered_at,
-        },
-      ]);
-
-      if (insertError) throw insertError;
-
-      setFifoNumber(nextFifo);
+      if (!data) {
+        setError('Esta entrada no tiene etiqueta FIFO asignada. Solo los registros nuevos generan etiqueta automáticamente.');
+      } else {
+        setFifoNumber(data.fifo_number);
+      }
     } catch (err: unknown) {
-      console.error('Error generando etiqueta FIFO:', err);
-      setError('No se pudo generar el número FIFO. Verifica que la tabla fifo_labels exista en Supabase.');
+      console.error('Error cargando etiqueta FIFO:', err);
+      setError('No se pudo cargar el número FIFO. Verifica que la tabla fifo_labels exista en Supabase.');
     } finally {
       setLoading(false);
     }
@@ -141,14 +127,20 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <Loader2 className="h-10 w-10 text-violet-500 animate-spin" />
-              <p className="text-gray-500 text-sm font-medium">Generando número FIFO...</p>
+              <p className="text-gray-500 text-sm font-medium">Cargando etiqueta...</p>
             </div>
           ) : error ? (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
-              <p className="text-red-600 text-sm font-medium">{error}</p>
-              <p className="text-red-400 text-xs mt-2">
-                Ejecuta el SQL de creación de tabla <code>fifo_labels</code> en Supabase y vuelve a intentarlo.
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+              <p className="text-amber-700 text-sm font-medium">{error}</p>
+              <p className="text-amber-500 text-xs mt-2">
+                El número FIFO se asigna automáticamente solo al crear un nuevo registro.
               </p>
+              <button
+                onClick={onClose}
+                className="mt-4 px-4 py-2 rounded-xl text-sm font-semibold border border-amber-200 bg-white text-amber-700 hover:bg-amber-50 transition-all"
+              >
+                Cerrar
+              </button>
             </div>
           ) : (
             <>

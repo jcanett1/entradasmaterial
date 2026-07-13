@@ -93,14 +93,44 @@ export function Dashboard() {
   ======================= */
   const handleCreate = async (data: NewEntry) => {
     if (editingRecord) {
+      // Solo actualizar, no generar nuevo FIFO
       const { error } = await supabase
         .from('entries')
         .update(data)
         .eq('id', editingRecord.id);
       if (error) { alert('Error al actualizar el registro'); return; }
     } else {
-      const { error } = await supabase.from('entries').insert([data]);
-      if (error) { alert('Error al crear el registro'); return; }
+      // Insertar el nuevo registro y obtener su ID
+      const { data: inserted, error: insertError } = await supabase
+        .from('entries')
+        .insert([data])
+        .select('*')
+        .single();
+      if (insertError || !inserted) { alert('Error al crear el registro'); return; }
+
+      // Generar el número FIFO consecutivo y guardarlo en fifo_labels
+      try {
+        const { data: lastLabel } = await supabase
+          .from('fifo_labels')
+          .select('fifo_number')
+          .order('fifo_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const nextFifo = (lastLabel?.fifo_number ?? 0) + 1;
+
+        await supabase.from('fifo_labels').insert([{
+          fifo_number: nextFifo,
+          entry_id: inserted.id,
+          part_number: inserted.part_number,
+          description: inserted.description,
+          qty: inserted.total_units,
+          po: inserted.po,
+          registered_at: inserted.registered_at,
+        }]);
+      } catch (e) {
+        console.error('Error al generar FIFO:', e);
+      }
     }
     setShowForm(false);
     setEditingRecord(null);
