@@ -128,7 +128,7 @@ export function Dashboard() {
       'Part Number': record.part_number,
       'Descripción': record.description ?? '',
       'PO': record.po ?? '',
-      'Unidades Totales': record.total_units,
+      'QTY': record.total_units,
       'Cajas Totales': record.total_boxes,
       'Unidad de Medida': record.unit_of_measure ?? '',
       'Registrado Por': record.registered_by ?? '',

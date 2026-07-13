@@ -50,7 +50,7 @@ export function InventoryTable({
             <Th icon={<Hash className="h-3.5 w-3.5" />} label="Part Number" />
             <Th icon={<AlignLeft className="h-3.5 w-3.5" />} label="Descripción" />
             <Th icon={<ClipboardList className="h-3.5 w-3.5" />} label="PO" />
-            <Th icon={<Boxes className="h-3.5 w-3.5" />} label="Unidades" center />
+            <Th icon={<Boxes className="h-3.5 w-3.5" />} label="QTY" center />
             <Th icon={<Archive className="h-3.5 w-3.5" />} label="Cajas" center />
             <Th icon={<Ruler className="h-3.5 w-3.5" />} label="Unidad de Medida" />
             <Th icon={<User className="h-3.5 w-3.5" />} label="Registrado Por" />
