@@ -15,10 +15,8 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
   const [error, setError] = useState<string | null>(null);
   const labelRef = useRef<HTMLDivElement>(null);
 
-  // Contenido del QR: Part Number + QTY
   const qrContent = `Part Number: ${record.part_number}\nQTY: ${record.total_units}`;
 
-  // Fecha formateada igual que la imagen: DD/Mon/YY
   const formattedDate = new Date(record.registered_at).toLocaleDateString('es-MX', {
     day: '2-digit',
     month: 'short',
@@ -97,8 +95,8 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
     printWindow.document.close();
   };
 
-  // ── Etiqueta física (102mm × 54mm landscape) ──────────────────────────────
-  // Escala de pantalla: 1mm ≈ 3.78px → 102mm ≈ 385px, 54mm ≈ 204px
+  // 102mm × 54mm → escala pantalla: 1mm ≈ 3.78px
+  // 102 × 3.78 ≈ 385px ancho | 54 × 3.78 ≈ 204px alto
   const LABEL_W = 385;
   const LABEL_H = 204;
 
@@ -110,138 +108,120 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
         background: '#ffffff',
         border: '1.5px solid #333',
         borderRadius: '4px',
-        display: 'flex',
-        flexDirection: 'row',
-        overflow: 'hidden',
         fontFamily: 'Arial, Helvetica, sans-serif',
         position: 'relative',
+        overflow: 'hidden',
+        padding: '8px 10px',
+        boxSizing: 'border-box',
       }}
     >
-      {/* ── Columna izquierda: QR ── */}
+      {/* ── Fila superior: Fecha (izq) | Part Number (centro) | PO (der) ── */}
       <div
         style={{
-          width: '130px',
           display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          width: '100%',
+          marginBottom: '4px',
+        }}
+      >
+        {/* Fecha — superior izquierda */}
+        <span
+          style={{
+            fontSize: '13px',
+            fontWeight: 700,
+            color: '#000',
+            whiteSpace: 'nowrap',
+            minWidth: '80px',
+          }}
+        >
+          {formattedDate}
+        </span>
+
+        {/* Part Number — superior centro */}
+        <span
+          style={{
+            fontSize: '13px',
+            fontWeight: 800,
+            color: '#000',
+            fontFamily: 'Arial, monospace',
+            textAlign: 'center',
+            flex: 1,
+            padding: '0 6px',
+            wordBreak: 'break-all',
+            lineHeight: 1.2,
+          }}
+        >
+          {record.part_number}
+        </span>
+
+        {/* PO — superior derecha */}
+        <span
+          style={{
+            fontSize: '13px',
+            fontWeight: 700,
+            color: '#000',
+            whiteSpace: 'nowrap',
+            textAlign: 'right',
+            minWidth: '80px',
+          }}
+        >
+          PO: {record.po || '—'}
+        </span>
+      </div>
+
+      {/* ── Centro: QR ── */}
+      <div
+        style={{
+          display: 'flex',
           justifyContent: 'center',
-          padding: '10px 6px 24px 10px',
-          flexShrink: 0,
+          alignItems: 'center',
+          flex: 1,
+          paddingBottom: '4px',
         }}
       >
         <QRCodeSVG
           value={qrContent}
-          size={108}
+          size={110}
           level="M"
           bgColor="#ffffff"
           fgColor="#000000"
         />
       </div>
 
-      {/* ── Divisor vertical ── */}
-      <div style={{ width: '1px', background: '#ccc', margin: '10px 0' }} />
-
-      {/* ── Columna derecha: datos ── */}
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          padding: '10px 12px 24px 14px',
-          gap: '6px',
-          minWidth: 0,
-        }}
-      >
-        {/* Fecha */}
-        <p
-          style={{
-            fontSize: '22px',
-            fontWeight: 700,
-            color: '#000',
-            margin: 0,
-            lineHeight: 1.1,
-            letterSpacing: '-0.3px',
-          }}
-        >
-          {formattedDate}
-        </p>
-
-        {/* PO */}
-        <p
-          style={{
-            fontSize: '17px',
-            fontWeight: 700,
-            color: '#000',
-            margin: 0,
-            lineHeight: 1.1,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          PO: {record.po || '—'}
-        </p>
-
-        {/* Part Number */}
-        <p
-          style={{
-            fontSize: '15px',
-            fontWeight: 800,
-            color: '#000',
-            margin: 0,
-            lineHeight: 1.1,
-            fontFamily: 'Arial, monospace',
-            wordBreak: 'break-all',
-          }}
-        >
-          {record.part_number}
-        </p>
-
-        {/* QTY */}
-        <p
-          style={{
-            fontSize: '20px',
-            fontWeight: 900,
-            color: '#000',
-            margin: 0,
-            lineHeight: 1.1,
-          }}
-        >
-          QTY: {record.total_units.toLocaleString()}
-        </p>
-      </div>
-
-      {/* ── Footer: FIFO abajo a la izquierda ── */}
+      {/* ── Fila inferior: FIFO (izq) | QTY (der) ── */}
       <div
         style={{
           position: 'absolute',
-          bottom: '5px',
+          bottom: '7px',
           left: '10px',
+          right: '10px',
           display: 'flex',
-          alignItems: 'center',
-          gap: '4px',
+          justifyContent: 'space-between',
+          alignItems: 'flex-end',
         }}
       >
+        {/* FIFO — inferior izquierda */}
         <span
           style={{
-            fontSize: '9px',
-            fontWeight: 700,
-            color: '#555',
-            letterSpacing: '1px',
-            textTransform: 'uppercase',
+            fontSize: '13px',
+            fontWeight: 900,
+            color: '#000',
+            letterSpacing: '0.5px',
           }}
         >
-          FIFO:
+          FIFO: {fifoNumber}
         </span>
+
+        {/* QTY — inferior derecha */}
         <span
           style={{
-            fontSize: '11px',
+            fontSize: '16px',
             fontWeight: 900,
             color: '#000',
           }}
         >
-          {fifoNumber}
+          QTY: {record.total_units.toLocaleString()}
         </span>
       </div>
     </div>
@@ -284,15 +264,14 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
           ) : (
             <>
               {/* Vista previa */}
-              <div className="flex justify-center mb-5">
+              <div className="flex justify-center mb-4">
                 <div ref={labelRef}>
                   <LabelContent />
                 </div>
               </div>
 
-              {/* Info de escala */}
               <p className="text-center text-xs text-gray-400 mb-5">
-                Vista previa a escala de pantalla · La impresión se ajusta a 102 × 54 mm
+                Vista previa a escala · Impresión ajustada a 102 × 54 mm landscape
               </p>
 
               {/* Botones */}
