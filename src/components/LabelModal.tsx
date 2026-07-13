@@ -18,22 +18,20 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
   // Contenido del QR: Part Number + QTY
   const qrContent = `Part Number: ${record.part_number}\nQTY: ${record.total_units}`;
 
-  // Fecha formateada
+  // Fecha formateada igual que la imagen: DD/Mon/YY
   const formattedDate = new Date(record.registered_at).toLocaleDateString('es-MX', {
     day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
+    month: 'short',
+    year: '2-digit',
   });
 
   useEffect(() => {
     loadFifoLabel();
   }, []);
 
-  // Solo LEER el FIFO ya asignado — no crear uno nuevo
   const loadFifoLabel = async () => {
     setLoading(true);
     setError(null);
-
     try {
       const { data, error: fetchError } = await supabase
         .from('fifo_labels')
@@ -60,7 +58,7 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
     const printContent = labelRef.current;
     if (!printContent) return;
 
-    const printWindow = window.open('', '_blank', 'width=600,height=500');
+    const printWindow = window.open('', '_blank', 'width=800,height=500');
     if (!printWindow) return;
 
     printWindow.document.write(`
@@ -71,31 +69,26 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
           <title>Etiqueta FIFO ${fifoNumber}</title>
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-              font-family: Arial, sans-serif;
+            html, body {
+              width: 102mm;
+              height: 54mm;
               background: #fff;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              min-height: 100vh;
-            }
-            .label-wrapper {
-              width: 100mm;
-              padding: 0;
+              font-family: Arial, Helvetica, sans-serif;
             }
             @media print {
-              body { background: #fff; }
-              @page { size: 100mm 150mm; margin: 4mm; }
+              html, body { width: 102mm; height: 54mm; }
+              @page {
+                size: 102mm 54mm landscape;
+                margin: 0;
+              }
             }
           </style>
         </head>
         <body>
-          <div class="label-wrapper">
-            ${printContent.innerHTML}
-          </div>
+          ${printContent.innerHTML}
           <script>
             window.onload = function() {
-              setTimeout(function() { window.print(); window.close(); }, 300);
+              setTimeout(function() { window.print(); window.close(); }, 400);
             };
           <\/script>
         </body>
@@ -104,199 +97,203 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
     printWindow.document.close();
   };
 
+  // ── Etiqueta física (102mm × 54mm landscape) ──────────────────────────────
+  // Escala de pantalla: 1mm ≈ 3.78px → 102mm ≈ 385px, 54mm ≈ 204px
+  const LABEL_W = 385;
+  const LABEL_H = 204;
+
+  const LabelContent = () => (
+    <div
+      style={{
+        width: `${LABEL_W}px`,
+        height: `${LABEL_H}px`,
+        background: '#ffffff',
+        border: '1.5px solid #333',
+        borderRadius: '4px',
+        display: 'flex',
+        flexDirection: 'row',
+        overflow: 'hidden',
+        fontFamily: 'Arial, Helvetica, sans-serif',
+        position: 'relative',
+      }}
+    >
+      {/* ── Columna izquierda: QR ── */}
+      <div
+        style={{
+          width: '130px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '10px 6px 24px 10px',
+          flexShrink: 0,
+        }}
+      >
+        <QRCodeSVG
+          value={qrContent}
+          size={108}
+          level="M"
+          bgColor="#ffffff"
+          fgColor="#000000"
+        />
+      </div>
+
+      {/* ── Divisor vertical ── */}
+      <div style={{ width: '1px', background: '#ccc', margin: '10px 0' }} />
+
+      {/* ── Columna derecha: datos ── */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          padding: '10px 12px 24px 14px',
+          gap: '6px',
+          minWidth: 0,
+        }}
+      >
+        {/* Fecha */}
+        <p
+          style={{
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#000',
+            margin: 0,
+            lineHeight: 1.1,
+            letterSpacing: '-0.3px',
+          }}
+        >
+          {formattedDate}
+        </p>
+
+        {/* PO */}
+        <p
+          style={{
+            fontSize: '17px',
+            fontWeight: 700,
+            color: '#000',
+            margin: 0,
+            lineHeight: 1.1,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          PO: {record.po || '—'}
+        </p>
+
+        {/* Part Number */}
+        <p
+          style={{
+            fontSize: '15px',
+            fontWeight: 800,
+            color: '#000',
+            margin: 0,
+            lineHeight: 1.1,
+            fontFamily: 'Arial, monospace',
+            wordBreak: 'break-all',
+          }}
+        >
+          {record.part_number}
+        </p>
+
+        {/* QTY */}
+        <p
+          style={{
+            fontSize: '20px',
+            fontWeight: 900,
+            color: '#000',
+            margin: 0,
+            lineHeight: 1.1,
+          }}
+        >
+          QTY: {record.total_units.toLocaleString()}
+        </p>
+      </div>
+
+      {/* ── Footer: FIFO abajo a la izquierda ── */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: '5px',
+          left: '10px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+        }}
+      >
+        <span
+          style={{
+            fontSize: '9px',
+            fontWeight: 700,
+            color: '#555',
+            letterSpacing: '1px',
+            textTransform: 'uppercase',
+          }}
+        >
+          FIFO:
+        </span>
+        <span
+          style={{
+            fontSize: '11px',
+            fontWeight: 900,
+            color: '#000',
+          }}
+        >
+          {fifoNumber}
+        </span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-gray-100">
-        {/* Header del modal */}
-        <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100">
+      <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl border border-gray-100">
+
+        {/* Header */}
+        <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl" style={{ background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)' }}>
               <Tag className="h-4 w-4 text-white" />
             </div>
-            <h2 className="text-lg font-bold text-gray-900">Etiqueta FIFO</h2>
+            <div>
+              <h2 className="text-base font-bold text-gray-900">Etiqueta FIFO</h2>
+              <p className="text-xs text-gray-400">DYMO 550 · 102mm × 54mm</p>
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all"
-          >
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="p-6">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
               <Loader2 className="h-10 w-10 text-violet-500 animate-spin" />
               <p className="text-gray-500 text-sm font-medium">Cargando etiqueta...</p>
             </div>
           ) : error ? (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
               <p className="text-amber-700 text-sm font-medium">{error}</p>
-              <p className="text-amber-500 text-xs mt-2">
-                El número FIFO se asigna automáticamente solo al crear un nuevo registro.
-              </p>
-              <button
-                onClick={onClose}
-                className="mt-4 px-4 py-2 rounded-xl text-sm font-semibold border border-amber-200 bg-white text-amber-700 hover:bg-amber-50 transition-all"
-              >
+              <p className="text-amber-500 text-xs mt-2">El número FIFO se asigna automáticamente solo al crear un nuevo registro.</p>
+              <button onClick={onClose} className="mt-4 px-4 py-2 rounded-xl text-sm font-semibold border border-amber-200 bg-white text-amber-700 hover:bg-amber-50 transition-all">
                 Cerrar
               </button>
             </div>
           ) : (
             <>
-              {/* Vista previa de la etiqueta */}
+              {/* Vista previa */}
               <div className="flex justify-center mb-5">
-                <div
-                  ref={labelRef}
-                  style={{
-                    width: '340px',
-                    border: '2px solid #1e1b4b',
-                    borderRadius: '8px',
-                    fontFamily: 'Arial, sans-serif',
-                    background: '#ffffff',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {/* Cabecera con FIFO */}
-                  <div
-                    style={{
-                      background: 'linear-gradient(135deg, #1e1b4b 0%, #4f46e5 100%)',
-                      padding: '10px 14px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div>
-                      <p style={{ color: '#a5b4fc', fontSize: '9px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', margin: 0 }}>
-                        PXG INTERNO
-                      </p>
-                      <p style={{ color: '#ffffff', fontSize: '11px', fontWeight: 700, margin: '2px 0 0 0' }}>
-                        Control de Entradas
-                      </p>
-                    </div>
-                    <div
-                      style={{
-                        background: '#f59e0b',
-                        borderRadius: '6px',
-                        padding: '4px 10px',
-                        textAlign: 'center',
-                      }}
-                    >
-                      <p style={{ color: '#1e1b4b', fontSize: '8px', fontWeight: 700, margin: 0, letterSpacing: '1px' }}>FIFO</p>
-                      <p style={{ color: '#1e1b4b', fontSize: '20px', fontWeight: 900, margin: 0, lineHeight: 1 }}>
-                        {fifoNumber}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Cuerpo */}
-                  <div style={{ padding: '12px 14px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                    {/* Info izquierda */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* Fecha */}
-                      <div style={{ marginBottom: '8px' }}>
-                        <p style={{ fontSize: '8px', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '0 0 2px 0' }}>
-                          Fecha
-                        </p>
-                        <p style={{ fontSize: '11px', color: '#111827', fontWeight: 600, margin: 0 }}>
-                          {formattedDate}
-                        </p>
-                      </div>
-
-                      {/* PO */}
-                      <div style={{ marginBottom: '8px' }}>
-                        <p style={{ fontSize: '8px', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '0 0 2px 0' }}>
-                          PO
-                        </p>
-                        <p style={{ fontSize: '11px', color: '#7c3aed', fontWeight: 700, margin: 0 }}>
-                          {record.po || '—'}
-                        </p>
-                      </div>
-
-                      {/* Part Number */}
-                      <div style={{ marginBottom: '8px' }}>
-                        <p style={{ fontSize: '8px', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '0 0 2px 0' }}>
-                          Part Number
-                        </p>
-                        <p style={{ fontSize: '10px', color: '#1e1b4b', fontWeight: 800, fontFamily: 'monospace', margin: 0, wordBreak: 'break-all' }}>
-                          {record.part_number}
-                        </p>
-                      </div>
-
-                      {/* Descripción */}
-                      <div style={{ marginBottom: '8px' }}>
-                        <p style={{ fontSize: '8px', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '0 0 2px 0' }}>
-                          Descripción
-                        </p>
-                        <p style={{ fontSize: '9px', color: '#374151', fontWeight: 500, margin: 0, lineHeight: '1.3' }}>
-                          {record.description || '—'}
-                        </p>
-                      </div>
-
-                      {/* QTY */}
-                      <div
-                        style={{
-                          background: '#eff6ff',
-                          border: '1px solid #bfdbfe',
-                          borderRadius: '6px',
-                          padding: '5px 8px',
-                          display: 'inline-block',
-                        }}
-                      >
-                        <p style={{ fontSize: '8px', color: '#3b82f6', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', margin: '0 0 1px 0' }}>
-                          QTY
-                        </p>
-                        <p style={{ fontSize: '20px', color: '#1d4ed8', fontWeight: 900, margin: 0, lineHeight: 1 }}>
-                          {record.total_units.toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* QR derecha */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                      <div
-                        style={{
-                          border: '1px solid #e5e7eb',
-                          borderRadius: '6px',
-                          padding: '6px',
-                          background: '#fff',
-                        }}
-                      >
-                        <QRCodeSVG
-                          value={qrContent}
-                          size={90}
-                          level="M"
-                          bgColor="#ffffff"
-                          fgColor="#1e1b4b"
-                        />
-                      </div>
-                      <p style={{ fontSize: '7px', color: '#9ca3af', textAlign: 'center', margin: 0, maxWidth: '90px', lineHeight: '1.2' }}>
-                        Escanea para ver Part Number y QTY
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Footer */}
-                  <div
-                    style={{
-                      background: '#f9fafb',
-                      borderTop: '1px solid #e5e7eb',
-                      padding: '5px 14px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <p style={{ fontSize: '8px', color: '#9ca3af', margin: 0 }}>
-                      Registrado por: {record.registered_by ?? '—'}
-                    </p>
-                    <p style={{ fontSize: '8px', color: '#9ca3af', margin: 0 }}>
-                      ID: {record.id}
-                    </p>
-                  </div>
+                <div ref={labelRef}>
+                  <LabelContent />
                 </div>
               </div>
+
+              {/* Info de escala */}
+              <p className="text-center text-xs text-gray-400 mb-5">
+                Vista previa a escala de pantalla · La impresión se ajusta a 102 × 54 mm
+              </p>
 
               {/* Botones */}
               <div className="flex gap-3">
