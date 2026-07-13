@@ -3,17 +3,17 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-"scripts": {
-  "dev": "vite",
-  "build": "tsc -b && vite build",
-  "build:prod": "tsc -b && BUILD_MODE=prod vite build",
-  "lint": "eslint .",
-  "preview": "vite preview",
-  "predeploy": "pnpm run build",
-  "deploy": "gh-pages -d dist",
-  "install-deps": "pnpm install --prefer-offline",
-  "clean": "rm -rf node_modules .pnpm-store pnpm-lock.yaml && pnpm store prune"
-},
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "build:prod": "tsc -b && BUILD_MODE=prod vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "predeploy": "pnpm run build",
+    "deploy": "gh-pages -d dist",
+    "install-deps": "pnpm install --prefer-offline",
+    "clean": "rm -rf node_modules .pnpm-store pnpm-lock.yaml && pnpm store prune"
+  },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.2",
@@ -55,6 +55,7 @@
     "next-themes": "^0.4.4",
     "papaparse": "^5.5.3",
     "playwright": "1.57.0",
+    "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-day-picker": "8.10.1",
     "react-dom": "^18.3.1",

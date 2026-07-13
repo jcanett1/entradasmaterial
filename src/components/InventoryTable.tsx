@@ -1,12 +1,13 @@
 import React from 'react';
 import type { Entry } from '@/lib/supabase';
-import { Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes, Archive, Ruler, User, Calendar, Settings2, ClipboardList } from 'lucide-react';
+import { Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes, Archive, Ruler, User, Calendar, Settings2, ClipboardList, Tag } from 'lucide-react';
 
 interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
   onEdit: (record: Entry) => void;
   onDelete: (id: number) => void;
+  onLabel: (record: Entry) => void;
 }
 
 export function InventoryTable({
@@ -14,6 +15,7 @@ export function InventoryTable({
   loading,
   onEdit,
   onDelete,
+  onLabel,
 }: InventoryTableProps) {
   if (loading) {
     return (
@@ -94,7 +96,7 @@ export function InventoryTable({
                 )}
               </td>
 
-              {/* Unidades */}
+              {/* QTY */}
               <td className="px-5 py-4 text-center">
                 <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
                   {record.total_units.toLocaleString()}
@@ -143,7 +145,18 @@ export function InventoryTable({
 
               {/* Acciones */}
               <td className="px-5 py-4">
-                <div className="flex justify-center items-center gap-1.5">
+                <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                  {/* Crear Etiqueta */}
+                  <button
+                    onClick={() => onLabel(record)}
+                    title="Crear etiqueta FIFO"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95"
+                  >
+                    <Tag className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Etiqueta</span>
+                  </button>
+
+                  {/* Editar */}
                   <button
                     onClick={() => onEdit(record)}
                     title="Editar registro"
@@ -153,6 +166,7 @@ export function InventoryTable({
                     <span className="hidden sm:inline">Editar</span>
                   </button>
 
+                  {/* Eliminar */}
                   <button
                     onClick={() => onDelete(record.id)}
                     title="Eliminar registro"

@@ -4,6 +4,7 @@ import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { InventoryForm } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
+import { LabelModal } from './LabelModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
 import {
   Package,
@@ -29,6 +30,7 @@ export function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [stats, setStats] = useState({ total: 0, units: 0, boxes: 0 });
   const [refreshing, setRefreshing] = useState(false);
+  const [labelRecord, setLabelRecord] = useState<Entry | null>(null);
 
   /* =======================
      FETCH
@@ -111,6 +113,10 @@ export function Dashboard() {
   const handleEdit = (record: Entry) => {
     setEditingRecord(record);
     setShowForm(true);
+  };
+
+  const handleLabel = (record: Entry) => {
+    setLabelRecord(record);
   };
 
   const handleDelete = async (id: number) => {
@@ -263,9 +269,18 @@ export function Dashboard() {
             loading={loading}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            onLabel={handleLabel}
           />
         </div>
       </main>
+
+      {/* Modal Etiqueta FIFO */}
+      {labelRecord && (
+        <LabelModal
+          record={labelRecord}
+          onClose={() => setLabelRecord(null)}
+        />
+      )}
 
       {/* Modal Nuevo/Editar Registro */}
       {showForm && (
