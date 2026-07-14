@@ -108,11 +108,12 @@ export function Dashboard() {
         .single();
       if (insertError || !inserted) { alert('Error al crear el registro'); return; }
 
-      // Generar el número FIFO consecutivo y guardarlo en fifo_labels
+      // Generar el número FIFO consecutivo POR NÚMERO DE PARTE y guardarlo en fifo_labels
       try {
         const { data: lastLabel } = await supabase
           .from('fifo_labels')
           .select('fifo_number')
+          .eq('part_number', inserted.part_number)
           .order('fifo_number', { ascending: false })
           .limit(1)
           .maybeSingle();
