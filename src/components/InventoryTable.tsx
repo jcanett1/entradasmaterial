@@ -1,6 +1,12 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Entry } from '@/lib/supabase';
-import { Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes, Archive, Ruler, User, Calendar, Settings2, ClipboardList, Tag } from 'lucide-react';
+import {
+  Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes,
+  Archive, Ruler, User, Calendar, Settings2, ClipboardList, Tag,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+} from 'lucide-react';
+
+const PAGE_SIZE = 25;
 
 interface InventoryTableProps {
   records: Entry[];
@@ -10,13 +16,14 @@ interface InventoryTableProps {
   onLabel: (record: Entry) => void;
 }
 
-export function InventoryTable({
-  records,
-  loading,
-  onEdit,
-  onDelete,
-  onLabel,
-}: InventoryTableProps) {
+export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: InventoryTableProps) {
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reiniciar a página 1 cuando cambia la lista (búsqueda, nuevo registro, etc.)
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [records.length]);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -44,159 +51,238 @@ export function InventoryTable({
     );
   }
 
+  const totalPages = Math.ceil(records.length / PAGE_SIZE);
+  const safePage = Math.min(currentPage, totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRecords = records.slice(startIdx, startIdx + PAGE_SIZE);
+
+  const goTo = (page: number) => setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+
+  // Rango de páginas visibles (máx 5 botones)
+  const getPageRange = () => {
+    const delta = 2;
+    const range: number[] = [];
+    const left = Math.max(1, safePage - delta);
+    const right = Math.min(totalPages, safePage + delta);
+    for (let i = left; i <= right; i++) range.push(i);
+    return range;
+  };
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr style={{ background: 'linear-gradient(90deg, #f8f9ff 0%, #f0f4ff 100%)' }}>
-            <Th icon={<Hash className="h-3.5 w-3.5" />} label="Part Number" />
-            <Th icon={<AlignLeft className="h-3.5 w-3.5" />} label="Descripción" />
-            <Th icon={<ClipboardList className="h-3.5 w-3.5" />} label="PO" />
-            <Th icon={<Boxes className="h-3.5 w-3.5" />} label="QTY" center />
-            <Th icon={<Archive className="h-3.5 w-3.5" />} label="Cajas" center />
-            <Th icon={<Ruler className="h-3.5 w-3.5" />} label="Unidad de Medida" />
-            <Th icon={<User className="h-3.5 w-3.5" />} label="Registrado Por" />
-            <Th icon={<Calendar className="h-3.5 w-3.5" />} label="Fecha de Registro" />
-            <Th icon={<Settings2 className="h-3.5 w-3.5" />} label="Acciones" center />
-          </tr>
-        </thead>
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr style={{ background: 'linear-gradient(90deg, #f8f9ff 0%, #f0f4ff 100%)' }}>
+              <Th icon={<Hash className="h-3.5 w-3.5" />} label="Part Number" />
+              <Th icon={<AlignLeft className="h-3.5 w-3.5" />} label="Descripción" />
+              <Th icon={<ClipboardList className="h-3.5 w-3.5" />} label="PO" />
+              <Th icon={<Boxes className="h-3.5 w-3.5" />} label="QTY" center />
+              <Th icon={<Archive className="h-3.5 w-3.5" />} label="Cajas" center />
+              <Th icon={<Ruler className="h-3.5 w-3.5" />} label="Unidad de Medida" />
+              <Th icon={<User className="h-3.5 w-3.5" />} label="Registrado Por" />
+              <Th icon={<Calendar className="h-3.5 w-3.5" />} label="Fecha de Registro" />
+              <Th icon={<Settings2 className="h-3.5 w-3.5" />} label="Acciones" center />
+            </tr>
+          </thead>
 
-        <tbody>
-          {records.map((record, idx) => (
-            <tr
-              key={record.id}
-              className="group transition-colors duration-150 hover:bg-indigo-50/40 border-b border-gray-100 last:border-0"
-              style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafbff' }}
-            >
-              {/* Part Number */}
-              <td className="px-5 py-4">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
-                  {record.part_number}
-                </span>
-              </td>
-
-              {/* Descripción */}
-              <td className="px-5 py-4">
-                <p
-                  className="text-gray-800 text-sm font-medium max-w-xs truncate"
-                  title={record.description ?? ''}
-                >
-                  {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
-                </p>
-              </td>
-
-              {/* PO */}
-              <td className="px-5 py-4">
-                {record.po ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">
-                    {record.po}
+          <tbody>
+            {pageRecords.map((record, idx) => (
+              <tr
+                key={record.id}
+                className="group transition-colors duration-150 hover:bg-indigo-50/40 border-b border-gray-100 last:border-0"
+                style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafbff' }}
+              >
+                {/* Part Number */}
+                <td className="px-5 py-4">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
+                    {record.part_number}
                   </span>
-                ) : (
-                  <span className="text-gray-400 italic text-sm">—</span>
-                )}
-              </td>
+                </td>
 
-              {/* QTY */}
-              <td className="px-5 py-4 text-center">
-                <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
-                  {record.total_units.toLocaleString()}
-                </span>
-              </td>
+                {/* Descripción */}
+                <td className="px-5 py-4">
+                  <p className="text-gray-800 text-sm font-medium max-w-xs truncate" title={record.description ?? ''}>
+                    {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
+                  </p>
+                </td>
 
-              {/* Cajas */}
-              <td className="px-5 py-4 text-center">
-                <span className="inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm border border-emerald-100">
-                  {record.total_boxes}
-                </span>
-              </td>
+                {/* PO */}
+                <td className="px-5 py-4">
+                  {record.po ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">
+                      {record.po}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 italic text-sm">—</span>
+                  )}
+                </td>
 
-              {/* Unidad de Medida */}
-              <td className="px-5 py-4">
-                <span className="inline-flex px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-100">
-                  {record.unit_of_measure || '—'}
-                </span>
-              </td>
+                {/* QTY */}
+                <td className="px-5 py-4 text-center">
+                  <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
+                    {record.total_units.toLocaleString()}
+                  </span>
+                </td>
 
-              {/* Registrado Por */}
-              <td className="px-5 py-4">
-                <div className="flex items-center gap-2">
-                  <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                    <span className="text-indigo-600 text-xs font-bold uppercase">
-                      {(record.registered_by ?? '?')[0]}
+                {/* Cajas */}
+                <td className="px-5 py-4 text-center">
+                  <span className="inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm border border-emerald-100">
+                    {record.total_boxes}
+                  </span>
+                </td>
+
+                {/* Unidad de Medida */}
+                <td className="px-5 py-4">
+                  <span className="inline-flex px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-100">
+                    {record.unit_of_measure || '—'}
+                  </span>
+                </td>
+
+                {/* Registrado Por */}
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                      <span className="text-indigo-600 text-xs font-bold uppercase">
+                        {(record.registered_by ?? '?')[0]}
+                      </span>
+                    </div>
+                    <span className="text-sm text-gray-600 truncate max-w-[140px]" title={record.registered_by ?? ''}>
+                      {record.registered_by}
                     </span>
                   </div>
-                  <span className="text-sm text-gray-600 truncate max-w-[140px]" title={record.registered_by ?? ''}>
-                    {record.registered_by}
-                  </span>
-                </div>
-              </td>
+                </td>
 
-              {/* Fecha */}
-              <td className="px-5 py-4">
-                <div className="flex flex-col">
-                  <span className="text-sm text-gray-700 font-medium">
-                    {new Date(record.registered_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </span>
-                  <span className="text-xs text-gray-400 mt-0.5">
-                    {new Date(record.registered_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-              </td>
+                {/* Fecha */}
+                <td className="px-5 py-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm text-gray-700 font-medium">
+                      {new Date(record.registered_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </span>
+                    <span className="text-xs text-gray-400 mt-0.5">
+                      {new Date(record.registered_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </td>
 
-              {/* Acciones */}
-              <td className="px-5 py-4">
-                <div className="flex justify-center items-center gap-1.5 flex-wrap">
-                  {/* Crear Etiqueta */}
-                  <button
-                    onClick={() => onLabel(record)}
-                    title="Crear etiqueta FIFO"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95"
-                  >
-                    <Tag className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Etiqueta</span>
-                  </button>
+                {/* Acciones */}
+                <td className="px-5 py-4">
+                  <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                    <button onClick={() => onLabel(record)} title="Crear etiqueta FIFO"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
+                      <Tag className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Etiqueta</span>
+                    </button>
+                    <button onClick={() => onEdit(record)} title="Editar registro"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95">
+                      <Edit2 className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Editar</span>
+                    </button>
+                    <button onClick={() => onDelete(record.id)} title="Eliminar registro"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95">
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Eliminar</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-                  {/* Editar */}
-                  <button
-                    onClick={() => onEdit(record)}
-                    title="Editar registro"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95"
-                  >
-                    <Edit2 className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Editar</span>
-                  </button>
+      {/* ── Paginación ── */}
+      {totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-4 border-t border-gray-100 bg-gray-50/60">
+          {/* Info */}
+          <p className="text-xs text-gray-500 order-2 sm:order-1">
+            Mostrando{' '}
+            <span className="font-semibold text-gray-700">{startIdx + 1}–{Math.min(startIdx + PAGE_SIZE, records.length)}</span>
+            {' '}de{' '}
+            <span className="font-semibold text-gray-700">{records.length}</span> registros
+          </p>
 
-                  {/* Eliminar */}
-                  <button
-                    onClick={() => onDelete(record.id)}
-                    title="Eliminar registro"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Eliminar</span>
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          {/* Controles */}
+          <div className="flex items-center gap-1 order-1 sm:order-2">
+            {/* Primera página */}
+            <PagBtn onClick={() => goTo(1)} disabled={safePage === 1} title="Primera página">
+              <ChevronsLeft className="h-4 w-4" />
+            </PagBtn>
+
+            {/* Página anterior */}
+            <PagBtn onClick={() => goTo(safePage - 1)} disabled={safePage === 1} title="Página anterior">
+              <ChevronLeft className="h-4 w-4" />
+            </PagBtn>
+
+            {/* Números de página */}
+            {getPageRange()[0] > 1 && (
+              <>
+                <PagNum page={1} current={safePage} onClick={() => goTo(1)} />
+                {getPageRange()[0] > 2 && <span className="px-1 text-gray-400 text-sm">…</span>}
+              </>
+            )}
+
+            {getPageRange().map((p) => (
+              <PagNum key={p} page={p} current={safePage} onClick={() => goTo(p)} />
+            ))}
+
+            {getPageRange()[getPageRange().length - 1] < totalPages && (
+              <>
+                {getPageRange()[getPageRange().length - 1] < totalPages - 1 && (
+                  <span className="px-1 text-gray-400 text-sm">…</span>
+                )}
+                <PagNum page={totalPages} current={safePage} onClick={() => goTo(totalPages)} />
+              </>
+            )}
+
+            {/* Página siguiente */}
+            <PagBtn onClick={() => goTo(safePage + 1)} disabled={safePage === totalPages} title="Página siguiente">
+              <ChevronRight className="h-4 w-4" />
+            </PagBtn>
+
+            {/* Última página */}
+            <PagBtn onClick={() => goTo(totalPages)} disabled={safePage === totalPages} title="Última página">
+              <ChevronsRight className="h-4 w-4" />
+            </PagBtn>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/* =======================
-   HELPER: Table Header Cell
-======================= */
+/* ── Helpers ── */
+
 function Th({ icon, label, center }: { icon: React.ReactNode; label: string; center?: boolean }) {
   return (
-    <th
-      className={`px-5 py-3.5 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 ${center ? 'text-center' : 'text-left'}`}
-    >
+    <th className={`px-5 py-3.5 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 ${center ? 'text-center' : 'text-left'}`}>
       <div className={`flex items-center gap-1.5 ${center ? 'justify-center' : ''}`}>
         <span className="text-indigo-400">{icon}</span>
         {label}
       </div>
     </th>
+  );
+}
+
+function PagBtn({ onClick, disabled, title, children }: { onClick: () => void; disabled: boolean; title: string; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} title={title}
+      className="p-1.5 rounded-lg text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95">
+      {children}
+    </button>
+  );
+}
+
+function PagNum({ page, current, onClick }: { page: number; current: number; onClick: () => void }) {
+  const isActive = page === current;
+  return (
+    <button type="button" onClick={onClick}
+      className={`min-w-[32px] h-8 px-2 rounded-lg text-sm font-semibold transition-all active:scale-95 ${
+        isActive
+          ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
+          : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
+      }`}>
+      {page}
+    </button>
   );
 }
