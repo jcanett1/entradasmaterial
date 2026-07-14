@@ -102,7 +102,7 @@ export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: 
 
                 {/* Descripción */}
                 <td className="px-5 py-4">
-                  <p className="text-gray-800 text-sm font-medium max-w-xs truncate" title={record.description ?? ''}>
+                  <p className="text-gray-800 text-sm font-medium max-w-[160px] truncate" title={record.description ?? ''}>
                     {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
                   </p>
                 </td>
