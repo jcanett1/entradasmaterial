@@ -15,7 +15,7 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
   const [error, setError] = useState<string | null>(null);
   const labelRef = useRef<HTMLDivElement>(null);
 
-  const qrContent = `Part Number: ${record.part_number}\nQTY: ${record.total_units}`;
+  // El QR se construye después de cargar el fifoNumber, se define abajo
 
   const formattedDate = new Date(record.registered_at).toLocaleDateString('es-MX', {
     day: '2-digit',
@@ -99,6 +99,9 @@ export function LabelModal({ record, onClose }: LabelModalProps) {
   // 102 × 3.78 ≈ 385px ancho | 54 × 3.78 ≈ 204px alto
   const LABEL_W = 385;
   const LABEL_H = 204;
+
+  // Contenido del QR: Part Number + QTY + FIFO
+  const qrContent = `Part Number: ${record.part_number}\nQTY: ${record.total_units}\nFIFO: ${fifoNumber}`;
 
   const LabelContent = () => (
     <div
