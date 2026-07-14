@@ -37,7 +37,7 @@ const PAGE_SIZE = 25;
 
 export function ExitsPage() {
   const { session } = useAuth();
-  const userEmail = session?.user?.email ?? '';
+  const userEmail = session?.email ?? '';
 
   const [exits, setExits] = useState<Exit[]>([]);
   const [loading, setLoading] = useState(true);
