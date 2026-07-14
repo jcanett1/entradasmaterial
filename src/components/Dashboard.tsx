@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { InventoryForm } from './InventoryForm';
+import type { MultiEntry } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
 import { LabelModal } from './LabelModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
@@ -91,46 +92,68 @@ export function Dashboard() {
   /* =======================
      CREATE / UPDATE
   ======================= */
-  const handleCreate = async (data: NewEntry) => {
+  // Función auxiliar: inserta un entry y genera su FIFO por part_number
+  const insertEntryWithFifo = async (entry: NewEntry) => {
+    const { data: inserted, error: insertError } = await supabase
+      .from('entries')
+      .insert([entry])
+      .select('*')
+      .single();
+    if (insertError || !inserted) throw new Error('Error al crear el registro');
+
+    const { data: lastLabel } = await supabase
+      .from('fifo_labels')
+      .select('fifo_number')
+      .eq('part_number', inserted.part_number)
+      .order('fifo_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const nextFifo = (lastLabel?.fifo_number ?? 0) + 1;
+
+    await supabase.from('fifo_labels').insert([{
+      fifo_number: nextFifo,
+      entry_id: inserted.id,
+      part_number: inserted.part_number,
+      description: inserted.description,
+      qty: inserted.total_units,
+      po: inserted.po,
+      registered_at: inserted.registered_at,
+    }]);
+  };
+
+  const handleCreate = async (data: NewEntry | MultiEntry) => {
     if (editingRecord) {
-      // Solo actualizar, no generar nuevo FIFO
+      // Solo actualizar, sin tocar FIFO
       const { error } = await supabase
         .from('entries')
-        .update(data)
+        .update(data as NewEntry)
         .eq('id', editingRecord.id);
       if (error) { alert('Error al actualizar el registro'); return; }
-    } else {
-      // Insertar el nuevo registro y obtener su ID
-      const { data: inserted, error: insertError } = await supabase
-        .from('entries')
-        .insert([data])
-        .select('*')
-        .single();
-      if (insertError || !inserted) { alert('Error al crear el registro'); return; }
-
-      // Generar el número FIFO consecutivo POR NÚMERO DE PARTE y guardarlo en fifo_labels
+    } else if ('lines' in data) {
+      // Múltiples líneas del mismo Part Number
+      const multi = data as MultiEntry;
       try {
-        const { data: lastLabel } = await supabase
-          .from('fifo_labels')
-          .select('fifo_number')
-          .eq('part_number', inserted.part_number)
-          .order('fifo_number', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const nextFifo = (lastLabel?.fifo_number ?? 0) + 1;
-
-        await supabase.from('fifo_labels').insert([{
-          fifo_number: nextFifo,
-          entry_id: inserted.id,
-          part_number: inserted.part_number,
-          description: inserted.description,
-          qty: inserted.total_units,
-          po: inserted.po,
-          registered_at: inserted.registered_at,
-        }]);
+        for (const line of multi.lines) {
+          await insertEntryWithFifo({
+            ...multi.base,
+            total_units: line.total_units,
+            total_boxes: line.total_boxes,
+          } as NewEntry);
+        }
       } catch (e) {
-        console.error('Error al generar FIFO:', e);
+        console.error('Error al guardar múltiples registros:', e);
+        alert('Error al guardar uno o más registros');
+        return;
+      }
+    } else {
+      // Registro único
+      try {
+        await insertEntryWithFifo(data as NewEntry);
+      } catch (e) {
+        console.error('Error al crear el registro:', e);
+        alert('Error al crear el registro');
+        return;
       }
     }
     setShowForm(false);
