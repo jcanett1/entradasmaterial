@@ -62,12 +62,14 @@ export function RacksPage() {
   };
 
   const fetchEntries = async (term: string) => {
-    const { data } = await supabase
+    let query = supabase
       .from('entries')
       .select('id, part_number, description, total_units, po')
-      .or(`part_number.ilike.%${term}%,description.ilike.%${term}%`)
-      .order('registered_at', { ascending: false })
-      .limit(20);
+      .order('registered_at', { ascending: false });
+    if (term.trim()) {
+      query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
+    }
+    const { data } = await query;
     setEntries((data as EntryOption[]) ?? []);
   };
 
