@@ -53,8 +53,27 @@ export function RacksPage() {
   // Modal detalle (ocupado)
   const [detailModal, setDetailModal] = useState<Location | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
+  const [detailFifo, setDetailFifo] = useState<number | null>(null);
+  const [loadingFifo, setLoadingFifo] = useState(false);
 
   const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
+
+  // Cargar FIFO cuando se abre el modal de detalle
+  useEffect(() => {
+    if (!detailModal?.entry_id) { setDetailFifo(null); return; }
+    setLoadingFifo(true);
+    supabase
+      .from('fifo_labels')
+      .select('fifo_number')
+      .eq('entry_id', detailModal.entry_id)
+      .order('fifo_number', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setDetailFifo(data?.fifo_number ?? null);
+        setLoadingFifo(false);
+      });
+  }, [detailModal]);
 
   useEffect(() => { fetchLocations(); }, []);
 
@@ -328,6 +347,17 @@ export function RacksPage() {
                 <div>
                   <p className="text-xs text-purple-400 font-semibold uppercase tracking-wide">PO</p>
                   <p className="text-sm font-bold text-purple-800 font-mono mt-0.5">{detailModal.po ?? '—'}</p>
+                </div>
+              </div>
+
+              {/* FIFO */}
+              <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3">
+                <span className="text-yellow-500 font-black text-base mt-0.5 flex-shrink-0">#</span>
+                <div>
+                  <p className="text-xs text-yellow-500 font-semibold uppercase tracking-wide">FIFO</p>
+                  <p className="text-sm font-black text-yellow-800 mt-0.5">
+                    {loadingFifo ? '...' : detailFifo !== null ? `FIFO ${detailFifo}` : '—'}
+                  </p>
                 </div>
               </div>
 
