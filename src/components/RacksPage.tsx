@@ -110,14 +110,26 @@ export function RacksPage() {
 
   useEffect(() => { fetchLocations(); }, [fetchLocations]);
 
-  /* ── Fetch entries para el modal ── */
+  /* ── Fetch entries para el modal (excluye los ya asignados a alguna locación) ── */
   const fetchEntries = useCallback(async (term: string) => {
+    // 1. Obtener todos los entry_id que ya están asignados en location_items
+    const { data: assignedData } = await supabase
+      .from('location_items')
+      .select('entry_id');
+    const assignedIds: number[] = (assignedData ?? [])
+      .map((r: { entry_id: number | null }) => r.entry_id)
+      .filter((id): id is number => id !== null);
+
+    // 2. Buscar entries excluyendo los ya asignados
     let query = supabase
       .from('entries')
       .select('id, part_number, description, total_units, po')
       .order('registered_at', { ascending: false });
     if (term.trim()) {
       query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
+    }
+    if (assignedIds.length > 0) {
+      query = query.not('id', 'in', `(${assignedIds.join(',')})`);
     }
     const { data } = await query;
     setEntries((data as EntryOption[]) ?? []);
@@ -162,15 +174,13 @@ export function RacksPage() {
 
     setSaving(true);
 
-    // Obtener FIFO del part_number
-    const { data: lastLabel } = await supabase
+    // Obtener FIFO específico del entry seleccionado (por entry_id)
+    const { data: fifoLabel } = await supabase
       .from('fifo_labels')
       .select('fifo_number')
-      .eq('part_number', selectedEntry.part_number)
-      .order('fifo_number', { ascending: false })
-      .limit(1)
+      .eq('entry_id', selectedEntry.id)
       .maybeSingle();
-    const fifoNumber = lastLabel?.fifo_number ?? null;
+    const fifoNumber = fifoLabel?.fifo_number ?? null;
 
     // Insertar en location_items
     await supabase.from('location_items').insert([{
