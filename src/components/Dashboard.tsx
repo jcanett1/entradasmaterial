@@ -318,7 +318,7 @@ export function Dashboard() {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <InventoryForm record={editingRecord} userEmail={session?.email || ''} onSave={handleCreate} onCancel={closeForm} />
+            <InventoryForm record={editingRecord} userEmail={session?.nombre_completo || session?.email || ''} onSave={handleCreate} onCancel={closeForm} />
           </div>
         </div>
       )}

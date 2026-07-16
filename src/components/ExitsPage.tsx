@@ -37,7 +37,7 @@ const PAGE_SIZE = 25;
 
 export function ExitsPage() {
   const { session } = useAuth();
-  const userEmail = session?.email ?? '';
+  const userDisplayName = session?.nombre_completo || session?.email || '';
 
   const [exits, setExits] = useState<Exit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -148,7 +148,7 @@ export function ExitsPage() {
       location_id: selectedLocation?.id ?? null,
       entry_id: selectedEntry.id,
       destination: 'KITTEO',
-      registered_by: userEmail,
+      registered_by: userDisplayName,
     }]);
 
     // Si había locación asignada, liberarla
@@ -287,9 +287,9 @@ export function ExitsPage() {
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2">
                         <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                          <span className="text-red-600 text-xs font-bold uppercase">{(exit.registered_by ?? '?')[0]}</span>
+                          <span className="text-red-600 text-xs font-bold uppercase">{exit.registered_by ? exit.registered_by[0] : '?'}</span>
                         </div>
-                        <span className="text-sm text-gray-600 truncate max-w-[120px]">{exit.registered_by}</span>
+                        <span className="text-sm text-gray-600 truncate max-w-[120px]">{exit.registered_by ?? <span className="italic text-gray-400">Sin registro</span>}</span>
                       </div>
                     </td>
                     <td className="px-5 py-4">

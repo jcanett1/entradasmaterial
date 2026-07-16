@@ -144,7 +144,7 @@ export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: 
                   <div className="flex items-center gap-2">
                     <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
                       <span className="text-indigo-600 text-xs font-bold uppercase">
-                        {(record.registered_by ?? '?')[0]}
+                        {record.registered_by ? record.registered_by[0] : '?'}
                       </span>
                     </div>
                     <span className="text-sm text-gray-600 truncate max-w-[140px]" title={record.registered_by ?? ''}>

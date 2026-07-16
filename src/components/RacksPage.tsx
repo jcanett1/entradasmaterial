@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   MapPin, Package, CheckCircle2, Search, Loader2, X, Save,
   RefreshCw, LogOut, Unlock, Hash, Boxes, ClipboardList, Calendar,
@@ -58,6 +59,8 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
    COMPONENTE PRINCIPAL
 ════════════════════════════════════════════════════ */
 export function RacksPage() {
+  const { session } = useAuth();
+  const userDisplayName = session?.nombre_completo || session?.email || '';
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -261,7 +264,7 @@ export function RacksPage() {
       location_id: loc.id,
       entry_id: item.entry_id,
       destination: 'KITTEO',
-      registered_by: null,
+      registered_by: userDisplayName || null,
     }]);
 
     // Eliminar el item
