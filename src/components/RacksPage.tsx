@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   MapPin, Package, CheckCircle2, Search, Loader2, X, Save,
   RefreshCw, LogOut, Unlock, Hash, Boxes, ClipboardList, Calendar,
-  AlertTriangle, Plus, Layers,
+  AlertTriangle, Plus, Layers, Archive,
 } from 'lucide-react';
 
 const MAX_ITEMS = 8;
@@ -18,6 +18,7 @@ interface LocationItem {
   part_number: string;
   po: string | null;
   qty: number;
+  boxes: number;
   fifo_number: number | null;
   assigned_at: string;
 }
@@ -42,6 +43,7 @@ interface EntryOption {
   part_number: string;
   description: string | null;
   total_units: number;
+  total_boxes: number;
   po: string | null;
 }
 
@@ -98,9 +100,28 @@ export function RacksPage() {
       .select('*')
       .order('assigned_at', { ascending: true });
 
-    const items: LocationItem[] = (itemsData as LocationItem[]) ?? [];
+    const rawItems = (itemsData as Omit<LocationItem, 'boxes'>[]) ?? [];
 
-    // 3. Unir items a sus locaciones
+    // 3. Obtener total_boxes de las entries relacionadas
+    const entryIds = [...new Set(rawItems.map(i => i.entry_id).filter((id): id is number => id !== null))];
+    let boxesMap: Record<number, number> = {};
+    if (entryIds.length > 0) {
+      const { data: entriesData } = await supabase
+        .from('entries')
+        .select('id, total_boxes')
+        .in('id', entryIds);
+      (entriesData ?? []).forEach((e: { id: number; total_boxes: number }) => {
+        boxesMap[e.id] = e.total_boxes;
+      });
+    }
+
+    // 4. Enriquecer items con boxes
+    const items: LocationItem[] = rawItems.map(item => ({
+      ...item,
+      boxes: item.entry_id ? (boxesMap[item.entry_id] ?? 0) : 0,
+    }));
+
+    // 5. Unir items a sus locaciones
     const locsWithItems = locs.map(loc => ({
       ...loc,
       items: items.filter(it => it.location_id === loc.id),
@@ -126,7 +147,7 @@ export function RacksPage() {
     // 2. Buscar entries excluyendo los ya asignados
     let query = supabase
       .from('entries')
-      .select('id, part_number, description, total_units, po')
+      .select('id, part_number, description, total_units, total_boxes, po')
       .order('registered_at', { ascending: false });
     if (term.trim()) {
       query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
@@ -245,7 +266,6 @@ export function RacksPage() {
     }
 
     setActionSaving(false);
-    // Refrescar el detailModal con datos actualizados
     setDetailModal(null);
     fetchLocations();
   };
@@ -254,11 +274,12 @@ export function RacksPage() {
   const handleExitItem = async (loc: Location, item: LocationItem) => {
     setActionSaving(true);
 
-    // Registrar salida
+    // Registrar salida con boxes
     await supabase.from('exits').insert([{
       part_number: item.part_number,
       description: null,
       qty: item.qty,
+      boxes: item.boxes,
       po: item.po,
       location_code: loc.location_code,
       location_id: loc.id,
@@ -325,7 +346,7 @@ export function RacksPage() {
 
   return (
     <div className="space-y-5">
-      {/* Stats */}
+      {/* Stats globales */}
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: 'Total Locaciones', value: stats.total,      color: 'text-gray-700',    bg: 'bg-gray-50',    border: 'border-gray-200' },
@@ -382,11 +403,28 @@ export function RacksPage() {
             if (rackLocs.length === 0) return null;
             const c = RACK_COLORS[rack];
             const occ = rackLocs.filter(l => (l.items?.length ?? 0) > 0).length;
+            // Conteo de inventario del rack
+            const allItems = rackLocs.flatMap(l => l.items ?? []);
+            const totalQty = allItems.reduce((s, i) => s + i.qty, 0);
+            const totalBoxes = allItems.reduce((s, i) => s + i.boxes, 0);
             return (
               <div key={rack} className={`${c.bg} ${c.border} border rounded-2xl p-4`}>
-                <div className="flex items-center gap-3 mb-3">
+                <div className="flex flex-wrap items-center gap-3 mb-3">
                   <span className={`${c.badge} text-white text-sm font-black px-3 py-1 rounded-lg`}>RACK {rack}</span>
                   <span className="text-xs text-gray-500">{rackLocs.length} locaciones · {occ} ocupadas · {rackLocs.length - occ} disponibles</span>
+                  {/* Contadores de inventario del rack */}
+                  {totalQty > 0 && (
+                    <div className="flex items-center gap-2 ml-auto flex-wrap">
+                      <div className="flex items-center gap-1.5 bg-blue-100 border border-blue-200 rounded-lg px-3 py-1">
+                        <Boxes className="h-3.5 w-3.5 text-blue-600" />
+                        <span className="text-xs font-bold text-blue-700">QTY: {totalQty.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-purple-100 border border-purple-200 rounded-lg px-3 py-1">
+                        <Archive className="h-3.5 w-3.5 text-purple-600" />
+                        <span className="text-xs font-bold text-purple-700">Cajas: {totalBoxes.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                   {rackLocs.map(loc => (
@@ -400,21 +438,43 @@ export function RacksPage() {
           })}
         </div>
       ) : (
-        <div className={`${RACK_COLORS[selectedRack].bg} ${RACK_COLORS[selectedRack].border} border rounded-2xl p-4`}>
-          <div className="flex items-center gap-3 mb-3">
-            <span className={`${RACK_COLORS[selectedRack].badge} text-white text-sm font-black px-3 py-1 rounded-lg`}>RACK {selectedRack}</span>
-            <span className="text-xs text-gray-500">
-              {filtered.length} locaciones · {filtered.filter(l => (l.items?.length ?? 0) > 0).length} ocupadas
-            </span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {filtered.map(loc => (
-              <LocationCell key={loc.id} loc={loc} colors={RACK_COLORS[selectedRack]}
-                onAssign={() => setAssignModal(loc)}
-                onDetail={() => setDetailModal(loc)} />
-            ))}
-          </div>
-        </div>
+        (() => {
+          const rackLocs = filtered;
+          const c = RACK_COLORS[selectedRack];
+          const allItems = rackLocs.flatMap(l => l.items ?? []);
+          const totalQty = allItems.reduce((s, i) => s + i.qty, 0);
+          const totalBoxes = allItems.reduce((s, i) => s + i.boxes, 0);
+          return (
+            <div className={`${c.bg} ${c.border} border rounded-2xl p-4`}>
+              <div className="flex flex-wrap items-center gap-3 mb-3">
+                <span className={`${c.badge} text-white text-sm font-black px-3 py-1 rounded-lg`}>RACK {selectedRack}</span>
+                <span className="text-xs text-gray-500">
+                  {filtered.length} locaciones · {filtered.filter(l => (l.items?.length ?? 0) > 0).length} ocupadas
+                </span>
+                {/* Contadores de inventario del rack */}
+                {totalQty > 0 && (
+                  <div className="flex items-center gap-2 ml-auto flex-wrap">
+                    <div className="flex items-center gap-1.5 bg-blue-100 border border-blue-200 rounded-lg px-3 py-1">
+                      <Boxes className="h-3.5 w-3.5 text-blue-600" />
+                      <span className="text-xs font-bold text-blue-700">QTY Total: {totalQty.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-purple-100 border border-purple-200 rounded-lg px-3 py-1">
+                      <Archive className="h-3.5 w-3.5 text-purple-600" />
+                      <span className="text-xs font-bold text-purple-700">Cajas Total: {totalBoxes.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                {filtered.map(loc => (
+                  <LocationCell key={loc.id} loc={loc} colors={c}
+                    onAssign={() => setAssignModal(loc)}
+                    onDetail={() => setDetailModal(loc)} />
+                ))}
+              </div>
+            </div>
+          );
+        })()
       )}
 
       {/* ══════════════════════════════════════════════
@@ -455,8 +515,35 @@ export function RacksPage() {
               </button>
             </div>
 
+            {/* Resumen de inventario de la locación */}
+            {(detailModal.items?.length ?? 0) > 0 && (() => {
+              const locItems = detailModal.items ?? [];
+              const locQty = locItems.reduce((s, i) => s + i.qty, 0);
+              const locBoxes = locItems.reduce((s, i) => s + i.boxes, 0);
+              return (
+                <div className="px-6 pt-4 flex-shrink-0">
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+                      <Boxes className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                      <div>
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">QTY Total</p>
+                        <p className="text-lg font-black text-blue-700">{locQty.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
+                      <Archive className="h-4 w-4 text-purple-500 flex-shrink-0" />
+                      <div>
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Cajas Total</p>
+                        <p className="text-lg font-black text-purple-700">{locBoxes.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Barra de capacidad */}
-            <div className="px-6 pt-4 flex-shrink-0">
+            <div className="px-6 pt-2 flex-shrink-0">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Capacidad utilizada</span>
                 <span className={`text-xs font-bold ${(detailModal.items?.length ?? 0) >= MAX_ITEMS ? 'text-red-600' : 'text-gray-600'}`}>
@@ -609,7 +696,8 @@ export function RacksPage() {
                       <p className="text-xs text-gray-500 truncate">{entry.description}</p>
                       <div className="flex gap-3 mt-1">
                         <span className="text-xs text-blue-600 font-semibold">QTY: {entry.total_units}</span>
-                        {entry.po && <span className="text-xs text-purple-600 font-semibold">PO: {entry.po}</span>}
+                        <span className="text-xs text-purple-600 font-semibold">Cajas: {entry.total_boxes}</span>
+                        {entry.po && <span className="text-xs text-gray-500 font-semibold">PO: {entry.po}</span>}
                       </div>
                     </button>
                   ))}
@@ -622,7 +710,8 @@ export function RacksPage() {
                     <p className="text-xs text-indigo-600">{selectedEntry.description}</p>
                     <div className="flex gap-3 mt-1">
                       <span className="text-xs text-blue-600 font-semibold">QTY: {selectedEntry.total_units}</span>
-                      {selectedEntry.po && <span className="text-xs text-purple-600 font-semibold">PO: {selectedEntry.po}</span>}
+                      <span className="text-xs text-purple-600 font-semibold">Cajas: {selectedEntry.total_boxes}</span>
+                      {selectedEntry.po && <span className="text-xs text-gray-500 font-semibold">PO: {selectedEntry.po}</span>}
                     </div>
                   </div>
                 )}
@@ -663,6 +752,8 @@ function LocationCell({
   const items = loc.items ?? [];
   const isOccupied = items.length > 0;
   const isFull = items.length >= MAX_ITEMS;
+  const totalQty = items.reduce((s, i) => s + i.qty, 0);
+  const totalBoxes = items.reduce((s, i) => s + i.boxes, 0);
 
   return (
     <div
@@ -675,7 +766,7 @@ function LocationCell({
       }`}
       onClick={isOccupied ? onDetail : onAssign}
       title={isOccupied
-        ? `${loc.location_code} — ${items.length}/${MAX_ITEMS} números de parte · Clic para ver detalle`
+        ? `${loc.location_code} — ${items.length}/${MAX_ITEMS} · QTY: ${totalQty} · Cajas: ${totalBoxes}`
         : `${loc.location_code} — Disponible · Clic para asignar`}
     >
       {/* Indicador de estado */}
@@ -716,6 +807,11 @@ function LocationCell({
                 <span className="text-[7px] text-gray-500 font-semibold">
                   {item.qty} uds
                 </span>
+                {item.boxes > 0 && (
+                  <span className="text-[7px] text-purple-600 font-semibold">
+                    {item.boxes}cj
+                  </span>
+                )}
                 {item.fifo_number && (
                   <span className="text-[7px] text-amber-600 font-bold">
                     F{item.fifo_number}
@@ -734,7 +830,7 @@ function LocationCell({
             </div>
           )}
 
-          {/* Contador */}
+          {/* Contador + totales */}
           <div className="flex items-center justify-between mt-1">
             <div className="flex items-center gap-0.5">
               <Layers className="h-2.5 w-2.5 text-gray-400" />
@@ -742,6 +838,13 @@ function LocationCell({
             </div>
             {isFull && (
               <span className="text-[7px] font-bold text-red-500 uppercase">LLENO</span>
+            )}
+          </div>
+          {/* Totales QTY y Cajas en la celda */}
+          <div className="flex gap-1 mt-0.5">
+            <span className="text-[7px] font-bold text-blue-600 bg-blue-50 rounded px-1">Q:{totalQty}</span>
+            {totalBoxes > 0 && (
+              <span className="text-[7px] font-bold text-purple-600 bg-purple-50 rounded px-1">C:{totalBoxes}</span>
             )}
           </div>
         </div>
@@ -798,6 +901,15 @@ function ItemCard({
           <p className="text-sm font-black text-gray-800">{item.qty.toLocaleString()}</p>
         </div>
 
+        {/* Cajas */}
+        <div className="bg-white/70 rounded-lg px-2 py-1.5">
+          <div className="flex items-center gap-1 mb-0.5">
+            <Archive className="h-3 w-3 text-gray-400" />
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Cajas</p>
+          </div>
+          <p className="text-sm font-black text-purple-700">{item.boxes > 0 ? item.boxes.toLocaleString() : '—'}</p>
+        </div>
+
         {/* FIFO */}
         <div className="bg-white/70 rounded-lg px-2 py-1.5">
           <div className="flex items-center gap-1 mb-0.5">
@@ -819,10 +931,10 @@ function ItemCard({
         </div>
 
         {/* Fecha */}
-        <div className="bg-white/70 rounded-lg px-2 py-1.5">
+        <div className="bg-white/70 rounded-lg px-2 py-1.5 col-span-2">
           <div className="flex items-center gap-1 mb-0.5">
             <Calendar className="h-3 w-3 text-gray-400" />
-            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Fecha</p>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Fecha de entrada</p>
           </div>
           <p className="text-xs font-semibold text-gray-700">
             {new Date(item.assigned_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: '2-digit' })}

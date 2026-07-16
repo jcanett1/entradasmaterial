@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight,
+  ChevronsLeft, ChevronsRight, Archive,
 } from 'lucide-react';
 
 interface Exit {
@@ -12,6 +12,7 @@ interface Exit {
   part_number: string;
   description: string | null;
   qty: number;
+  boxes: number;
   po: string | null;
   location_code: string | null;
   destination: string;
@@ -24,6 +25,7 @@ interface EntryOption {
   part_number: string;
   description: string | null;
   total_units: number;
+  total_boxes: number;
   po: string | null;
 }
 
@@ -88,7 +90,7 @@ export function ExitsPage() {
   const fetchEntries = useCallback(async (term: string) => {
     const { data } = await supabase
       .from('entries')
-      .select('id, part_number, description, total_units, po')
+      .select('id, part_number, description, total_units, total_boxes, po')
       .or(`part_number.ilike.%${term}%,description.ilike.%${term}%`)
       .order('registered_at', { ascending: false })
       .limit(15);
@@ -143,6 +145,7 @@ export function ExitsPage() {
       part_number: selectedEntry.part_number,
       description: selectedEntry.description,
       qty,
+      boxes: selectedEntry.total_boxes,
       po: po || null,
       location_code: selectedLocation?.location_code ?? null,
       location_id: selectedLocation?.id ?? null,
@@ -178,6 +181,10 @@ export function ExitsPage() {
     setLocationSearch('');
   };
 
+  // Totales calculados
+  const totalQtyAll = exits.reduce((s, e) => s + e.qty, 0);
+  const totalBoxesAll = exits.reduce((s, e) => s + (e.boxes ?? 0), 0);
+
   // Paginación
   const totalPages = Math.ceil(exits.length / PAGE_SIZE);
   const safePage = Math.min(currentPage, Math.max(1, totalPages));
@@ -209,8 +216,8 @@ export function ExitsPage() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* Stats — 4 tarjetas */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Salidas</p>
           <p className="text-3xl font-black text-red-600">{exits.length}</p>
@@ -218,6 +225,20 @@ export function ExitsPage() {
         <div className="bg-orange-50 border border-orange-200 rounded-2xl px-5 py-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Destino</p>
           <p className="text-2xl font-black text-orange-600">KITTEO</p>
+        </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Boxes className="h-3.5 w-3.5 text-blue-500" />
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY Total Salida</p>
+          </div>
+          <p className="text-3xl font-black text-blue-700">{totalQtyAll.toLocaleString()}</p>
+        </div>
+        <div className="bg-purple-50 border border-purple-200 rounded-2xl px-5 py-4">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Archive className="h-3.5 w-3.5 text-purple-500" />
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas Total Salida</p>
+          </div>
+          <p className="text-3xl font-black text-purple-700">{totalBoxesAll.toLocaleString()}</p>
         </div>
       </div>
 
@@ -239,6 +260,7 @@ export function ExitsPage() {
                   {[
                     { icon: <Hash className="h-3.5 w-3.5" />, label: 'Part Number' },
                     { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
+                    { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
                     { icon: <ClipboardList className="h-3.5 w-3.5" />, label: 'PO' },
                     { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Locación' },
                     { icon: <LogOut className="h-3.5 w-3.5" />, label: 'Destino', center: true },
@@ -257,21 +279,35 @@ export function ExitsPage() {
                 {pageExits.map((exit, idx) => (
                   <tr key={exit.id} className="border-b border-gray-100 last:border-0 hover:bg-red-50/30 transition-colors"
                     style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafafa' }}>
+                    {/* Part Number */}
                     <td className="px-5 py-4">
                       <span className="inline-flex px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
                         {exit.part_number}
                       </span>
                     </td>
+                    {/* QTY */}
                     <td className="px-5 py-4 text-center">
                       <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
                         {exit.qty.toLocaleString()}
                       </span>
                     </td>
+                    {/* Cajas */}
+                    <td className="px-5 py-4 text-center">
+                      {(exit.boxes ?? 0) > 0 ? (
+                        <span className="inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full bg-purple-50 text-purple-700 font-bold text-sm border border-purple-100">
+                          {(exit.boxes ?? 0).toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 italic text-sm">—</span>
+                      )}
+                    </td>
+                    {/* PO */}
                     <td className="px-5 py-4">
                       {exit.po ? (
                         <span className="inline-flex px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">{exit.po}</span>
                       ) : <span className="text-gray-400 italic text-sm">—</span>}
                     </td>
+                    {/* Locación */}
                     <td className="px-5 py-4">
                       {exit.location_code ? (
                         <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-sm font-semibold border border-amber-100">
@@ -279,11 +315,13 @@ export function ExitsPage() {
                         </span>
                       ) : <span className="text-gray-400 italic text-sm">—</span>}
                     </td>
+                    {/* Destino */}
                     <td className="px-5 py-4 text-center">
                       <span className="inline-flex px-3 py-1.5 rounded-full bg-red-50 text-red-600 text-xs font-bold border border-red-100">
                         {exit.destination}
                       </span>
                     </td>
+                    {/* Registrado Por */}
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2">
                         <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -292,6 +330,7 @@ export function ExitsPage() {
                         <span className="text-sm text-gray-600 truncate max-w-[120px]">{exit.registered_by ?? <span className="italic text-gray-400">Sin registro</span>}</span>
                       </div>
                     </td>
+                    {/* Fecha */}
                     <td className="px-5 py-4">
                       <div className="flex flex-col">
                         <span className="text-sm text-gray-700 font-medium">
@@ -305,6 +344,29 @@ export function ExitsPage() {
                   </tr>
                 ))}
               </tbody>
+              {/* Fila de totales al final de la página */}
+              {pageExits.length > 0 && (
+                <tfoot>
+                  <tr className="bg-gray-50 border-t-2 border-gray-200">
+                    <td className="px-5 py-3">
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
+                        Subtotal página
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-center">
+                      <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-black text-sm border border-blue-200">
+                        {pageExits.reduce((s, e) => s + e.qty, 0).toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-center">
+                      <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-purple-100 text-purple-800 font-black text-sm border border-purple-200">
+                        {pageExits.reduce((s, e) => s + (e.boxes ?? 0), 0).toLocaleString()}
+                      </span>
+                    </td>
+                    <td colSpan={5} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 
@@ -372,17 +434,40 @@ export function ExitsPage() {
                         className="w-full text-left px-4 py-2.5 hover:bg-indigo-50 transition-colors border-b border-gray-50 last:border-0">
                         <p className="text-sm font-bold text-indigo-700 font-mono">{e.part_number}</p>
                         <p className="text-xs text-gray-500 truncate">{e.description}</p>
-                        <span className="text-xs text-blue-600 font-semibold">QTY: {e.total_units}</span>
+                        <div className="flex gap-3 mt-0.5">
+                          <span className="text-xs text-blue-600 font-semibold">QTY: {e.total_units}</span>
+                          <span className="text-xs text-purple-600 font-semibold">Cajas: {e.total_boxes}</span>
+                        </div>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
 
+              {/* Resumen del entry seleccionado */}
+              {selectedEntry && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <Boxes className="h-3.5 w-3.5 text-blue-500" />
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase">QTY</p>
+                    </div>
+                    <p className="text-xl font-black text-blue-700">{selectedEntry.total_units.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <Archive className="h-3.5 w-3.5 text-purple-500" />
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase">Cajas</p>
+                    </div>
+                    <p className="text-xl font-black text-purple-700">{selectedEntry.total_boxes.toLocaleString()}</p>
+                  </div>
+                </div>
+              )}
+
               {/* QTY */}
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                  <Boxes className="h-3.5 w-3.5 inline mr-1 text-blue-400" />QTY <span className="text-red-400">*</span>
+                  <Boxes className="h-3.5 w-3.5 inline mr-1 text-blue-400" />QTY de salida <span className="text-red-400">*</span>
                 </label>
                 <input type="number" value={qty} min={1} onChange={e => setQty(Number(e.target.value))}
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50" />
