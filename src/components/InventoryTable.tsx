@@ -14,9 +14,21 @@ interface InventoryTableProps {
   onEdit: (record: Entry) => void;
   onDelete: (id: number) => void;
   onLabel: (record: Entry) => void;
+  selectedIds: Set<number>;
+  onToggleSelect: (id: number) => void;
+  onToggleSelectAll: (pageIds: number[]) => void;
 }
 
-export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: InventoryTableProps) {
+export function InventoryTable({
+  records,
+  loading,
+  onEdit,
+  onDelete,
+  onLabel,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
+}: InventoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Reiniciar a página 1 cuando cambia la lista (búsqueda, nuevo registro, etc.)
@@ -55,6 +67,10 @@ export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: 
   const safePage = Math.min(currentPage, totalPages);
   const startIdx = (safePage - 1) * PAGE_SIZE;
   const pageRecords = records.slice(startIdx, startIdx + PAGE_SIZE);
+  const pageIds = pageRecords.map((r) => r.id);
+
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const somePageSelected = pageIds.some((id) => selectedIds.has(id));
 
   const goTo = (page: number) => setCurrentPage(Math.max(1, Math.min(page, totalPages)));
 
@@ -74,6 +90,21 @@ export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: 
         <table className="w-full border-collapse">
           <thead>
             <tr style={{ background: 'linear-gradient(90deg, #f8f9ff 0%, #f0f4ff 100%)' }}>
+              {/* Checkbox columna */}
+              <th className="px-4 py-3.5 border-b border-gray-200 w-10">
+                <div className="flex items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = !allPageSelected && somePageSelected;
+                    }}
+                    onChange={() => onToggleSelectAll(pageIds)}
+                    title="Seleccionar todos en esta página"
+                    className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
+                  />
+                </div>
+              </th>
               <Th icon={<Hash className="h-3.5 w-3.5" />} label="Part Number" />
               <Th icon={<AlignLeft className="h-3.5 w-3.5" />} label="Descripción" />
               <Th icon={<ClipboardList className="h-3.5 w-3.5" />} label="PO" />
@@ -87,106 +118,126 @@ export function InventoryTable({ records, loading, onEdit, onDelete, onLabel }: 
           </thead>
 
           <tbody>
-            {pageRecords.map((record, idx) => (
-              <tr
-                key={record.id}
-                className="group transition-colors duration-150 hover:bg-indigo-50/40 border-b border-gray-100 last:border-0"
-                style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafbff' }}
-              >
-                {/* Part Number */}
-                <td className="px-5 py-4">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
-                    {record.part_number}
-                  </span>
-                </td>
+            {pageRecords.map((record, idx) => {
+              const isSelected = selectedIds.has(record.id);
+              return (
+                <tr
+                  key={record.id}
+                  className={`group transition-colors duration-150 border-b border-gray-100 last:border-0 cursor-pointer ${
+                    isSelected
+                      ? 'bg-violet-50 hover:bg-violet-100/70'
+                      : 'hover:bg-indigo-50/40'
+                  }`}
+                  style={!isSelected ? { background: idx % 2 === 0 ? '#ffffff' : '#fafbff' } : undefined}
+                  onClick={() => onToggleSelect(record.id)}
+                >
+                  {/* Checkbox */}
+                  <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => onToggleSelect(record.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
+                      />
+                    </div>
+                  </td>
 
-                {/* Descripción */}
-                <td className="px-5 py-4">
-                  <p className="text-gray-800 text-sm font-medium max-w-[160px] truncate" title={record.description ?? ''}>
-                    {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
-                  </p>
-                </td>
-
-                {/* PO */}
-                <td className="px-5 py-4">
-                  {record.po ? (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">
-                      {record.po}
+                  {/* Part Number */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
+                      {record.part_number}
                     </span>
-                  ) : (
-                    <span className="text-gray-400 italic text-sm">—</span>
-                  )}
-                </td>
+                  </td>
 
-                {/* QTY */}
-                <td className="px-5 py-4 text-center">
-                  <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
-                    {record.total_units.toLocaleString()}
-                  </span>
-                </td>
+                  {/* Descripción */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-gray-800 text-sm font-medium max-w-[160px] truncate" title={record.description ?? ''}>
+                      {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
+                    </p>
+                  </td>
 
-                {/* Cajas */}
-                <td className="px-5 py-4 text-center">
-                  <span className="inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm border border-emerald-100">
-                    {record.total_boxes}
-                  </span>
-                </td>
+                  {/* PO */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    {record.po ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">
+                        {record.po}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 italic text-sm">—</span>
+                    )}
+                  </td>
 
-                {/* Unidad de Medida */}
-                <td className="px-5 py-4">
-                  <span className="inline-flex px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-100">
-                    {record.unit_of_measure || '—'}
-                  </span>
-                </td>
+                  {/* QTY */}
+                  <td className="px-5 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
+                      {record.total_units.toLocaleString()}
+                    </span>
+                  </td>
 
-                {/* Registrado Por */}
-                <td className="px-5 py-4">
-                  <div className="flex items-center gap-2">
-                    <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                      <span className="text-indigo-600 text-xs font-bold uppercase">
-                        {record.registered_by ? record.registered_by[0] : '?'}
+                  {/* Cajas */}
+                  <td className="px-5 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    <span className="inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm border border-emerald-100">
+                      {record.total_boxes}
+                    </span>
+                  </td>
+
+                  {/* Unidad de Medida */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <span className="inline-flex px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-100">
+                      {record.unit_of_measure || '—'}
+                    </span>
+                  </td>
+
+                  {/* Registrado Por */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-indigo-600 text-xs font-bold uppercase">
+                          {record.registered_by ? record.registered_by[0] : '?'}
+                        </span>
+                      </div>
+                      <span className="text-sm text-gray-600 truncate max-w-[140px]" title={record.registered_by ?? ''}>
+                        {record.registered_by}
                       </span>
                     </div>
-                    <span className="text-sm text-gray-600 truncate max-w-[140px]" title={record.registered_by ?? ''}>
-                      {record.registered_by}
-                    </span>
-                  </div>
-                </td>
+                  </td>
 
-                {/* Fecha */}
-                <td className="px-5 py-4">
-                  <div className="flex flex-col">
-                    <span className="text-sm text-gray-700 font-medium">
-                      {new Date(record.registered_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
-                    </span>
-                    <span className="text-xs text-gray-400 mt-0.5">
-                      {new Date(record.registered_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                </td>
+                  {/* Fecha */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-col">
+                      <span className="text-sm text-gray-700 font-medium">
+                        {new Date(record.registered_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </span>
+                      <span className="text-xs text-gray-400 mt-0.5">
+                        {new Date(record.registered_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </td>
 
-                {/* Acciones */}
-                <td className="px-5 py-4">
-                  <div className="flex justify-center items-center gap-1.5 flex-wrap">
-                    <button onClick={() => onLabel(record)} title="Crear etiqueta FIFO"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
-                      <Tag className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Etiqueta</span>
-                    </button>
-                    <button onClick={() => onEdit(record)} title="Editar registro"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95">
-                      <Edit2 className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Editar</span>
-                    </button>
-                    <button onClick={() => onDelete(record.id)} title="Eliminar registro"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95">
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Eliminar</span>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  {/* Acciones */}
+                  <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                      <button onClick={() => onLabel(record)} title="Crear etiqueta FIFO"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
+                        <Tag className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Etiqueta</span>
+                      </button>
+                      <button onClick={() => onEdit(record)} title="Editar registro"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95">
+                        <Edit2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Editar</span>
+                      </button>
+                      <button onClick={() => onDelete(record.id)} title="Eliminar registro"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95">
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Eliminar</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

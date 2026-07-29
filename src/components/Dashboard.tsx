@@ -6,13 +6,14 @@ import { InventoryForm } from './InventoryForm';
 import type { MultiEntry } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
 import { LabelModal } from './LabelModal';
+import { MultiLabelModal } from './MultiLabelModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
-  MapPin, LogOut,
+  MapPin, LogOut, Tags, XCircle,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
@@ -37,6 +38,10 @@ export function Dashboard() {
   const [stats, setStats] = useState({ total: 0, units: 0, boxes: 0 });
   const [refreshing, setRefreshing] = useState(false);
   const [labelRecord, setLabelRecord] = useState<Entry | null>(null);
+
+  // ── Selección múltiple ──
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [showMultiLabel, setShowMultiLabel] = useState(false);
 
   /* =======================
      FETCH
@@ -141,6 +146,35 @@ export function Dashboard() {
     if (error) { alert('Error al eliminar el registro'); return; }
     fetchRecords();
   };
+
+  /* =======================
+     SELECCIÓN MÚLTIPLE
+  ======================= */
+  const handleToggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = (pageIds: number[]) => {
+    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const selectedRecords = filteredRecords.filter((r) => selectedIds.has(r.id));
 
   /* =======================
      EXPORT CSV
@@ -251,6 +285,40 @@ export function Dashboard() {
               </div>
             </div>
 
+            {/* ── Barra de selección múltiple (aparece cuando hay seleccionados) ── */}
+            {selectedIds.size > 0 && (
+              <div
+                className="mb-4 px-5 py-3 rounded-2xl border flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm"
+                style={{ background: 'linear-gradient(90deg, #f5f3ff 0%, #ede9fe 100%)', borderColor: '#c4b5fd' }}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-full bg-violet-600 flex items-center justify-center flex-shrink-0">
+                    <span className="text-white text-xs font-bold">{selectedIds.size}</span>
+                  </div>
+                  <p className="text-sm font-semibold text-violet-800">
+                    {selectedIds.size} registro{selectedIds.size !== 1 ? 's' : ''} seleccionado{selectedIds.size !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={clearSelection}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border border-violet-200 bg-white text-violet-700 hover:bg-violet-50 transition-all active:scale-95"
+                  >
+                    <XCircle className="h-4 w-4" />
+                    Limpiar selección
+                  </button>
+                  <button
+                    onClick={() => setShowMultiLabel(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
+                    style={{ background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)', boxShadow: '0 4px 14px 0 rgba(124,58,237,0.35)' }}
+                  >
+                    <Tags className="h-4 w-4" />
+                    Imprimir {selectedIds.size} Etiqueta{selectedIds.size !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Table */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -264,7 +332,16 @@ export function Dashboard() {
                   </span>
                 )}
               </div>
-              <InventoryTable records={filteredRecords} loading={loading} onEdit={handleEdit} onDelete={handleDelete} onLabel={handleLabel} />
+              <InventoryTable
+                records={filteredRecords}
+                loading={loading}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+                onLabel={handleLabel}
+                selectedIds={selectedIds}
+                onToggleSelect={handleToggleSelect}
+                onToggleSelectAll={handleToggleSelectAll}
+              />
             </div>
           </>
         )}
@@ -300,8 +377,16 @@ export function Dashboard() {
         )}
       </main>
 
-      {/* Modal Etiqueta FIFO */}
+      {/* Modal Etiqueta FIFO (individual) */}
       {labelRecord && <LabelModal record={labelRecord} onClose={() => setLabelRecord(null)} />}
+
+      {/* Modal Etiquetas múltiples */}
+      {showMultiLabel && selectedRecords.length > 0 && (
+        <MultiLabelModal
+          records={selectedRecords}
+          onClose={() => setShowMultiLabel(false)}
+        />
+      )}
 
       {/* Modal Nuevo/Editar Registro */}
       {showForm && (
