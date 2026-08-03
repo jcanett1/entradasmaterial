@@ -61,8 +61,8 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
    COMPONENTE PRINCIPAL
 ════════════════════════════════════════════════════ */
 export function RacksPage() {
-  const { session } = useAuth();
-  const userDisplayName = session?.nombre_completo || session?.email || '';
+  const { userProfile } = useAuth();
+  const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

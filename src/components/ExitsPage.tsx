@@ -38,8 +38,8 @@ interface LocationOption {
 const PAGE_SIZE = 25;
 
 export function ExitsPage() {
-  const { session } = useAuth();
-  const userDisplayName = session?.nombre_completo || session?.email || '';
+  const { userProfile } = useAuth();
+  const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
 
   const [exits, setExits] = useState<Exit[]>([]);
   const [loading, setLoading] = useState(true);
