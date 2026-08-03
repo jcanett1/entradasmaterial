@@ -4,7 +4,7 @@ import { Dashboard } from '@/components/Dashboard';
 import { Loader2 } from 'lucide-react';
 
 function AppContent() {
-  const { session, loading } = useAuth();
+  const { userProfile, loading } = useAuth();
 
   if (loading) {
     return (
@@ -17,7 +17,7 @@ function AppContent() {
     );
   }
 
-  return session ? <Dashboard /> : <Login />;
+  return userProfile ? <Dashboard /> : <Login />;
 }
 
 function App() {

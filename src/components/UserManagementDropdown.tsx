@@ -99,13 +99,13 @@ export function UserManagementDropdown({
   }, [toast]);
 
   /* =============================================
-     FETCH USUARIOS — directo desde usuarioalmacen
+     FETCH USUARIOS — desde usuarioalmacen
   ============================================= */
   const fetchUsers = async () => {
     setLoadingUsers(true);
     const { data, error } = await supabase
       .from('usuarioalmacen')
-      .select('id, email, nombre_completo, departamento, rol, activo, created_at, updated_at')
+      .select('id, user_id, email, nombre_completo, departamento, rol, activo, created_at, updated_at')
       .order('created_at', { ascending: false });
 
     if (!error) setUsers((data ?? []) as UsuarioAlmacen[]);
@@ -162,7 +162,10 @@ export function UserManagementDropdown({
     if (mode === 'create') {
       if (!form.email.trim()) e.email = 'El correo es requerido';
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Correo inválido';
-      if (!form.password || form.password.length < 4) e.password = 'Mínimo 4 caracteres';
+      if (!form.password || form.password.length < 6) e.password = 'Mínimo 6 caracteres';
+    }
+    if (mode === 'edit' && form.password && form.password.length < 6) {
+      e.password = 'Mínimo 6 caracteres';
     }
     if (!form.nombre_completo.trim()) e.nombre_completo = 'El nombre es requerido';
     setErrors(e);
@@ -170,32 +173,46 @@ export function UserManagementDropdown({
   };
 
   /* =============================================
-     CREAR USUARIO — directo en usuarioalmacen
-     sin pasar por auth.users
+     CREAR USUARIO
+     1. Registra en Supabase Auth (signUp)
+     2. Inserta perfil en usuarioalmacen con user_id
   ============================================= */
   const handleCreate = async () => {
     if (!validate()) return;
     setSaving(true);
 
-    // Verificar que el email no exista ya
-    const { data: existing } = await supabase
-      .from('usuarioalmacen')
-      .select('id')
-      .eq('email', form.email.trim().toLowerCase())
-      .single();
+    // 1. Crear en Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
+      options: {
+        // Evitar que se envíe correo de confirmación si no está configurado
+        data: {
+          nombre_completo: form.nombre_completo.trim(),
+        },
+      },
+    });
 
-    if (existing) {
-      setErrors({ email: 'Ya existe un usuario con ese correo' });
+    if (authError) {
+      if (authError.message.includes('already registered')) {
+        setErrors({ email: 'Ya existe un usuario con ese correo' });
+      } else {
+        setToast({ msg: authError.message, type: 'error' });
+      }
       setSaving(false);
       return;
     }
 
-    // Insertar directamente en usuarioalmacen
-    // La contraseña se guarda en texto plano en el campo "password"
-    // (Para producción se recomienda usar una función RPC con hash)
+    if (!authData.user) {
+      setToast({ msg: 'No se pudo crear el usuario en Auth', type: 'error' });
+      setSaving(false);
+      return;
+    }
+
+    // 2. Insertar perfil en usuarioalmacen
     const { error: dbError } = await supabase.from('usuarioalmacen').insert([{
+      user_id: authData.user.id,
       email: form.email.trim().toLowerCase(),
-      password: form.password,
       nombre_completo: form.nombre_completo.trim(),
       departamento: form.departamento.trim() || null,
       rol: form.rol,
@@ -214,11 +231,14 @@ export function UserManagementDropdown({
 
   /* =============================================
      EDITAR USUARIO
+     - Nombre, departamento, rol, activo → directo en usuarioalmacen
+     - Contraseña → Edge Function admin-update-password
   ============================================= */
   const handleEdit = async () => {
     if (!validate() || !editingUser) return;
     setSaving(true);
 
+    // Actualizar datos del perfil
     const updateData: Record<string, any> = {
       nombre_completo: form.nombre_completo.trim(),
       departamento: form.departamento.trim() || null,
@@ -226,33 +246,59 @@ export function UserManagementDropdown({
       activo: form.activo,
     };
 
-    // Solo actualizar contraseña si se ingresó una nueva
-    if (form.password && form.password.length >= 4) {
-      updateData.password = form.password;
-    }
-
-    const { error } = await supabase
+    const { error: profileError } = await supabase
       .from('usuarioalmacen')
       .update(updateData)
       .eq('id', editingUser.id);
 
-    if (error) {
-      setToast({ msg: error.message, type: 'error' });
-    } else {
-      setToast({ msg: 'Usuario actualizado correctamente', type: 'success' });
-      fetchUsers();
-      setMode('list');
-      setEditingUser(null);
+    if (profileError) {
+      setToast({ msg: profileError.message, type: 'error' });
+      setSaving(false);
+      return;
     }
+
+    // Si se ingresó nueva contraseña, llamar a la Edge Function
+    if (form.password && form.password.length >= 6) {
+      const { error: pwError } = await supabase.functions.invoke('admin-update-password', {
+        body: {
+          userId: editingUser.user_id,
+          newPassword: form.password,
+        },
+      });
+
+      if (pwError) {
+        setToast({ msg: `Perfil actualizado, pero error al cambiar contraseña: ${pwError.message}`, type: 'error' });
+        setSaving(false);
+        return;
+      }
+    }
+
+    setToast({ msg: 'Usuario actualizado correctamente', type: 'success' });
+    fetchUsers();
+    setMode('list');
+    setEditingUser(null);
     setSaving(false);
   };
 
   /* =============================================
      ELIMINAR USUARIO
+     Elimina de usuarioalmacen (ON DELETE CASCADE
+     eliminará también de auth.users)
   ============================================= */
   const handleDelete = async (u: UsuarioAlmacen) => {
     if (!confirm(`¿Eliminar al usuario "${u.nombre_completo ?? u.email}"? Esta acción no se puede deshacer.`)) return;
 
+    // Llamar a Edge Function para eliminar de auth.users
+    const { error: authDeleteError } = await supabase.functions.invoke('admin-delete-user', {
+      body: { userId: u.user_id },
+    });
+
+    if (authDeleteError) {
+      // Si falla la eliminación de auth, igual intentamos limpiar el perfil
+      console.warn('Error al eliminar de Auth:', authDeleteError.message);
+    }
+
+    // Eliminar perfil de usuarioalmacen
     const { error } = await supabase
       .from('usuarioalmacen')
       .delete()
@@ -558,7 +604,7 @@ export function UserManagementDropdown({
                         type={showPassword ? 'text' : 'password'}
                         value={form.password}
                         onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                        placeholder={mode === 'create' ? 'Mínimo 4 caracteres' : 'Dejar vacío para no cambiar'}
+                        placeholder={mode === 'create' ? 'Mínimo 6 caracteres' : 'Dejar vacío para no cambiar'}
                         className={inputCls('password') + ' pr-10'}
                       />
                       <button

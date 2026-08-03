@@ -1,17 +1,17 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase, getLocalSession, setLocalSession, clearLocalSession } from '@/lib/supabase';
-import type { AlmacenSession } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
+import type { UsuarioAlmacen } from '@/lib/supabase';
 
 /* =============================================
    TIPOS
 ============================================= */
 interface AuthContextType {
-  session: AlmacenSession | null;
+  userProfile: UsuarioAlmacen | null;
   loading: boolean;
   userRol: 'admin' | 'supervisor' | 'operador' | null;
   isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -20,83 +20,94 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
    PROVIDER
 ============================================= */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<AlmacenSession | null>(null);
+  const [userProfile, setUserProfile] = useState<UsuarioAlmacen | null>(null);
   const [loading, setLoading] = useState(true);
 
-  /* ---- Restaurar sesión desde localStorage ---- */
-  useEffect(() => {
-    const saved = getLocalSession();
-    if (saved) setSession(saved);
+  /* ---- Cargar perfil extendido desde usuarioalmacen ---- */
+  const fetchUserProfile = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('usuarioalmacen')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) {
+      console.error('Error al cargar perfil de usuario:', error);
+      setUserProfile(null);
+    } else {
+      // Verificar que el usuario esté activo
+      if (!data.activo) {
+        await supabase.auth.signOut();
+        setUserProfile(null);
+      } else {
+        setUserProfile(data as UsuarioAlmacen);
+      }
+    }
     setLoading(false);
+  };
+
+  /* ---- Escuchar cambios de sesión de Supabase Auth ---- */
+  useEffect(() => {
+    // Obtener sesión activa al cargar la app
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchUserProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // Suscribirse a cambios (login, logout, refresh de token)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchUserProfile(session.user.id);
+      } else {
+        setUserProfile(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   /* =============================================
-     SIGN IN
-     Usa .limit(1) en lugar de .single() para evitar
-     el error 406 cuando no hay resultados.
+     SIGN IN — usa Supabase Auth nativo
   ============================================= */
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
-    const emailNorm = email.trim().toLowerCase();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
 
-    // Buscar usuario por email — usamos limit(1) para evitar error 406
-    const { data, error: fetchError } = await supabase
-      .from('usuarioalmacen')
-      .select('id, email, nombre_completo, departamento, rol, activo, password')
-      .eq('email', emailNorm)
-      .limit(1);
-
-    // Error de red o de Supabase
-    if (fetchError) {
-      console.error('Supabase fetch error:', fetchError);
+    if (error) {
+      // Mensajes de error amigables en español
+      if (error.message.includes('Invalid login credentials')) {
+        return { error: 'Correo o contraseña incorrectos' };
+      }
+      if (error.message.includes('Email not confirmed')) {
+        return { error: 'Debes confirmar tu correo electrónico antes de iniciar sesión' };
+      }
       return { error: 'Error al conectar con el servidor. Intenta de nuevo.' };
     }
 
-    // Sin resultados — usuario no existe
-    if (!data || data.length === 0) {
-      return { error: 'Correo o contraseña incorrectos' };
-    }
-
-    const user = data[0];
-
-    // Usuario inactivo
-    if (!user.activo) {
-      return { error: 'Tu cuenta está desactivada. Contacta al administrador.' };
-    }
-
-    // Verificar contraseña
-    if (user.password !== password) {
-      return { error: 'Correo o contraseña incorrectos' };
-    }
-
-    // Login exitoso — guardar sesión
-    const newSession: AlmacenSession = {
-      id: user.id,
-      email: user.email,
-      nombre_completo: user.nombre_completo,
-      rol: user.rol as 'admin' | 'supervisor' | 'operador',
-      departamento: user.departamento,
-    };
-
-    setLocalSession(newSession);
-    setSession(newSession);
     return { error: null };
   };
 
   /* =============================================
      SIGN OUT
   ============================================= */
-  const signOut = () => {
-    clearLocalSession();
-    setSession(null);
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUserProfile(null);
   };
 
   return (
     <AuthContext.Provider
       value={{
-        session,
+        userProfile,
         loading,
-        userRol: session?.rol ?? null,
-        isAdmin: session?.rol === 'admin',
+        userRol: userProfile?.rol ?? null,
+        isAdmin: userProfile?.rol === 'admin',
         signIn,
         signOut,
       }}

@@ -24,11 +24,11 @@ export type NewEntry = Omit<Entry, 'id' | 'registered_at'>;
 
 /* =============================================
    TIPOS — Usuarios del Almacén
-   La tabla es INDEPENDIENTE de auth.users.
-   Maneja su propia autenticación con email + password.
+   Ahora enlazada con auth.users a través de user_id.
 ============================================= */
 export type UsuarioAlmacen = {
   id: string;
+  user_id: string;            // UUID de auth.users
   email: string;
   nombre_completo: string | null;
   departamento: string | null;
@@ -45,35 +45,4 @@ export type NewUsuarioAlmacen = {
   departamento?: string;
   rol: 'admin' | 'supervisor' | 'operador';
   activo: boolean;
-};
-
-/* =============================================
-   SESIÓN LOCAL — almacena el usuario logueado
-   en localStorage para persistir entre recargas.
-============================================= */
-const SESSION_KEY = 'almacen_session';
-
-export type AlmacenSession = {
-  id: string;
-  email: string;
-  nombre_completo: string | null;
-  rol: 'admin' | 'supervisor' | 'operador';
-  departamento: string | null;
-};
-
-export const getLocalSession = (): AlmacenSession | null => {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-};
-
-export const setLocalSession = (session: AlmacenSession) => {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-};
-
-export const clearLocalSession = () => {
-  localStorage.removeItem(SESSION_KEY);
 };

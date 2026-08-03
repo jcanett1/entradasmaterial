@@ -22,7 +22,7 @@ type MainTab = 'inventario' | 'racks';
 type RackSubTab = 'locaciones' | 'salidas';
 
 export function Dashboard() {
-  const { session, signOut, isAdmin, userRol } = useAuth();
+  const { userProfile, signOut, isAdmin, userRol } = useAuth();
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState<MainTab>('inventario');
@@ -217,7 +217,7 @@ export function Dashboard() {
             </div>
           </div>
           <UserManagementDropdown
-            currentUserEmail={session?.email ?? ''}
+            currentUserEmail={userProfile?.email ?? ''}
             isAdmin={isAdmin}
             userRol={userRol}
             onSignOut={signOut}
@@ -403,7 +403,7 @@ export function Dashboard() {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <InventoryForm record={editingRecord} userEmail={session?.nombre_completo || session?.email || ''} onSave={handleCreate} onCancel={closeForm} />
+            <InventoryForm record={editingRecord} userEmail={userProfile?.nombre_completo || userProfile?.email || ''} onSave={handleCreate} onCancel={closeForm} />
           </div>
         </div>
       )}
