@@ -151,7 +151,9 @@ export function InventoryTable({
                   <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center">
                       {isAssigned ? (
-                        <Lock className="h-4 w-4 text-amber-500" title={`Asignado a locación ${locationCode}`} />
+                        <span title={`Asignado a locación ${locationCode}`}>
+                          <Lock className="h-4 w-4 text-amber-500" />
+                        </span>
                       ) : (
                         <input
                           type="checkbox"
