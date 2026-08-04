@@ -4,6 +4,7 @@ import {
   Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes,
   Archive, Ruler, User, Calendar, Settings2, ClipboardList, Tag,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  MapPin, Lock,
 } from 'lucide-react';
 
 const PAGE_SIZE = 25;
@@ -17,6 +18,10 @@ interface InventoryTableProps {
   selectedIds: Set<number>;
   onToggleSelect: (id: number) => void;
   onToggleSelectAll: (pageIds: number[]) => void;
+  /** IDs de entries que ya están asignados a alguna locación */
+  assignedEntryIds?: Set<number>;
+  /** Mapa de entry_id → location_code para mostrar la leyenda */
+  assignedEntryLocations?: Record<number, string>;
 }
 
 export function InventoryTable({
@@ -28,6 +33,8 @@ export function InventoryTable({
   selectedIds,
   onToggleSelect,
   onToggleSelectAll,
+  assignedEntryIds = new Set(),
+  assignedEntryLocations = {},
 }: InventoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -120,39 +127,65 @@ export function InventoryTable({
           <tbody>
             {pageRecords.map((record, idx) => {
               const isSelected = selectedIds.has(record.id);
+              const isAssigned = assignedEntryIds.has(record.id);
+              const locationCode = isAssigned ? (assignedEntryLocations[record.id] ?? '') : '';
+
               return (
                 <tr
                   key={record.id}
-                  className={`group transition-colors duration-150 border-b border-gray-100 last:border-0 cursor-pointer ${
-                    isSelected
+                  className={`group transition-colors duration-150 border-b border-gray-100 last:border-0 ${
+                    isAssigned
+                      ? 'cursor-default'
+                      : 'cursor-pointer'
+                  } ${
+                    isAssigned
+                      ? 'bg-amber-50/60 hover:bg-amber-50'
+                      : isSelected
                       ? 'bg-violet-50 hover:bg-violet-100/70'
                       : 'hover:bg-indigo-50/40'
                   }`}
-                  style={!isSelected ? { background: idx % 2 === 0 ? '#ffffff' : '#fafbff' } : undefined}
-                  onClick={() => onToggleSelect(record.id)}
+                  style={!isSelected && !isAssigned ? { background: idx % 2 === 0 ? '#ffffff' : '#fafbff' } : undefined}
+                  onClick={() => !isAssigned && onToggleSelect(record.id)}
                 >
-                  {/* Checkbox */}
+                  {/* Checkbox — deshabilitado si está asignado */}
                   <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => onToggleSelect(record.id)}
-                        className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
-                      />
+                      {isAssigned ? (
+                        <Lock className="h-4 w-4 text-amber-500" title={`Asignado a locación ${locationCode}`} />
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => onToggleSelect(record.id)}
+                          className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
+                        />
+                      )}
                     </div>
                   </td>
 
                   {/* Part Number */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
-                      {record.part_number}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-sm font-semibold border ${
+                        isAssigned
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-indigo-50 text-indigo-700 border-indigo-100'
+                      }`}>
+                        {record.part_number}
+                      </span>
+                      {/* Leyenda de asignado a locación */}
+                      {isAssigned && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-[10px] font-bold text-amber-700 w-fit">
+                          <MapPin className="h-2.5 w-2.5 flex-shrink-0" />
+                          Ya asignado a {locationCode}
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Descripción */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                    <p className="text-gray-800 text-sm font-medium max-w-[160px] truncate" title={record.description ?? ''}>
+                    <p className={`text-sm font-medium max-w-[160px] truncate ${isAssigned ? 'text-gray-500' : 'text-gray-800'}`} title={record.description ?? ''}>
                       {record.description || <span className="text-gray-400 italic">Sin descripción</span>}
                     </p>
                   </td>
@@ -160,7 +193,9 @@ export function InventoryTable({
                   {/* PO */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                     {record.po ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-sm font-semibold border ${
+                        isAssigned ? 'bg-gray-50 text-gray-500 border-gray-200' : 'bg-purple-50 text-purple-700 border-purple-100'
+                      }`}>
                         {record.po}
                       </span>
                     ) : (
@@ -170,21 +205,27 @@ export function InventoryTable({
 
                   {/* QTY */}
                   <td className="px-5 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                    <span className="inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
+                    <span className={`inline-flex items-center justify-center min-w-[56px] px-3 py-1.5 rounded-full font-bold text-sm border ${
+                      isAssigned ? 'bg-gray-50 text-gray-500 border-gray-200' : 'bg-blue-50 text-blue-700 border-blue-100'
+                    }`}>
                       {record.total_units.toLocaleString()}
                     </span>
                   </td>
 
                   {/* Cajas */}
                   <td className="px-5 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                    <span className="inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm border border-emerald-100">
+                    <span className={`inline-flex items-center justify-center min-w-[44px] px-3 py-1.5 rounded-full font-bold text-sm border ${
+                      isAssigned ? 'bg-gray-50 text-gray-500 border-gray-200' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                    }`}>
                       {record.total_boxes}
                     </span>
                   </td>
 
                   {/* Unidad de Medida */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                    <span className="inline-flex px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-100">
+                    <span className={`inline-flex px-3 py-1.5 rounded-full text-xs font-semibold border ${
+                      isAssigned ? 'bg-gray-50 text-gray-400 border-gray-200' : 'bg-amber-50 text-amber-700 border-amber-100'
+                    }`}>
                       {record.unit_of_measure || '—'}
                     </span>
                   </td>
@@ -192,12 +233,14 @@ export function InventoryTable({
                   {/* Registrado Por */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
-                      <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                        <span className="text-indigo-600 text-xs font-bold uppercase">
+                      <div className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        isAssigned ? 'bg-gray-100' : 'bg-indigo-100'
+                      }`}>
+                        <span className={`text-xs font-bold uppercase ${isAssigned ? 'text-gray-400' : 'text-indigo-600'}`}>
                           {record.registered_by ? record.registered_by[0] : '?'}
                         </span>
                       </div>
-                      <span className="text-sm text-gray-600 truncate max-w-[140px]" title={record.registered_by ?? ''}>
+                      <span className={`text-sm truncate max-w-[140px] ${isAssigned ? 'text-gray-400' : 'text-gray-600'}`} title={record.registered_by ?? ''}>
                         {record.registered_by}
                       </span>
                     </div>
@@ -206,7 +249,7 @@ export function InventoryTable({
                   {/* Fecha */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex flex-col">
-                      <span className="text-sm text-gray-700 font-medium">
+                      <span className={`text-sm font-medium ${isAssigned ? 'text-gray-400' : 'text-gray-700'}`}>
                         {new Date(record.registered_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </span>
                       <span className="text-xs text-gray-400 mt-0.5">
@@ -217,23 +260,33 @@ export function InventoryTable({
 
                   {/* Acciones */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-center items-center gap-1.5 flex-wrap">
-                      <button onClick={() => onLabel(record)} title="Crear etiqueta FIFO"
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
-                        <Tag className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Etiqueta</span>
-                      </button>
-                      <button onClick={() => onEdit(record)} title="Editar registro"
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95">
-                        <Edit2 className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Editar</span>
-                      </button>
-                      <button onClick={() => onDelete(record.id)} title="Eliminar registro"
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95">
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Eliminar</span>
-                      </button>
-                    </div>
+                    {isAssigned ? (
+                      /* Fila bloqueada: solo muestra badge de locación */
+                      <div className="flex justify-center">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-100 border border-amber-300 text-amber-700">
+                          <Lock className="h-3 w-3" />
+                          Bloqueado
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                        <button onClick={() => onLabel(record)} title="Crear etiqueta FIFO"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
+                          <Tag className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Etiqueta</span>
+                        </button>
+                        <button onClick={() => onEdit(record)} title="Editar registro"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95">
+                          <Edit2 className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Editar</span>
+                        </button>
+                        <button onClick={() => onDelete(record.id)} title="Eliminar registro"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95">
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Eliminar</span>
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );

@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   MapPin, Package, CheckCircle2, Search, Loader2, X, Save,
   RefreshCw, LogOut, Unlock, Hash, Boxes, ClipboardList, Calendar,
-  AlertTriangle, Plus, Layers, Archive,
+  AlertTriangle, Plus, Layers, Archive, CheckSquare, Square,
 } from 'lucide-react';
 
 const MAX_ITEMS = 8;
@@ -34,7 +34,6 @@ interface Location {
   qty: number | null;
   po: string | null;
   assigned_at: string | null;
-  // items cargados en frontend
   items?: LocationItem[];
 }
 
@@ -72,7 +71,8 @@ export function RacksPage() {
   // Modal asignar / agregar item
   const [assignModal, setAssignModal] = useState<Location | null>(null);
   const [entries, setEntries] = useState<EntryOption[]>([]);
-  const [selectedEntry, setSelectedEntry] = useState<EntryOption | null>(null);
+  // Selección múltiple: Set de IDs seleccionados
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<number>>(new Set());
   const [entrySearch, setEntrySearch] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -85,7 +85,6 @@ export function RacksPage() {
   /* ── Fetch ── */
   const fetchLocations = useCallback(async () => {
     setRefreshing(true);
-    // 1. Traer locaciones
     const { data: locsData } = await supabase
       .from('locations')
       .select('*')
@@ -94,7 +93,6 @@ export function RacksPage() {
 
     const locs: Location[] = (locsData as Location[]) ?? [];
 
-    // 2. Traer todos los location_items
     const { data: itemsData } = await supabase
       .from('location_items')
       .select('*')
@@ -102,7 +100,6 @@ export function RacksPage() {
 
     const rawItems = (itemsData as Omit<LocationItem, 'boxes'>[]) ?? [];
 
-    // 3. Obtener total_boxes de las entries relacionadas
     const entryIds = [...new Set(rawItems.map(i => i.entry_id).filter((id): id is number => id !== null))];
     let boxesMap: Record<number, number> = {};
     if (entryIds.length > 0) {
@@ -115,13 +112,11 @@ export function RacksPage() {
       });
     }
 
-    // 4. Enriquecer items con boxes
     const items: LocationItem[] = rawItems.map(item => ({
       ...item,
       boxes: item.entry_id ? (boxesMap[item.entry_id] ?? 0) : 0,
     }));
 
-    // 5. Unir items a sus locaciones
     const locsWithItems = locs.map(loc => ({
       ...loc,
       items: items.filter(it => it.location_id === loc.id),
@@ -136,7 +131,6 @@ export function RacksPage() {
 
   /* ── Fetch entries para el modal (excluye los ya asignados a alguna locación) ── */
   const fetchEntries = useCallback(async (term: string) => {
-    // 1. Obtener todos los entry_id que ya están asignados en location_items
     const { data: assignedData } = await supabase
       .from('location_items')
       .select('entry_id');
@@ -144,7 +138,6 @@ export function RacksPage() {
       .map((r: { entry_id: number | null }) => r.entry_id)
       .filter((id): id is number => id !== null);
 
-    // 2. Buscar entries excluyendo los ya asignados
     let query = supabase
       .from('entries')
       .select('id, part_number, description, total_units, total_boxes, po')
@@ -160,7 +153,10 @@ export function RacksPage() {
   }, []);
 
   useEffect(() => {
-    if (assignModal) fetchEntries('');
+    if (assignModal) {
+      fetchEntries('');
+      setSelectedEntryIds(new Set());
+    }
   }, [assignModal, fetchEntries]);
 
   useEffect(() => {
@@ -190,50 +186,72 @@ export function RacksPage() {
     ocupado: locations.filter(l => (l.items?.length ?? 0) > 0).length,
   };
 
-  /* ── Asignar / Agregar item ── */
+  /* ── Toggle selección de un entry ── */
+  const toggleEntrySelection = (entryId: number) => {
+    setSelectedEntryIds(prev => {
+      const next = new Set(prev);
+      if (next.has(entryId)) {
+        next.delete(entryId);
+      } else {
+        // Verificar que no exceda el límite disponible
+        const currentItems = assignModal?.items?.length ?? 0;
+        const available = MAX_ITEMS - currentItems;
+        if (next.size < available) {
+          next.add(entryId);
+        }
+      }
+      return next;
+    });
+  };
+
+  /* ── Asignar múltiples entries ── */
   const handleAssign = async () => {
-    if (!assignModal || !selectedEntry) return;
+    if (!assignModal || selectedEntryIds.size === 0) return;
     const currentItems = assignModal.items ?? [];
     if (currentItems.length >= MAX_ITEMS) return;
 
     setSaving(true);
 
-    // Obtener FIFO específico del entry seleccionado (por entry_id)
-    const { data: fifoLabel } = await supabase
-      .from('fifo_labels')
-      .select('fifo_number')
-      .eq('entry_id', selectedEntry.id)
-      .maybeSingle();
-    const fifoNumber = fifoLabel?.fifo_number ?? null;
+    const selectedEntriesList = entries.filter(e => selectedEntryIds.has(e.id));
 
-    // Insertar en location_items
-    await supabase.from('location_items').insert([{
-      location_id: assignModal.id,
-      location_code: assignModal.location_code,
-      entry_id: selectedEntry.id,
-      part_number: selectedEntry.part_number,
-      po: selectedEntry.po,
-      qty: selectedEntry.total_units,
-      fifo_number: fifoNumber,
-      assigned_at: new Date().toISOString(),
-    }]);
+    for (let i = 0; i < selectedEntriesList.length; i++) {
+      const entry = selectedEntriesList[i];
 
-    // Actualizar la tabla locations para marcar como ocupado (compatibilidad)
-    const isFirstItem = currentItems.length === 0;
-    if (isFirstItem) {
-      await supabase.from('locations').update({
-        status: 'ocupado',
-        entry_id: selectedEntry.id,
-        part_number: selectedEntry.part_number,
-        qty: selectedEntry.total_units,
-        po: selectedEntry.po,
+      const { data: fifoLabel } = await supabase
+        .from('fifo_labels')
+        .select('fifo_number')
+        .eq('entry_id', entry.id)
+        .maybeSingle();
+      const fifoNumber = fifoLabel?.fifo_number ?? null;
+
+      await supabase.from('location_items').insert([{
+        location_id: assignModal.id,
+        location_code: assignModal.location_code,
+        entry_id: entry.id,
+        part_number: entry.part_number,
+        po: entry.po,
+        qty: entry.total_units,
+        fifo_number: fifoNumber,
         assigned_at: new Date().toISOString(),
-      }).eq('id', assignModal.id);
+      }]);
+
+      // Actualizar la tabla locations con el primer item (compatibilidad)
+      const isFirstItem = currentItems.length === 0 && i === 0;
+      if (isFirstItem) {
+        await supabase.from('locations').update({
+          status: 'ocupado',
+          entry_id: entry.id,
+          part_number: entry.part_number,
+          qty: entry.total_units,
+          po: entry.po,
+          assigned_at: new Date().toISOString(),
+        }).eq('id', assignModal.id);
+      }
     }
 
     setSaving(false);
     setAssignModal(null);
-    setSelectedEntry(null);
+    setSelectedEntryIds(new Set());
     setEntrySearch('');
     fetchLocations();
   };
@@ -243,7 +261,6 @@ export function RacksPage() {
     setActionSaving(true);
     await supabase.from('location_items').delete().eq('id', item.id);
 
-    // Si era el último item, liberar la locación
     const remaining = (loc.items ?? []).filter(i => i.id !== item.id);
     if (remaining.length === 0) {
       await supabase.from('locations').update({
@@ -255,7 +272,6 @@ export function RacksPage() {
         assigned_at: null,
       }).eq('id', loc.id);
     } else {
-      // Actualizar el campo principal con el primer item restante
       const first = remaining[0];
       await supabase.from('locations').update({
         entry_id: first.entry_id,
@@ -274,7 +290,6 @@ export function RacksPage() {
   const handleExitItem = async (loc: Location, item: LocationItem) => {
     setActionSaving(true);
 
-    // Registrar salida con boxes
     await supabase.from('exits').insert([{
       part_number: item.part_number,
       description: null,
@@ -288,10 +303,8 @@ export function RacksPage() {
       registered_by: userDisplayName || null,
     }]);
 
-    // Eliminar el item
     await supabase.from('location_items').delete().eq('id', item.id);
 
-    // Si era el último, liberar locación
     const remaining = (loc.items ?? []).filter(i => i.id !== item.id);
     if (remaining.length === 0) {
       await supabase.from('locations').update({
@@ -403,7 +416,6 @@ export function RacksPage() {
             if (rackLocs.length === 0) return null;
             const c = RACK_COLORS[rack];
             const occ = rackLocs.filter(l => (l.items?.length ?? 0) > 0).length;
-            // Conteo de inventario del rack
             const allItems = rackLocs.flatMap(l => l.items ?? []);
             const totalQty = allItems.reduce((s, i) => s + i.qty, 0);
             const totalBoxes = allItems.reduce((s, i) => s + i.boxes, 0);
@@ -412,7 +424,6 @@ export function RacksPage() {
                 <div className="flex flex-wrap items-center gap-3 mb-3">
                   <span className={`${c.badge} text-white text-sm font-black px-3 py-1 rounded-lg`}>RACK {rack}</span>
                   <span className="text-xs text-gray-500">{rackLocs.length} locaciones · {occ} ocupadas · {rackLocs.length - occ} disponibles</span>
-                  {/* Contadores de inventario del rack */}
                   {totalQty > 0 && (
                     <div className="flex items-center gap-2 ml-auto flex-wrap">
                       <div className="flex items-center gap-1.5 bg-blue-100 border border-blue-200 rounded-lg px-3 py-1">
@@ -451,7 +462,6 @@ export function RacksPage() {
                 <span className="text-xs text-gray-500">
                   {filtered.length} locaciones · {filtered.filter(l => (l.items?.length ?? 0) > 0).length} ocupadas
                 </span>
-                {/* Contadores de inventario del rack */}
                 {totalQty > 0 && (
                   <div className="flex items-center gap-2 ml-auto flex-wrap">
                     <div className="flex items-center gap-1.5 bg-blue-100 border border-blue-200 rounded-lg px-3 py-1">
@@ -515,14 +525,15 @@ export function RacksPage() {
               </button>
             </div>
 
-            {/* Resumen de inventario de la locación */}
+            {/* Resumen de inventario de la locación — QTY TOTAL, CAJAS TOTAL y lista de part numbers */}
             {(detailModal.items?.length ?? 0) > 0 && (() => {
               const locItems = detailModal.items ?? [];
               const locQty = locItems.reduce((s, i) => s + i.qty, 0);
               const locBoxes = locItems.reduce((s, i) => s + i.boxes, 0);
               return (
-                <div className="px-6 pt-4 flex-shrink-0">
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="px-6 pt-4 flex-shrink-0 space-y-3">
+                  {/* Totales */}
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
                       <Boxes className="h-4 w-4 text-blue-500 flex-shrink-0" />
                       <div>
@@ -538,12 +549,44 @@ export function RacksPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Lista de números de parte asignados */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                      <Hash className="h-3 w-3 text-indigo-400" />
+                      Números de parte en esta locación ({locItems.length})
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {locItems.map((item, idx) => {
+                        const tagColors = [
+                          'bg-indigo-100 text-indigo-700 border-indigo-200',
+                          'bg-purple-100 text-purple-700 border-purple-200',
+                          'bg-blue-100 text-blue-700 border-blue-200',
+                          'bg-teal-100 text-teal-700 border-teal-200',
+                          'bg-emerald-100 text-emerald-700 border-emerald-200',
+                          'bg-amber-100 text-amber-700 border-amber-200',
+                          'bg-rose-100 text-rose-700 border-rose-200',
+                          'bg-cyan-100 text-cyan-700 border-cyan-200',
+                        ];
+                        return (
+                          <span
+                            key={item.id}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono font-bold ${tagColors[idx % tagColors.length]}`}
+                            title={`QTY: ${item.qty} · Cajas: ${item.boxes}${item.po ? ` · PO: ${item.po}` : ''}`}
+                          >
+                            <span className="text-[9px] font-black opacity-60">#{idx + 1}</span>
+                            {item.part_number}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               );
             })()}
 
             {/* Barra de capacidad */}
-            <div className="px-6 pt-2 flex-shrink-0">
+            <div className="px-6 pt-3 flex-shrink-0">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Capacidad utilizada</span>
                 <span className={`text-xs font-bold ${(detailModal.items?.length ?? 0) >= MAX_ITEMS ? 'text-red-600' : 'text-gray-600'}`}>
@@ -591,7 +634,6 @@ export function RacksPage() {
 
             {/* Footer acciones */}
             <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 space-y-2">
-              {/* Agregar otro número de parte */}
               {(detailModal.items?.length ?? 0) < MAX_ITEMS && (
                 <button
                   onClick={() => { setAssignModal(detailModal); setDetailModal(null); }}
@@ -601,7 +643,6 @@ export function RacksPage() {
                   Agregar número de parte ({(detailModal.items?.length ?? 0)}/{MAX_ITEMS})
                 </button>
               )}
-              {/* Liberar toda la locación */}
               {(detailModal.items?.length ?? 0) > 0 && (
                 <button
                   onClick={() => handleReleaseAll(detailModal)}
@@ -617,123 +658,203 @@ export function RacksPage() {
       )}
 
       {/* ══════════════════════════════════════════════
-          MODAL ASIGNAR
+          MODAL ASIGNAR — con selección múltiple
       ══════════════════════════════════════════════ */}
-      {assignModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-indigo-100">
-                  <MapPin className="h-4 w-4 text-indigo-600" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-gray-900">
-                    {(assignModal.items?.length ?? 0) === 0 ? 'Asignar a' : 'Agregar a'} {assignModal.location_code}
-                  </h2>
-                  <p className="text-xs text-gray-400">
-                    {(assignModal.items?.length ?? 0)}/{MAX_ITEMS} números de parte asignados
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => { setAssignModal(null); setSelectedEntry(null); setEntrySearch(''); }}
-                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {assignModal && (() => {
+        const currentItems = assignModal.items ?? [];
+        const available = MAX_ITEMS - currentItems.length;
+        const selectedList = entries.filter(e => selectedEntryIds.has(e.id));
+        const totalSelectedQty = selectedList.reduce((s, e) => s + e.total_units, 0);
+        const totalSelectedBoxes = selectedList.reduce((s, e) => s + e.total_boxes, 0);
 
-            {/* Advertencia si está llena */}
-            {(assignModal.items?.length ?? 0) >= MAX_ITEMS ? (
-              <div className="p-6">
-                <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-4">
-                  <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100 flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-indigo-100">
+                    <MapPin className="h-4 w-4 text-indigo-600" />
+                  </div>
                   <div>
-                    <p className="text-sm font-bold text-red-700">Locación llena</p>
-                    <p className="text-xs text-red-600 mt-1">
-                      Esta locación ya tiene el máximo de {MAX_ITEMS} números de parte.
-                      Debes dar salida o liberar alguno antes de agregar otro.
+                    <h2 className="text-base font-bold text-gray-900">
+                      {currentItems.length === 0 ? 'Asignar a' : 'Agregar a'} {assignModal.location_code}
+                    </h2>
+                    <p className="text-xs text-gray-400">
+                      {currentItems.length}/{MAX_ITEMS} asignados · {available} espacio{available !== 1 ? 's' : ''} disponible{available !== 1 ? 's' : ''}
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => { setAssignModal(null); setSelectedEntry(null); setEntrySearch(''); }}
-                  className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
-                  Cerrar
+                <button onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); }}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
+                  <X className="h-5 w-5" />
                 </button>
               </div>
-            ) : (
-              <div className="p-6 space-y-4">
-                {/* Advertencia cerca del límite */}
-                {(assignModal.items?.length ?? 0) >= 6 && (
-                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                    <p className="text-xs font-semibold text-amber-700">
-                      Quedan {MAX_ITEMS - (assignModal.items?.length ?? 0)} espacio(s) disponibles en esta locación
-                    </p>
-                  </div>
-                )}
 
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                    Buscar registro de inventario
-                  </label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-                    <input type="text" value={entrySearch} onChange={e => setEntrySearch(e.target.value)}
-                      placeholder="Part Number o descripción..."
-                      className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50" />
-                  </div>
-                </div>
-
-                <div className="max-h-56 overflow-y-auto rounded-xl border border-gray-200 divide-y divide-gray-100">
-                  {entries.length === 0 ? (
-                    <p className="text-center text-gray-400 text-sm py-6">Sin resultados</p>
-                  ) : entries.map(entry => (
-                    <button key={entry.id} type="button"
-                      onClick={() => setSelectedEntry(entry)}
-                      className={`w-full text-left px-4 py-3 transition-colors hover:bg-indigo-50 ${selectedEntry?.id === entry.id ? 'bg-indigo-50 border-l-2 border-indigo-500' : ''}`}>
-                      <p className="text-sm font-bold text-indigo-700 font-mono">{entry.part_number}</p>
-                      <p className="text-xs text-gray-500 truncate">{entry.description}</p>
-                      <div className="flex gap-3 mt-1">
-                        <span className="text-xs text-blue-600 font-semibold">QTY: {entry.total_units}</span>
-                        <span className="text-xs text-purple-600 font-semibold">Cajas: {entry.total_boxes}</span>
-                        {entry.po && <span className="text-xs text-gray-500 font-semibold">PO: {entry.po}</span>}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                {selectedEntry && (
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
-                    <p className="text-xs text-indigo-500 font-semibold mb-1">Seleccionado:</p>
-                    <p className="text-sm font-bold text-indigo-800 font-mono">{selectedEntry.part_number}</p>
-                    <p className="text-xs text-indigo-600">{selectedEntry.description}</p>
-                    <div className="flex gap-3 mt-1">
-                      <span className="text-xs text-blue-600 font-semibold">QTY: {selectedEntry.total_units}</span>
-                      <span className="text-xs text-purple-600 font-semibold">Cajas: {selectedEntry.total_boxes}</span>
-                      {selectedEntry.po && <span className="text-xs text-gray-500 font-semibold">PO: {selectedEntry.po}</span>}
+              {/* Advertencia si está llena */}
+              {available === 0 ? (
+                <div className="p-6">
+                  <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-4">
+                    <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-bold text-red-700">Locación llena</p>
+                      <p className="text-xs text-red-600 mt-1">
+                        Esta locación ya tiene el máximo de {MAX_ITEMS} números de parte.
+                        Debes dar salida o liberar alguno antes de agregar otro.
+                      </p>
                     </div>
                   </div>
-                )}
-
-                <div className="flex gap-3 pt-2">
-                  <button type="button"
-                    onClick={() => { setAssignModal(null); setSelectedEntry(null); setEntrySearch(''); }}
-                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
-                    Cancelar
-                  </button>
-                  <button type="button" onClick={handleAssign} disabled={!selectedEntry || saving}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
-                    style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
-                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                    {(assignModal.items?.length ?? 0) === 0 ? 'Asignar' : 'Agregar'}
+                  <button
+                    onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); }}
+                    className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
+                    Cerrar
                   </button>
                 </div>
-              </div>
-            )}
+              ) : (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    {/* Advertencia cerca del límite */}
+                    {available <= 2 && available > 0 && (
+                      <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                        <p className="text-xs font-semibold text-amber-700">
+                          Solo quedan {available} espacio{available !== 1 ? 's' : ''} disponible{available !== 1 ? 's' : ''} en esta locación
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Instrucción de selección múltiple */}
+                    <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2">
+                      <CheckSquare className="h-4 w-4 text-indigo-500 flex-shrink-0" />
+                      <p className="text-xs font-semibold text-indigo-700">
+                        Puedes seleccionar hasta <strong>{available}</strong> número{available !== 1 ? 's' : ''} de parte a la vez
+                      </p>
+                    </div>
+
+                    {/* Búsqueda */}
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
+                        Buscar registro de inventario
+                      </label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                        <input type="text" value={entrySearch} onChange={e => setEntrySearch(e.target.value)}
+                          placeholder="Part Number o descripción..."
+                          className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50" />
+                      </div>
+                    </div>
+
+                    {/* Lista de entries con checkboxes */}
+                    <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                      {entries.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-6">Sin resultados disponibles</p>
+                      ) : entries.map(entry => {
+                        const isSelected = selectedEntryIds.has(entry.id);
+                        const isDisabled = !isSelected && selectedEntryIds.size >= available;
+                        return (
+                          <button key={entry.id} type="button"
+                            onClick={() => !isDisabled && toggleEntrySelection(entry.id)}
+                            disabled={isDisabled}
+                            className={`w-full text-left px-4 py-3 transition-colors flex items-start gap-3 ${
+                              isSelected
+                                ? 'bg-indigo-50 border-l-4 border-indigo-500'
+                                : isDisabled
+                                ? 'opacity-40 cursor-not-allowed bg-gray-50'
+                                : 'hover:bg-indigo-50/60 cursor-pointer'
+                            }`}>
+                            {/* Checkbox visual */}
+                            <div className={`mt-0.5 flex-shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center transition-all ${
+                              isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-300 bg-white'
+                            }`}>
+                              {isSelected && (
+                                <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                            {/* Datos del entry */}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold text-indigo-700 font-mono">{entry.part_number}</p>
+                              <p className="text-xs text-gray-500 truncate">{entry.description}</p>
+                              <div className="flex gap-3 mt-1">
+                                <span className="text-xs text-blue-600 font-semibold">QTY: {entry.total_units.toLocaleString()}</span>
+                                <span className="text-xs text-purple-600 font-semibold">Cajas: {entry.total_boxes}</span>
+                                {entry.po && <span className="text-xs text-gray-500 font-semibold">PO: {entry.po}</span>}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Resumen de selección */}
+                    {selectedEntryIds.size > 0 && (
+                      <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold text-indigo-700">
+                            {selectedEntryIds.size} número{selectedEntryIds.size !== 1 ? 's' : ''} de parte seleccionado{selectedEntryIds.size !== 1 ? 's' : ''}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedEntryIds(new Set())}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold underline"
+                          >
+                            Limpiar
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedList.map((e, idx) => (
+                            <span key={e.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-100 border border-indigo-300 text-xs font-mono font-bold text-indigo-700">
+                              <span className="text-[9px] opacity-60">#{idx + 1}</span>
+                              {e.part_number}
+                              <button
+                                type="button"
+                                onClick={(ev) => { ev.stopPropagation(); toggleEntrySelection(e.id); }}
+                                className="ml-0.5 text-indigo-400 hover:text-indigo-700"
+                              >
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex gap-4 pt-1 border-t border-indigo-200">
+                          <span className="text-xs text-indigo-600 font-semibold">
+                            QTY Total: <strong className="text-indigo-800">{totalSelectedQty.toLocaleString()}</strong>
+                          </span>
+                          <span className="text-xs text-indigo-600 font-semibold">
+                            Cajas Total: <strong className="text-indigo-800">{totalSelectedBoxes}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer con botones */}
+                  <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 flex gap-3">
+                    <button type="button"
+                      onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); }}
+                      className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
+                      Cancelar
+                    </button>
+                    <button type="button" onClick={handleAssign}
+                      disabled={selectedEntryIds.size === 0 || saving}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
+                      style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      {saving
+                        ? 'Guardando...'
+                        : selectedEntryIds.size === 0
+                        ? 'Selecciona al menos uno'
+                        : `${currentItems.length === 0 ? 'Asignar' : 'Agregar'} ${selectedEntryIds.size} número${selectedEntryIds.size !== 1 ? 's' : ''}`
+                      }
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -898,7 +1019,7 @@ function ItemCard({
             <Boxes className="h-3 w-3 text-gray-400" />
             <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">QTY</p>
           </div>
-          <p className="text-sm font-black text-gray-800">{item.qty.toLocaleString()}</p>
+          <p className={`text-base font-black ${c.text}`}>{item.qty.toLocaleString()}</p>
         </div>
 
         {/* Cajas */}
@@ -907,55 +1028,56 @@ function ItemCard({
             <Archive className="h-3 w-3 text-gray-400" />
             <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Cajas</p>
           </div>
-          <p className="text-sm font-black text-purple-700">{item.boxes > 0 ? item.boxes.toLocaleString() : '—'}</p>
+          <p className={`text-base font-black ${c.text}`}>{item.boxes}</p>
         </div>
 
         {/* FIFO */}
-        <div className="bg-white/70 rounded-lg px-2 py-1.5">
-          <div className="flex items-center gap-1 mb-0.5">
-            <span className="text-amber-500 font-black text-xs">#</span>
-            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">FIFO</p>
+        {item.fifo_number && (
+          <div className="bg-white/70 rounded-lg px-2 py-1.5">
+            <div className="flex items-center gap-1 mb-0.5">
+              <Hash className="h-3 w-3 text-gray-400" />
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">FIFO</p>
+            </div>
+            <p className={`text-base font-black ${c.text}`}>#{item.fifo_number}</p>
           </div>
-          <p className="text-sm font-black text-amber-700">
-            {item.fifo_number !== null ? `FIFO ${item.fifo_number}` : '—'}
-          </p>
-        </div>
+        )}
 
         {/* PO */}
-        <div className="bg-white/70 rounded-lg px-2 py-1.5">
-          <div className="flex items-center gap-1 mb-0.5">
-            <ClipboardList className="h-3 w-3 text-gray-400" />
-            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">PO</p>
+        {item.po && (
+          <div className="bg-white/70 rounded-lg px-2 py-1.5">
+            <div className="flex items-center gap-1 mb-0.5">
+              <ClipboardList className="h-3 w-3 text-gray-400" />
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">PO</p>
+            </div>
+            <p className={`text-xs font-bold ${c.text} truncate`}>{item.po}</p>
           </div>
-          <p className="text-sm font-bold text-gray-800 font-mono">{item.po ?? '—'}</p>
-        </div>
+        )}
 
         {/* Fecha */}
         <div className="bg-white/70 rounded-lg px-2 py-1.5 col-span-2">
           <div className="flex items-center gap-1 mb-0.5">
             <Calendar className="h-3 w-3 text-gray-400" />
-            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Fecha de entrada</p>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Asignado</p>
           </div>
-          <p className="text-xs font-semibold text-gray-700">
-            {new Date(item.assigned_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: '2-digit' })}
+          <p className="text-xs font-semibold text-gray-600">
+            {new Date(item.assigned_at).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
       </div>
 
-      {/* Botones de acción */}
+      {/* Acciones del item */}
       <div className="flex gap-2">
         <button
           onClick={onRelease}
           disabled={actionSaving}
-          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-all disabled:opacity-50">
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-all disabled:opacity-50">
           {actionSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlock className="h-3 w-3" />}
           Liberar
         </button>
         <button
           onClick={onExit}
           disabled={actionSaving}
-          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-50"
-          style={{ background: 'linear-gradient(135deg, #dc2626, #ef4444)' }}>
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-all disabled:opacity-50">
           {actionSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
           Salida KITTEO
         </button>

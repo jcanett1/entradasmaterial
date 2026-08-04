@@ -39,6 +39,11 @@ export function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [labelRecord, setLabelRecord] = useState<Entry | null>(null);
 
+  // ── IDs de entries ya asignados a una locación (para bloqueo en tabla) ──
+  const [assignedEntryIds, setAssignedEntryIds] = useState<Set<number>>(new Set());
+  // Mapa de entry_id → location_code para mostrar la leyenda
+  const [assignedEntryLocations, setAssignedEntryLocations] = useState<Record<number, string>>({});
+
   // ── Selección múltiple ──
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showMultiLabel, setShowMultiLabel] = useState(false);
@@ -59,7 +64,36 @@ export function Dashboard() {
     setTimeout(() => setRefreshing(false), 600);
   };
 
-  useEffect(() => { fetchRecords(); }, []);
+  /* Fetch de entries asignados a locaciones */
+  const fetchAssignedEntries = async () => {
+    const { data } = await supabase
+      .from('location_items')
+      .select('entry_id, location_code');
+    if (data) {
+      const ids = new Set<number>();
+      const locMap: Record<number, string> = {};
+      (data as { entry_id: number | null; location_code: string }[]).forEach(row => {
+        if (row.entry_id !== null) {
+          ids.add(row.entry_id);
+          locMap[row.entry_id] = row.location_code;
+        }
+      });
+      setAssignedEntryIds(ids);
+      setAssignedEntryLocations(locMap);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecords();
+    fetchAssignedEntries();
+  }, []);
+
+  // Refrescar asignaciones cuando se cambia a la pestaña de inventario
+  useEffect(() => {
+    if (mainTab === 'inventario') {
+      fetchAssignedEntries();
+    }
+  }, [mainTab]);
 
   /* =======================
      FILTER + STATS
@@ -266,7 +300,7 @@ export function Dashboard() {
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all bg-gray-50" />
               </div>
               <div className="flex gap-2.5 flex-wrap justify-end">
-                <button onClick={fetchRecords}
+                <button onClick={() => { fetchRecords(); fetchAssignedEntries(); }}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 shadow-sm transition-all active:scale-95">
                   <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                   Actualizar
@@ -341,6 +375,8 @@ export function Dashboard() {
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
                 onToggleSelectAll={handleToggleSelectAll}
+                assignedEntryIds={assignedEntryIds}
+                assignedEntryLocations={assignedEntryLocations}
               />
             </div>
           </>
@@ -419,9 +455,14 @@ function TabBtn({ active, onClick, icon, label, color }: { active: boolean; onCl
     emerald: 'bg-emerald-600 text-white shadow-sm',
   };
   return (
-    <button onClick={onClick}
-      className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${active ? colors[color] : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
-      {icon}{label}
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+        active ? colors[color] : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+      }`}
+    >
+      {icon}
+      {label}
     </button>
   );
 }
@@ -432,26 +473,33 @@ function SubTabBtn({ active, onClick, icon, label, color }: { active: boolean; o
     red: 'border-red-500 text-red-700 bg-red-50',
   };
   return (
-    <button onClick={onClick}
-      className={`inline-flex items-center gap-2 px-6 py-4 text-sm font-semibold border-b-2 transition-all ${active ? colors[color] : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}>
-      {icon}{label}
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-6 py-4 text-sm font-semibold transition-all border-b-2 ${
+        active ? colors[color] : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+      }`}
+    >
+      {icon}
+      {label}
     </button>
   );
 }
 
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
-  const colorMap: Record<string, { bg: string; text: string; shadow: string }> = {
-    indigo:  { bg: 'bg-indigo-50',  text: 'text-indigo-600',  shadow: 'rgba(99,102,241,0.15)' },
-    blue:    { bg: 'bg-blue-50',    text: 'text-blue-600',    shadow: 'rgba(59,130,246,0.15)' },
-    emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', shadow: 'rgba(16,185,129,0.15)' },
+  const colors: Record<string, { bg: string; iconBg: string; iconColor: string; text: string }> = {
+    indigo: { bg: 'bg-indigo-50 border-indigo-100', iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', text: 'text-indigo-700' },
+    blue:   { bg: 'bg-blue-50 border-blue-100',     iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   text: 'text-blue-700' },
+    emerald:{ bg: 'bg-emerald-50 border-emerald-100',iconBg: 'bg-emerald-100',iconColor: 'text-emerald-600',text: 'text-emerald-700' },
   };
-  const c = colorMap[color] ?? colorMap['indigo'];
+  const c = colors[color];
   return (
-    <div className="bg-white rounded-2xl p-6 flex items-center gap-5 border border-gray-100" style={{ boxShadow: `0 4px 20px 0 ${c.shadow}` }}>
-      <div className={`p-3.5 rounded-2xl ${c.bg} ${c.text} flex-shrink-0`}>{icon}</div>
+    <div className={`${c.bg} border rounded-2xl px-6 py-5 flex items-center gap-4`}>
+      <div className={`${c.iconBg} p-3 rounded-xl flex-shrink-0`}>
+        <span className={c.iconColor}>{icon}</span>
+      </div>
       <div>
-        <p className="text-sm text-gray-500 font-medium">{label}</p>
-        <p className="text-3xl font-bold text-gray-900 mt-0.5">{value.toLocaleString()}</p>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</p>
+        <p className={`text-2xl font-black ${c.text}`}>{value.toLocaleString()}</p>
       </div>
     </div>
   );
