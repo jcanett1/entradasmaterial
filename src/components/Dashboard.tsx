@@ -10,15 +10,16 @@ import { MultiLabelModal } from './MultiLabelModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
+import { KitteoPage } from './KitteoPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
-  MapPin, LogOut, Tags, XCircle,
+  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
-type MainTab = 'inventario' | 'racks';
+type MainTab = 'inventario' | 'racks' | 'kitteo';
 type RackSubTab = 'locaciones' | 'salidas';
 
 export function Dashboard() {
@@ -277,6 +278,13 @@ export function Dashboard() {
             label="Racks / Locaciones"
             color="emerald"
           />
+          <TabBtn
+            active={mainTab === 'kitteo'}
+            onClick={() => setMainTab('kitteo')}
+            icon={<ArrowRightFromLine className="h-4 w-4" />}
+            label="Salidas KITTEO"
+            color="orange"
+          />
         </div>
 
         {/* ══════════════════════════════
@@ -383,6 +391,17 @@ export function Dashboard() {
         )}
 
         {/* ══════════════════════════════
+            PESTAÑA: SALIDAS KITTEO
+        ══════════════════════════════ */}
+        {mainTab === 'kitteo' && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-6">
+              <KitteoPage />
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════
             PESTAÑA: RACKS / LOCACIONES
         ══════════════════════════════ */}
         {mainTab === 'racks' && (
@@ -453,6 +472,7 @@ function TabBtn({ active, onClick, icon, label, color }: { active: boolean; onCl
   const colors: Record<string, string> = {
     indigo: 'bg-indigo-600 text-white shadow-sm',
     emerald: 'bg-emerald-600 text-white shadow-sm',
+    orange: 'bg-orange-600 text-white shadow-sm',
   };
   return (
     <button
