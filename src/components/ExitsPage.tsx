@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, Archive,
+  ChevronsLeft, ChevronsRight, Archive, ArrowRightFromLine, CheckCircle2,
 } from 'lucide-react';
 
 interface Exit {
@@ -35,6 +35,24 @@ interface LocationOption {
   rack: string;
 }
 
+/* ── Tipo para locaciones KITTEO ── */
+interface KitteoLocation {
+  id: number;
+  rack: string;
+  location_code: string;
+  status: 'disponible' | 'ocupado';
+}
+
+/* ── Colores por rack KITTEO ── */
+const RACK_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
+  '1': { bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    badge: 'bg-blue-600' },
+  '2': { bg: 'bg-indigo-50',  border: 'border-indigo-200',  text: 'text-indigo-700',  badge: 'bg-indigo-600' },
+  '3': { bg: 'bg-violet-50',  border: 'border-violet-200',  text: 'text-violet-700',  badge: 'bg-violet-600' },
+  '4': { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', badge: 'bg-emerald-600' },
+  '5': { bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-700',   badge: 'bg-amber-500' },
+  '6': { bg: 'bg-rose-50',    border: 'border-rose-200',    text: 'text-rose-700',    badge: 'bg-rose-600' },
+};
+
 const PAGE_SIZE = 25;
 
 export function ExitsPage() {
@@ -48,7 +66,7 @@ export function ExitsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Formulario
+  // Formulario nueva transferencia
   const [selectedEntry, setSelectedEntry] = useState<EntryOption | null>(null);
   const [entrySearch, setEntrySearch] = useState('');
   const [entrySuggestions, setEntrySuggestions] = useState<EntryOption[]>([]);
@@ -64,6 +82,19 @@ export function ExitsPage() {
   const locDropRef = useRef<HTMLDivElement>(null);
   const entryDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* ── Estado del modal "Salida a KITTEO" ── */
+  const [kitteoModal, setKitteoModal] = useState<Exit | null>(null);
+  const [kitteoSaving, setKitteoSaving] = useState(false);
+  const [kitteoSuccess, setKitteoSuccess] = useState(false);
+  // Racks y locaciones KITTEO
+  const [kitteoRacks, setKitteoRacks] = useState<string[]>([]);
+  const [selectedKitteoRack, setSelectedKitteoRack] = useState<string>('');
+  const [kitteoLocations, setKitteoLocations] = useState<KitteoLocation[]>([]);
+  const [filteredKitteoLocs, setFilteredKitteoLocs] = useState<KitteoLocation[]>([]);
+  const [selectedKitteoLoc, setSelectedKitteoLoc] = useState<KitteoLocation | null>(null);
+  const [kitteoLocSearch, setKitteoLocSearch] = useState('');
+  const [loadingKitteoLocs, setLoadingKitteoLocs] = useState(false);
 
   useEffect(() => { fetchExits(); }, []);
 
@@ -154,7 +185,6 @@ export function ExitsPage() {
       registered_by: userDisplayName,
     }]);
 
-    // Si había locación asignada, liberarla
     if (selectedLocation) {
       await supabase.from('locations').update({
         status: 'disponible',
@@ -179,6 +209,91 @@ export function ExitsPage() {
     setPo('');
     setSelectedLocation(null);
     setLocationSearch('');
+  };
+
+  /* ══════════════════════════════════════════
+     LÓGICA MODAL "SALIDA A KITTEO"
+  ══════════════════════════════════════════ */
+
+  /* Cargar racks disponibles de kitteo_locations */
+  const openKitteoModal = async (exit: Exit) => {
+    setKitteoModal(exit);
+    setKitteoSuccess(false);
+    setSelectedKitteoRack('');
+    setSelectedKitteoLoc(null);
+    setKitteoLocSearch('');
+    setLoadingKitteoLocs(true);
+
+    const { data } = await supabase
+      .from('kitteo_locations')
+      .select('id, rack, location_code, status')
+      .eq('status', 'disponible')
+      .order('rack', { ascending: true })
+      .order('location_code', { ascending: true });
+
+    const locs = (data as KitteoLocation[]) ?? [];
+    setKitteoLocations(locs);
+
+    // Extraer racks únicos
+    const uniqueRacks = [...new Set(locs.map(l => l.rack))].sort((a, b) =>
+      parseInt(a) - parseInt(b)
+    );
+    setKitteoRacks(uniqueRacks);
+    setLoadingKitteoLocs(false);
+  };
+
+  /* Cuando cambia el rack seleccionado, filtrar locaciones */
+  useEffect(() => {
+    if (!selectedKitteoRack) {
+      setFilteredKitteoLocs([]);
+      setSelectedKitteoLoc(null);
+      setKitteoLocSearch('');
+      return;
+    }
+    const locs = kitteoLocations.filter(l => l.rack === selectedKitteoRack);
+    const term = kitteoLocSearch.toLowerCase();
+    setFilteredKitteoLocs(
+      term ? locs.filter(l => l.location_code.toLowerCase().includes(term)) : locs
+    );
+    setSelectedKitteoLoc(null);
+  }, [selectedKitteoRack, kitteoLocations, kitteoLocSearch]);
+
+  /* Confirmar salida a KITTEO */
+  const handleKitteoSave = async () => {
+    if (!kitteoModal || !selectedKitteoLoc) return;
+    setKitteoSaving(true);
+
+    // 1. Asignar el material a la locación KITTEO seleccionada
+    await supabase.from('kitteo_locations').update({
+      status: 'ocupado',
+      part_number: kitteoModal.part_number,
+      description: kitteoModal.description,
+      qty: kitteoModal.qty,
+      boxes: kitteoModal.boxes,
+      po: kitteoModal.po,
+      entry_id: null,
+      registered_by: userDisplayName || null,
+      assigned_at: new Date().toISOString(),
+    }).eq('id', selectedKitteoLoc.id);
+
+    setKitteoSaving(false);
+    setKitteoSuccess(true);
+
+    // Cerrar modal después de 1.5 segundos
+    setTimeout(() => {
+      setKitteoModal(null);
+      setKitteoSuccess(false);
+      setSelectedKitteoRack('');
+      setSelectedKitteoLoc(null);
+    }, 1500);
+  };
+
+  const closeKitteoModal = () => {
+    setKitteoModal(null);
+    setKitteoSuccess(false);
+    setSelectedKitteoRack('');
+    setSelectedKitteoLoc(null);
+    setKitteoLocSearch('');
   };
 
   // Totales calculados
@@ -242,7 +357,7 @@ export function ExitsPage() {
         </div>
       </div>
 
-      {/* Tabla de salidas */}
+      {/* Tabla */}
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-10 w-10 text-red-400 animate-spin" /></div>
       ) : exits.length === 0 ? (
@@ -266,6 +381,7 @@ export function ExitsPage() {
                     { icon: <LogOut className="h-3.5 w-3.5" />, label: 'Destino', center: true },
                     { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado Por' },
                     { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Fecha' },
+                    { icon: <ArrowRightFromLine className="h-3.5 w-3.5" />, label: 'Acciones', center: true },
                   ].map(h => (
                     <th key={h.label} className={`px-5 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider ${h.center ? 'text-center' : 'text-left'}`}>
                       <div className={`flex items-center gap-1.5 ${h.center ? 'justify-center' : ''}`}>
@@ -281,9 +397,14 @@ export function ExitsPage() {
                     style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafafa' }}>
                     {/* Part Number */}
                     <td className="px-5 py-4">
-                      <span className="inline-flex px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
-                        {exit.part_number}
-                      </span>
+                      <div>
+                        <span className="inline-flex px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border border-indigo-100">
+                          {exit.part_number}
+                        </span>
+                        {exit.description && (
+                          <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[160px]">{exit.description}</p>
+                        )}
+                      </div>
                     </td>
                     {/* QTY */}
                     <td className="px-5 py-4 text-center">
@@ -341,17 +462,25 @@ export function ExitsPage() {
                         </span>
                       </div>
                     </td>
+                    {/* ── ACCIONES ── */}
+                    <td className="px-5 py-4 text-center">
+                      <button
+                        onClick={() => openKitteoModal(exit)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:border-orange-300 transition-all active:scale-95 whitespace-nowrap shadow-sm"
+                      >
+                        <ArrowRightFromLine className="h-3.5 w-3.5" />
+                        Salida a KITTEO
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
-              {/* Fila de totales al final de la página */}
+              {/* Fila de totales */}
               {pageExits.length > 0 && (
                 <tfoot>
                   <tr className="bg-gray-50 border-t-2 border-gray-200">
                     <td className="px-5 py-3">
-                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
-                        Subtotal página
-                      </span>
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Subtotal página</span>
                     </td>
                     <td className="px-5 py-3 text-center">
                       <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-black text-sm border border-blue-200">
@@ -363,7 +492,7 @@ export function ExitsPage() {
                         {pageExits.reduce((s, e) => s + (e.boxes ?? 0), 0).toLocaleString()}
                       </span>
                     </td>
-                    <td colSpan={5} />
+                    <td colSpan={6} />
                   </tr>
                 </tfoot>
               )}
@@ -394,7 +523,196 @@ export function ExitsPage() {
         </div>
       )}
 
-      {/* Modal Nueva Salida */}
+      {/* ══════════════════════════════════════════
+          MODAL: SALIDA A KITTEO
+      ══════════════════════════════════════════ */}
+      {kitteoModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100">
+
+            {/* Header del modal */}
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-orange-100">
+                  <ArrowRightFromLine className="h-4 w-4 text-orange-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">Salida a KITTEO</h2>
+                  <p className="text-xs text-gray-400">Selecciona la locación destino en KITTEO</p>
+                </div>
+              </div>
+              <button onClick={closeKitteoModal}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+
+              {/* ── Éxito ── */}
+              {kitteoSuccess ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <div className="p-4 bg-emerald-100 rounded-full">
+                    <CheckCircle2 className="h-10 w-10 text-emerald-600" />
+                  </div>
+                  <p className="text-lg font-bold text-emerald-700">¡Salida registrada!</p>
+                  <p className="text-sm text-gray-500 text-center">
+                    <strong>{kitteoModal.part_number}</strong> asignado a la locación{' '}
+                    <strong className="text-orange-600">{selectedKitteoLoc?.location_code}</strong> en KITTEO.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* ── Info del material ── */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 space-y-2">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Material a transferir</p>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="inline-flex px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-bold border border-indigo-100">
+                          {kitteoModal.part_number}
+                        </span>
+                        {kitteoModal.description && (
+                          <p className="text-xs text-gray-500 mt-1">{kitteoModal.description}</p>
+                        )}
+                      </div>
+                      <div className="flex gap-2 flex-shrink-0">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5 text-center">
+                          <p className="text-[10px] text-gray-500 font-semibold uppercase">QTY</p>
+                          <p className="text-base font-black text-blue-700">{kitteoModal.qty.toLocaleString()}</p>
+                        </div>
+                        {(kitteoModal.boxes ?? 0) > 0 && (
+                          <div className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 text-center">
+                            <p className="text-[10px] text-gray-500 font-semibold uppercase">Cajas</p>
+                            <p className="text-base font-black text-purple-700">{kitteoModal.boxes}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Paso 1: Seleccionar Rack ── */}
+                  <div>
+                    <p className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-orange-600 text-white text-[10px] font-black">1</span>
+                      Selecciona el Rack KITTEO
+                    </p>
+                    {loadingKitteoLocs ? (
+                      <div className="flex items-center gap-2 py-3">
+                        <Loader2 className="h-4 w-4 animate-spin text-orange-500" />
+                        <span className="text-sm text-gray-400">Cargando racks disponibles...</span>
+                      </div>
+                    ) : kitteoRacks.length === 0 ? (
+                      <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600 font-medium">
+                        No hay locaciones disponibles en KITTEO en este momento.
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {kitteoRacks.map(rack => {
+                          const c = RACK_COLORS[rack] ?? RACK_COLORS['1'];
+                          const isActive = selectedKitteoRack === rack;
+                          const count = kitteoLocations.filter(l => l.rack === rack).length;
+                          return (
+                            <button key={rack}
+                              onClick={() => setSelectedKitteoRack(rack)}
+                              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${
+                                isActive
+                                  ? `${c.badge} text-white border-transparent shadow-md scale-105`
+                                  : `${c.bg} ${c.text} ${c.border} hover:opacity-80`
+                              }`}>
+                              <MapPin className="h-3.5 w-3.5" />
+                              Rack {rack}
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${isActive ? 'bg-white/20 text-white' : 'bg-white/60 text-gray-600'}`}>
+                                {count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Paso 2: Seleccionar Locación ── */}
+                  {selectedKitteoRack && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-bold text-gray-600 uppercase tracking-wide flex items-center gap-1.5">
+                          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-orange-600 text-white text-[10px] font-black">2</span>
+                          Selecciona la Locación — Rack {selectedKitteoRack}
+                        </p>
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={kitteoLocSearch}
+                            onChange={e => setKitteoLocSearch(e.target.value)}
+                            placeholder="Filtrar..."
+                            className="pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 bg-gray-50 w-32"
+                          />
+                        </div>
+                      </div>
+
+                      {filteredKitteoLocs.length === 0 ? (
+                        <p className="text-sm text-gray-400 italic py-2">Sin locaciones disponibles para este rack.</p>
+                      ) : (
+                        <div className="grid grid-cols-4 gap-1.5 max-h-52 overflow-y-auto pr-1">
+                          {filteredKitteoLocs.map(loc => {
+                            const c = RACK_COLORS[loc.rack] ?? RACK_COLORS['1'];
+                            const isSelected = selectedKitteoLoc?.id === loc.id;
+                            return (
+                              <button key={loc.id}
+                                onClick={() => setSelectedKitteoLoc(loc)}
+                                className={`px-2 py-2 rounded-lg text-xs font-bold border transition-all text-center ${
+                                  isSelected
+                                    ? `${c.badge} text-white border-transparent shadow-md`
+                                    : `${c.bg} ${c.text} ${c.border} hover:opacity-80`
+                                }`}>
+                                {loc.location_code}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Resumen selección ── */}
+                  {selectedKitteoLoc && (
+                    <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                      <CheckCircle2 className="h-5 w-5 text-orange-500 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-500 font-semibold">Locación destino seleccionada</p>
+                        <p className="text-base font-black text-orange-700">
+                          {selectedKitteoLoc.location_code}
+                          <span className="text-sm font-semibold text-gray-500 ml-2">· Rack {selectedKitteoLoc.rack}</span>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Botones ── */}
+                  <div className="flex gap-3 pt-1">
+                    <button type="button" onClick={closeKitteoModal}
+                      className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
+                      <X className="h-4 w-4 inline mr-1" />Cancelar
+                    </button>
+                    <button type="button" onClick={handleKitteoSave}
+                      disabled={!selectedKitteoLoc || kitteoSaving}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
+                      style={{ background: 'linear-gradient(135deg, #ea580c, #f97316)' }}>
+                      {kitteoSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightFromLine className="h-4 w-4" />}
+                      Confirmar Salida
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════
+          MODAL: NUEVA TRANSFERENCIA
+      ══════════════════════════════════════════ */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-gray-100">
