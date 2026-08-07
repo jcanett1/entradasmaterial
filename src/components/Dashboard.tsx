@@ -400,7 +400,7 @@ export function Dashboard() {
                 active={rackSubTab === 'salidas'}
                 onClick={() => setRackSubTab('salidas')}
                 icon={<LogOut className="h-4 w-4" />}
-                label="Salidas"
+                label="Transferencia Kitteo"
                 color="red"
               />
             </div>

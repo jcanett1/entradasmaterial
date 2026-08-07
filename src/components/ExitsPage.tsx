@@ -79,7 +79,7 @@ export function ExitsPage() {
   const fetchExits = async () => {
     setRefreshing(true);
     const { data } = await supabase
-      .from('exits')
+      .from('transferes')
       .select('*')
       .order('exited_at', { ascending: false });
     setExits((data as Exit[]) ?? []);
@@ -141,7 +141,7 @@ export function ExitsPage() {
   const handleSave = async () => {
     if (!selectedEntry) return;
     setSaving(true);
-    await supabase.from('exits').insert([{
+    await supabase.from('transferes').insert([{
       part_number: selectedEntry.part_number,
       description: selectedEntry.description,
       qty,
@@ -198,9 +198,9 @@ export function ExitsPage() {
         <div>
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <LogOut className="h-5 w-5 text-red-500" />
-            Salidas — KITTEO
+            Transferencia Kitteo
           </h2>
-          <p className="text-xs text-gray-400 mt-0.5">Todas las salidas tienen como destino KITTEO</p>
+          <p className="text-xs text-gray-400 mt-0.5">Todas las transferencias tienen como destino KITTEO</p>
         </div>
         <div className="flex gap-2">
           <button onClick={fetchExits}
@@ -211,7 +211,7 @@ export function ExitsPage() {
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
             style={{ background: 'linear-gradient(135deg, #dc2626, #ef4444)' }}>
             <LogOut className="h-4 w-4" />
-            Nueva Salida
+            Nueva Transferencia
           </button>
         </div>
       </div>
@@ -219,7 +219,7 @@ export function ExitsPage() {
       {/* Stats — 4 tarjetas */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Salidas</p>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Transferencias</p>
           <p className="text-3xl font-black text-red-600">{exits.length}</p>
         </div>
         <div className="bg-orange-50 border border-orange-200 rounded-2xl px-5 py-4">
@@ -229,14 +229,14 @@ export function ExitsPage() {
         <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4">
           <div className="flex items-center gap-1.5 mb-1">
             <Boxes className="h-3.5 w-3.5 text-blue-500" />
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY Total Salida</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY Total Transferencia</p>
           </div>
           <p className="text-3xl font-black text-blue-700">{totalQtyAll.toLocaleString()}</p>
         </div>
         <div className="bg-purple-50 border border-purple-200 rounded-2xl px-5 py-4">
           <div className="flex items-center gap-1.5 mb-1">
             <Archive className="h-3.5 w-3.5 text-purple-500" />
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas Total Salida</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas Total Transferencia</p>
           </div>
           <p className="text-3xl font-black text-purple-700">{totalBoxesAll.toLocaleString()}</p>
         </div>
@@ -248,8 +248,8 @@ export function ExitsPage() {
       ) : exits.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16">
           <div className="p-5 bg-red-50 rounded-3xl mb-4"><LogOut className="h-12 w-12 text-red-300" /></div>
-          <p className="text-gray-600 font-semibold">Sin salidas registradas</p>
-          <p className="text-gray-400 text-sm mt-1">Usa el botón <span className="text-red-500 font-medium">Nueva Salida</span> para registrar</p>
+          <p className="text-gray-600 font-semibold">Sin transferencias registradas</p>
+          <p className="text-gray-400 text-sm mt-1">Usa el botón <span className="text-red-500 font-medium">Nueva Transferencia</span> para registrar</p>
         </div>
       ) : (
         <div className="rounded-2xl border border-gray-200 overflow-hidden">
@@ -404,7 +404,7 @@ export function ExitsPage() {
                   <LogOut className="h-4 w-4 text-red-600" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-gray-900">Nueva Salida</h2>
+                  <h2 className="text-base font-bold text-gray-900">Nueva Transferencia</h2>
                   <p className="text-xs text-gray-400">Destino: <span className="font-bold text-red-500">KITTEO</span></p>
                 </div>
               </div>
@@ -467,7 +467,7 @@ export function ExitsPage() {
               {/* QTY */}
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                  <Boxes className="h-3.5 w-3.5 inline mr-1 text-blue-400" />QTY de salida <span className="text-red-400">*</span>
+                  <Boxes className="h-3.5 w-3.5 inline mr-1 text-blue-400" />QTY de transferencia <span className="text-red-400">*</span>
                 </label>
                 <input type="number" value={qty} min={1} onChange={e => setQty(Number(e.target.value))}
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50" />
@@ -526,7 +526,7 @@ export function ExitsPage() {
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg, #dc2626, #ef4444)' }}>
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Registrar Salida
+                  Registrar Transferencia
                 </button>
               </div>
             </div>

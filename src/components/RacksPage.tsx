@@ -290,7 +290,7 @@ export function RacksPage() {
   const handleExitItem = async (loc: Location, item: LocationItem) => {
     setActionSaving(true);
 
-    await supabase.from('exits').insert([{
+    await supabase.from('transferes').insert([{
       part_number: item.part_number,
       description: null,
       qty: item.qty,
@@ -1079,7 +1079,7 @@ function ItemCard({
           disabled={actionSaving}
           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-all disabled:opacity-50">
           {actionSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
-          Salida KITTEO
+          Transferencia Kitteo
         </button>
       </div>
     </div>

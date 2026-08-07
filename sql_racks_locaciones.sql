@@ -104,9 +104,9 @@ INSERT INTO public.locations (rack, location_code) VALUES
 ON CONFLICT (location_code) DO NOTHING;
 
 -- ============================================================
---  TABLA: exits  (Salidas → KITTEO)
+--  TABLA: transferes  (Transferencias → KITTEO)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS public.exits (
+CREATE TABLE IF NOT EXISTS public.transferes (
   id            serial        NOT NULL,
   part_number   varchar(100)  NOT NULL,
   description   text          NULL,
@@ -118,8 +118,8 @@ CREATE TABLE IF NOT EXISTS public.exits (
   location_id   integer       NULL REFERENCES public.locations(id) ON DELETE SET NULL,
   registered_by varchar(100)  NULL,
   exited_at     timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT exits_pkey PRIMARY KEY (id)
+  CONSTRAINT transferes_pkey PRIMARY KEY (id)
 ) TABLESPACE pg_default;
 
-CREATE INDEX IF NOT EXISTS idx_exits_part_number ON public.exits(part_number);
-CREATE INDEX IF NOT EXISTS idx_exits_exited_at   ON public.exits(exited_at);
+CREATE INDEX IF NOT EXISTS idx_transferes_part_number ON public.transferes(part_number);
+CREATE INDEX IF NOT EXISTS idx_transferes_exited_at   ON public.transferes(exited_at);
