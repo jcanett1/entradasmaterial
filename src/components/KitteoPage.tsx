@@ -28,9 +28,10 @@ interface EntryOption {
   id: number;
   part_number: string;
   description: string | null;
-  total_units: number;
-  total_boxes: number;
+  qty: number;
+  boxes: number;
   po: string | null;
+  exited_at: string;
 }
 
 /* ── Colores por rack ── */
@@ -98,16 +99,16 @@ export function KitteoPage() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  /* ── Fetch entries para el modal ── */
+  /* ── Fetch transferencias para el modal ── */
   const fetchEntries = useCallback(async (term: string) => {
     let query = supabase
-      .from('entries')
-      .select('id, part_number, description, total_units, total_boxes, po')
-      .order('registered_at', { ascending: false });
+      .from('transferes')
+      .select('id, part_number, description, qty, boxes, po, exited_at')
+      .order('exited_at', { ascending: false });
     if (term.trim()) {
       query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
     }
-    const { data } = await query.limit(15);
+    const { data } = await query.limit(20);
     setEntries((data as EntryOption[]) ?? []);
     setShowEntryDrop(true);
   }, []);
@@ -122,7 +123,7 @@ export function KitteoPage() {
   const handleSelectEntry = (e: EntryOption) => {
     setSelectedEntry(e);
     setEntrySearch(e.part_number);
-    setQty(e.total_units);
+    setQty(e.qty);
     setPo(e.po ?? '');
     setShowEntryDrop(false);
   };
@@ -136,7 +137,7 @@ export function KitteoPage() {
       part_number: selectedEntry.part_number,
       description: selectedEntry.description,
       qty,
-      boxes: selectedEntry.total_boxes,
+      boxes: selectedEntry.boxes,
       po: po || null,
       entry_id: selectedEntry.id,
       registered_by: userDisplayName || null,
@@ -478,7 +479,7 @@ export function KitteoPage() {
               {/* Buscar entry */}
               <div ref={entryDropRef} className="relative">
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                  <Package className="h-3.5 w-3.5 inline mr-1 text-indigo-400" />Part Number <span className="text-red-400">*</span>
+                  <Package className="h-3.5 w-3.5 inline mr-1 text-indigo-400" />Buscar en Transferencias <span className="text-red-400">*</span>
                 </label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
@@ -494,23 +495,23 @@ export function KitteoPage() {
                         onMouseDown={(ev) => { ev.preventDefault(); handleSelectEntry(e); }}
                         className="w-full text-left px-4 py-2.5 hover:bg-orange-50 transition-colors border-b border-gray-50 last:border-0">
                         <p className="text-sm font-bold text-indigo-700">{e.part_number}</p>
-                        <p className="text-xs text-gray-400">{e.description ?? 'Sin descripción'} · QTY: {e.total_units}</p>
+                        <p className="text-xs text-gray-400">{e.description ?? 'Sin descripción'} · QTY: {e.qty} · {new Date(e.exited_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
                       </button>
                     ))}
                   </div>
                 )}
               </div>
 
-              {/* Info del entry seleccionado */}
+              {/* Info de la transferencia seleccionada */}
               {selectedEntry && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
-                    <p className="text-[10px] font-semibold text-gray-500 uppercase">QTY Total</p>
-                    <p className="text-xl font-black text-blue-700">{selectedEntry.total_units.toLocaleString()}</p>
+                    <p className="text-[10px] font-semibold text-gray-500 uppercase">QTY</p>
+                    <p className="text-xl font-black text-blue-700">{selectedEntry.qty.toLocaleString()}</p>
                   </div>
                   <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
                     <p className="text-[10px] font-semibold text-gray-500 uppercase">Cajas</p>
-                    <p className="text-xl font-black text-purple-700">{selectedEntry.total_boxes.toLocaleString()}</p>
+                    <p className="text-xl font-black text-purple-700">{selectedEntry.boxes.toLocaleString()}</p>
                   </div>
                 </div>
               )}
