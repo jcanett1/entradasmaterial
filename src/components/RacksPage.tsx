@@ -46,6 +46,16 @@ interface EntryOption {
   po: string | null;
 }
 
+/* El mismo número de parte ignora espacios y diferencias de mayúsculas/minúsculas. */
+const normalizePartNumber = (partNumber: string | null | undefined) =>
+  (partNumber ?? '').trim().toUpperCase();
+
+const getUniquePartNumberSet = (partNumbers: string[]) =>
+  new Set(partNumbers.map(normalizePartNumber).filter(Boolean));
+
+const countUniquePartNumbers = (items: Array<Pick<LocationItem, 'part_number'>>) =>
+  getUniquePartNumberSet(items.map(item => item.part_number)).size;
+
 const RACK_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   A: { bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    badge: 'bg-blue-600' },
   B: { bg: 'bg-indigo-50',  border: 'border-indigo-200',  text: 'text-indigo-700',  badge: 'bg-indigo-600' },
@@ -101,7 +111,7 @@ export function RacksPage() {
     const rawItems = (itemsData as Omit<LocationItem, 'boxes'>[]) ?? [];
 
     const entryIds = [...new Set(rawItems.map(i => i.entry_id).filter((id): id is number => id !== null))];
-    let boxesMap: Record<number, number> = {};
+    const boxesMap: Record<number, number> = {};
     if (entryIds.length > 0) {
       const { data: entriesData } = await supabase
         .from('entries')
@@ -193,10 +203,23 @@ export function RacksPage() {
       if (next.has(entryId)) {
         next.delete(entryId);
       } else {
-        // Verificar que no exceda el límite disponible
-        const currentItems = assignModal?.items?.length ?? 0;
-        const available = MAX_ITEMS - currentItems;
-        if (next.size < available) {
+        const selectedEntry = entries.find(entry => entry.id === entryId);
+        if (!selectedEntry) return next;
+
+        const currentPartNumbers = getUniquePartNumberSet(
+          (assignModal?.items ?? []).map(item => item.part_number),
+        );
+        const selectedPartNumbers = getUniquePartNumberSet(
+          entries.filter(entry => next.has(entry.id)).map(entry => entry.part_number),
+        );
+        const nextPartNumberCount = new Set([
+          ...currentPartNumbers,
+          ...selectedPartNumbers,
+          normalizePartNumber(selectedEntry.part_number),
+        ]).size;
+
+        // Los registros repetidos del mismo número de parte comparten un espacio.
+        if (nextPartNumberCount <= MAX_ITEMS) {
           next.add(entryId);
         }
       }
@@ -208,11 +231,16 @@ export function RacksPage() {
   const handleAssign = async () => {
     if (!assignModal || selectedEntryIds.size === 0) return;
     const currentItems = assignModal.items ?? [];
-    if (currentItems.length >= MAX_ITEMS) return;
+    const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
+    const selectedEntriesList = entries.filter(e => selectedEntryIds.has(e.id));
+    const projectedPartNumberCount = new Set([
+      ...currentPartNumbers,
+      ...selectedEntriesList.map(entry => normalizePartNumber(entry.part_number)),
+    ]).size;
+
+    if (projectedPartNumberCount > MAX_ITEMS) return;
 
     setSaving(true);
-
-    const selectedEntriesList = entries.filter(e => selectedEntryIds.has(e.id));
 
     for (let i = 0; i < selectedEntriesList.length; i++) {
       const entry = selectedEntriesList[i];
@@ -514,7 +542,7 @@ export function RacksPage() {
                       </span>
                     )}
                     <span className="text-xs text-gray-400 font-medium">
-                      {detailModal.items?.length ?? 0}/{MAX_ITEMS} números de parte
+                      {countUniquePartNumbers(detailModal.items ?? [])}/{MAX_ITEMS} números de parte distintos
                     </span>
                   </div>
                 </div>
@@ -589,23 +617,23 @@ export function RacksPage() {
             <div className="px-6 pt-3 flex-shrink-0">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Capacidad utilizada</span>
-                <span className={`text-xs font-bold ${(detailModal.items?.length ?? 0) >= MAX_ITEMS ? 'text-red-600' : 'text-gray-600'}`}>
-                  {detailModal.items?.length ?? 0} / {MAX_ITEMS}
+                <span className={`text-xs font-bold ${countUniquePartNumbers(detailModal.items ?? []) >= MAX_ITEMS ? 'text-red-600' : 'text-gray-600'}`}>
+                  {countUniquePartNumbers(detailModal.items ?? [])} / {MAX_ITEMS}
                 </span>
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2">
                 <div
                   className={`h-2 rounded-full transition-all ${
-                    (detailModal.items?.length ?? 0) >= MAX_ITEMS ? 'bg-red-500' :
-                    (detailModal.items?.length ?? 0) >= 6 ? 'bg-amber-500' : 'bg-emerald-500'
-                  }`}
-                  style={{ width: `${((detailModal.items?.length ?? 0) / MAX_ITEMS) * 100}%` }}
+                    countUniquePartNumbers(detailModal.items ?? []) >= MAX_ITEMS ? 'bg-red-500' :
+                    countUniquePartNumbers(detailModal.items ?? []) >= 6 ? 'bg-amber-500' : 'bg-emerald-500'
+                  }}`}
+                  style={{ width: `${(countUniquePartNumbers(detailModal.items ?? []) / MAX_ITEMS) * 100}%` }}
                 />
               </div>
-              {(detailModal.items?.length ?? 0) >= MAX_ITEMS && (
+              {countUniquePartNumbers(detailModal.items ?? []) >= MAX_ITEMS && (
                 <div className="flex items-center gap-1.5 mt-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                   <AlertTriangle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
-                  <p className="text-xs font-semibold text-red-600">Locación llena — máximo {MAX_ITEMS} números de parte</p>
+                  <p className="text-xs font-semibold text-red-600">Locación llena — máximo {MAX_ITEMS} números de parte distintos</p>
                 </div>
               )}
             </div>
@@ -634,13 +662,13 @@ export function RacksPage() {
 
             {/* Footer acciones */}
             <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 space-y-2">
-              {(detailModal.items?.length ?? 0) < MAX_ITEMS && (
+              {countUniquePartNumbers(detailModal.items ?? []) < MAX_ITEMS && (
                 <button
                   onClick={() => { setAssignModal(detailModal); setDetailModal(null); }}
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-95"
                   style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
                   <Plus className="h-4 w-4" />
-                  Agregar número de parte ({(detailModal.items?.length ?? 0)}/{MAX_ITEMS})
+                  Agregar número de parte ({countUniquePartNumbers(detailModal.items ?? [])}/{MAX_ITEMS})
                 </button>
               )}
               {(detailModal.items?.length ?? 0) > 0 && (
@@ -662,8 +690,12 @@ export function RacksPage() {
       ══════════════════════════════════════════════ */}
       {assignModal && (() => {
         const currentItems = assignModal.items ?? [];
-        const available = MAX_ITEMS - currentItems.length;
+        const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
+        const currentPartNumberCount = currentPartNumbers.size;
+        const available = MAX_ITEMS - currentPartNumberCount;
         const selectedList = entries.filter(e => selectedEntryIds.has(e.id));
+        const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));
+        const selectedUniquePartCount = selectedPartNumbers.size;
         const totalSelectedQty = selectedList.reduce((s, e) => s + e.total_units, 0);
         const totalSelectedBoxes = selectedList.reduce((s, e) => s + e.total_boxes, 0);
 
@@ -681,7 +713,7 @@ export function RacksPage() {
                       {currentItems.length === 0 ? 'Asignar a' : 'Agregar a'} {assignModal.location_code}
                     </h2>
                     <p className="text-xs text-gray-400">
-                      {currentItems.length}/{MAX_ITEMS} asignados · {available} espacio{available !== 1 ? 's' : ''} disponible{available !== 1 ? 's' : ''}
+                      {currentPartNumberCount}/{MAX_ITEMS} números de parte distintos · {available} espacio{available !== 1 ? 's' : ''} disponible{available !== 1 ? 's' : ''}
                     </p>
                   </div>
                 </div>
@@ -699,8 +731,8 @@ export function RacksPage() {
                     <div>
                       <p className="text-sm font-bold text-red-700">Locación llena</p>
                       <p className="text-xs text-red-600 mt-1">
-                        Esta locación ya tiene el máximo de {MAX_ITEMS} números de parte.
-                        Debes dar salida o liberar alguno antes de agregar otro.
+                        Esta locación ya tiene el máximo de {MAX_ITEMS} números de parte distintos.
+                        Debes dar salida o liberar alguno antes de agregar otro número de parte diferente.
                       </p>
                     </div>
                   </div>
@@ -727,7 +759,7 @@ export function RacksPage() {
                     <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2">
                       <CheckSquare className="h-4 w-4 text-indigo-500 flex-shrink-0" />
                       <p className="text-xs font-semibold text-indigo-700">
-                        Puedes seleccionar hasta <strong>{available}</strong> número{available !== 1 ? 's' : ''} de parte a la vez
+                        Puedes seleccionar registros de hasta <strong>{available}</strong> número{available !== 1 ? 's' : ''} de parte diferentes
                       </p>
                     </div>
 
@@ -749,8 +781,13 @@ export function RacksPage() {
                       {entries.length === 0 ? (
                         <p className="text-center text-gray-400 text-sm py-6">Sin resultados disponibles</p>
                       ) : entries.map(entry => {
-                        const isSelected = selectedEntryIds.has(entry.id);
-                        const isDisabled = !isSelected && selectedEntryIds.size >= available;
+                          const isSelected = selectedEntryIds.has(entry.id);
+                          const projectedPartNumberCount = new Set([
+                            ...currentPartNumbers,
+                            ...selectedPartNumbers,
+                            normalizePartNumber(entry.part_number),
+                          ]).size;
+                          const isDisabled = !isSelected && projectedPartNumberCount > MAX_ITEMS;
                         return (
                           <button key={entry.id} type="button"
                             onClick={() => !isDisabled && toggleEntrySelection(entry.id)}
@@ -792,7 +829,7 @@ export function RacksPage() {
                       <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 space-y-2">
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-bold text-indigo-700">
-                            {selectedEntryIds.size} número{selectedEntryIds.size !== 1 ? 's' : ''} de parte seleccionado{selectedEntryIds.size !== 1 ? 's' : ''}
+                            {selectedList.length} registro{selectedList.length !== 1 ? 's' : ''} seleccionado{selectedList.length !== 1 ? 's' : ''} · {selectedUniquePartCount} número{selectedUniquePartCount !== 1 ? 's' : ''} de parte diferente{selectedUniquePartCount !== 1 ? 's' : ''}
                           </p>
                           <button
                             type="button"
@@ -845,7 +882,7 @@ export function RacksPage() {
                         ? 'Guardando...'
                         : selectedEntryIds.size === 0
                         ? 'Selecciona al menos uno'
-                        : `${currentItems.length === 0 ? 'Asignar' : 'Agregar'} ${selectedEntryIds.size} número${selectedEntryIds.size !== 1 ? 's' : ''}`
+                        : `${currentItems.length === 0 ? 'Asignar' : 'Agregar'} ${selectedList.length} registro${selectedList.length !== 1 ? 's' : ''}`
                       }
                     </button>
                   </div>
@@ -871,8 +908,9 @@ function LocationCell({
   onDetail: () => void;
 }) {
   const items = loc.items ?? [];
+  const uniquePartCount = countUniquePartNumbers(items);
   const isOccupied = items.length > 0;
-  const isFull = items.length >= MAX_ITEMS;
+  const isFull = uniquePartCount >= MAX_ITEMS;
   const totalQty = items.reduce((s, i) => s + i.qty, 0);
   const totalBoxes = items.reduce((s, i) => s + i.boxes, 0);
 
@@ -887,7 +925,7 @@ function LocationCell({
       }`}
       onClick={isOccupied ? onDetail : onAssign}
       title={isOccupied
-        ? `${loc.location_code} — ${items.length}/${MAX_ITEMS} · QTY: ${totalQty} · Cajas: ${totalBoxes}`
+        ? `${loc.location_code} — ${uniquePartCount}/${MAX_ITEMS} números de parte distintos · QTY: ${totalQty} · Cajas: ${totalBoxes}`
         : `${loc.location_code} — Disponible · Clic para asignar`}
     >
       {/* Indicador de estado */}
@@ -943,9 +981,9 @@ function LocationCell({
           ))}
 
           {/* Espacios vacíos restantes */}
-          {items.length < MAX_ITEMS && (
+          {uniquePartCount < MAX_ITEMS && (
             <div className="flex items-center gap-0.5 mt-0.5">
-              {Array.from({ length: MAX_ITEMS - items.length }).map((_, i) => (
+              {Array.from({ length: MAX_ITEMS - uniquePartCount }).map((_, i) => (
                 <div key={i} className="h-1.5 flex-1 rounded-sm bg-gray-200 opacity-60" />
               ))}
             </div>
@@ -955,7 +993,7 @@ function LocationCell({
           <div className="flex items-center justify-between mt-1">
             <div className="flex items-center gap-0.5">
               <Layers className="h-2.5 w-2.5 text-gray-400" />
-              <span className="text-[8px] text-gray-500 font-semibold">{items.length}/{MAX_ITEMS}</span>
+              <span className="text-[8px] text-gray-500 font-semibold">{uniquePartCount}/{MAX_ITEMS}</span>
             </div>
             {isFull && (
               <span className="text-[7px] font-bold text-red-500 uppercase">LLENO</span>
