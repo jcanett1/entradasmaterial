@@ -37,6 +37,15 @@ interface Location {
   items?: LocationItem[];
 }
 
+interface PartNumberGroup {
+  key: string;
+  partNumber: string;
+  items: LocationItem[];
+  count: number;
+  totalQty: number;
+  totalBoxes: number;
+}
+
 interface EntryOption {
   id: number;
   part_number: string;
@@ -55,6 +64,34 @@ const getUniquePartNumberSet = (partNumbers: string[]) =>
 
 const countUniquePartNumbers = (items: Array<Pick<LocationItem, 'part_number'>>) =>
   getUniquePartNumberSet(items.map(item => item.part_number)).size;
+
+const groupLocationItems = (items: LocationItem[]): PartNumberGroup[] => {
+  const groups = new Map<string, PartNumberGroup>();
+
+  items.forEach(item => {
+    const key = normalizePartNumber(item.part_number) || item.part_number.trim();
+    const current = groups.get(key);
+
+    if (current) {
+      current.items.push(item);
+      current.count += 1;
+      current.totalQty += item.qty;
+      current.totalBoxes += item.boxes;
+      return;
+    }
+
+    groups.set(key, {
+      key,
+      partNumber: item.part_number,
+      items: [item],
+      count: 1,
+      totalQty: item.qty,
+      totalBoxes: item.boxes,
+    });
+  });
+
+  return Array.from(groups.values());
+};
 
 const RACK_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   A: { bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    badge: 'bg-blue-600' },
@@ -578,14 +615,14 @@ export function RacksPage() {
                     </div>
                   </div>
 
-                  {/* Lista de números de parte asignados */}
+                  {/* Lista agrupada de números de parte asignados */}
                   <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                       <Hash className="h-3 w-3 text-indigo-400" />
-                      Números de parte en esta locación ({locItems.length})
+                      Números de parte en esta locación ({groupLocationItems(locItems).length} distintos)
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                      {locItems.map((item, idx) => {
+                      {groupLocationItems(locItems).map((group, idx) => {
                         const tagColors = [
                           'bg-indigo-100 text-indigo-700 border-indigo-200',
                           'bg-purple-100 text-purple-700 border-purple-200',
@@ -598,12 +635,15 @@ export function RacksPage() {
                         ];
                         return (
                           <span
-                            key={item.id}
+                            key={group.key}
                             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono font-bold ${tagColors[idx % tagColors.length]}`}
-                            title={`QTY: ${item.qty} · Cajas: ${item.boxes}${item.po ? ` · PO: ${item.po}` : ''}`}
+                            title={`Ingresado ${group.count} ${group.count === 1 ? 'vez' : 'veces'} · QTY total: ${group.totalQty} · Cajas totales: ${group.totalBoxes}`}
                           >
                             <span className="text-[9px] font-black opacity-60">#{idx + 1}</span>
-                            {item.part_number}
+                            <span className="truncate max-w-[180px]">{group.partNumber}</span>
+                            <span className="rounded-md bg-white/70 px-1.5 py-0.5 text-[10px] font-black whitespace-nowrap">
+                              {group.count} {group.count === 1 ? 'vez' : 'veces'}
+                            </span>
                           </span>
                         );
                       })}
@@ -646,15 +686,15 @@ export function RacksPage() {
                   <p className="text-sm font-medium">Locación disponible</p>
                 </div>
               ) : (
-                detailModal.items?.map((item, idx) => (
-                  <ItemCard
-                    key={item.id}
-                    item={item}
-                    index={idx}
+                groupLocationItems(detailModal.items ?? []).map((group, groupIndex) => (
+                  <PartNumberGroupCard
+                    key={group.key}
+                    group={group}
+                    groupIndex={groupIndex}
                     loc={detailModal}
                     actionSaving={actionSaving}
-                    onRelease={() => handleReleaseItem(detailModal, item)}
-                    onExit={() => handleExitItem(detailModal, item)}
+                    onRelease={item => handleReleaseItem(detailModal, item)}
+                    onExit={item => handleExitItem(detailModal, item)}
                   />
                 ))
               )}
@@ -908,7 +948,8 @@ function LocationCell({
   onDetail: () => void;
 }) {
   const items = loc.items ?? [];
-  const uniquePartCount = countUniquePartNumbers(items);
+  const partGroups = groupLocationItems(items);
+  const uniquePartCount = partGroups.length;
   const isOccupied = items.length > 0;
   const isFull = uniquePartCount >= MAX_ITEMS;
   const totalQty = items.reduce((s, i) => s + i.qty, 0);
@@ -947,38 +988,49 @@ function LocationCell({
         </div>
       ) : (
         <div className="mt-1.5 space-y-1">
-          {/* Sub-cuadros por cada número de parte */}
-          {items.map((item, idx) => (
-            <div
-              key={item.id}
-              className={`rounded px-1 py-0.5 ${
-                idx % 2 === 0
-                  ? 'bg-indigo-100 border border-indigo-200'
-                  : 'bg-purple-100 border border-purple-200'
-              }`}
-            >
-              <p className={`text-[8px] font-mono font-bold truncate leading-tight ${
-                idx % 2 === 0 ? 'text-indigo-700' : 'text-purple-700'
-              }`}>
-                {item.part_number.length > 10 ? item.part_number.slice(0, 10) + '…' : item.part_number}
-              </p>
-              <div className="flex items-center gap-1 mt-0.5">
-                <span className="text-[7px] text-gray-500 font-semibold">
-                  {item.qty} uds
-                </span>
-                {item.boxes > 0 && (
-                  <span className="text-[7px] text-purple-600 font-semibold">
-                    {item.boxes}cj
+          {/* Sub-cuadros agrupados por número de parte */}
+          {partGroups.map((group, idx) => {
+            const firstItem = group.items[0];
+            return (
+              <div
+                key={group.key}
+                className={`rounded px-1 py-0.5 ${
+                  idx % 2 === 0
+                    ? 'bg-indigo-100 border border-indigo-200'
+                    : 'bg-purple-100 border border-purple-200'
+                }`}
+                title={`${group.partNumber} · ingresado ${group.count} ${group.count === 1 ? 'vez' : 'veces'} · QTY total: ${group.totalQty} · Cajas totales: ${group.totalBoxes}`}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <p className={`text-[8px] font-mono font-bold truncate leading-tight ${
+                    idx % 2 === 0 ? 'text-indigo-700' : 'text-purple-700'
+                  }`}>
+                    {group.partNumber.length > 10 ? group.partNumber.slice(0, 10) + '…' : group.partNumber}
+                  </p>
+                  {group.count > 1 && (
+                    <span className="flex-shrink-0 rounded bg-white/70 px-1 text-[7px] font-black text-gray-600">
+                      ×{group.count}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <span className="text-[7px] text-gray-500 font-semibold">
+                    {group.totalQty} uds
                   </span>
-                )}
-                {item.fifo_number && (
-                  <span className="text-[7px] text-amber-600 font-bold">
-                    F{item.fifo_number}
-                  </span>
-                )}
+                  {group.totalBoxes > 0 && (
+                    <span className="text-[7px] text-purple-600 font-semibold">
+                      {group.totalBoxes}cj
+                    </span>
+                  )}
+                  {group.count === 1 && firstItem.fifo_number && (
+                    <span className="text-[7px] text-amber-600 font-bold">
+                      F{firstItem.fifo_number}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Espacios vacíos restantes */}
           {uniquePartCount < MAX_ITEMS && (
@@ -1006,6 +1058,93 @@ function LocationCell({
               <span className="text-[7px] font-bold text-purple-600 bg-purple-50 rounded px-1">C:{totalBoxes}</span>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   GRUPO DE NÚMERO DE PARTE dentro del modal de detalle
+════════════════════════════════════════════════════ */
+function PartNumberGroupCard({
+  group, groupIndex, loc, actionSaving, onRelease, onExit,
+}: {
+  group: PartNumberGroup;
+  groupIndex: number;
+  loc: Location;
+  actionSaving: boolean;
+  onRelease: (item: LocationItem) => void;
+  onExit: (item: LocationItem) => void;
+}) {
+  const [expanded, setExpanded] = useState(group.count === 1);
+  const colors = [
+    { bg: 'bg-indigo-50', border: 'border-indigo-200', text: 'text-indigo-800', badge: 'bg-indigo-600' },
+    { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800', badge: 'bg-purple-600' },
+    { bg: 'bg-blue-50',   border: 'border-blue-200',   text: 'text-blue-800',   badge: 'bg-blue-600' },
+    { bg: 'bg-teal-50',   border: 'border-teal-200',   text: 'text-teal-800',   badge: 'bg-teal-600' },
+    { bg: 'bg-emerald-50',border: 'border-emerald-200',text: 'text-emerald-800',badge: 'bg-emerald-600' },
+    { bg: 'bg-amber-50',  border: 'border-amber-200',  text: 'text-amber-800',  badge: 'bg-amber-600' },
+    { bg: 'bg-rose-50',   border: 'border-rose-200',   text: 'text-rose-800',   badge: 'bg-rose-600' },
+    { bg: 'bg-cyan-50',   border: 'border-cyan-200',   text: 'text-cyan-800',   badge: 'bg-cyan-600' },
+  ];
+  const c = colors[groupIndex % colors.length];
+
+  return (
+    <div className={`${c.bg} ${c.border} border rounded-xl p-3`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2 min-w-0">
+          <span className={`${c.badge} text-white text-[10px] font-black px-1.5 py-0.5 rounded flex-shrink-0`}>
+            {group.count}×
+          </span>
+          <div className="min-w-0">
+            <p className={`text-sm font-black font-mono ${c.text} break-all`}>{group.partNumber}</p>
+            <p className="text-[10px] text-gray-500 font-semibold mt-0.5">
+              Ingresado {group.count} {group.count === 1 ? 'vez' : 'veces'}
+            </p>
+          </div>
+        </div>
+        {group.count > 1 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(prev => !prev)}
+            className="flex-shrink-0 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline"
+            aria-expanded={expanded}
+          >
+            {expanded ? 'Ocultar registros' : `Ver ${group.count} registros`}
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mt-3">
+        <div className="bg-white/70 rounded-lg px-2 py-1.5">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">QTY total</p>
+          <p className={`text-base font-black ${c.text}`}>{group.totalQty.toLocaleString()}</p>
+        </div>
+        <div className="bg-white/70 rounded-lg px-2 py-1.5">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Cajas totales</p>
+          <p className={`text-base font-black ${c.text}`}>{group.totalBoxes.toLocaleString()}</p>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-black/5 space-y-3">
+          {group.count > 1 && (
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+              Detalle de los {group.count} registros
+            </p>
+          )}
+          {group.items.map((item, index) => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              index={index}
+              loc={loc}
+              actionSaving={actionSaving}
+              onRelease={() => onRelease(item)}
+              onExit={() => onExit(item)}
+            />
+          ))}
         </div>
       )}
     </div>
