@@ -104,16 +104,24 @@ export function Dashboard() {
     calculateStats();
   }, [records, searchTerm]);
 
+  const normalizeSearchText = (value: string | null | undefined) =>
+    (value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
   const filterRecords = () => {
-    if (!searchTerm.trim()) { setFilteredRecords(records); return; }
-    const term = searchTerm.toLowerCase();
-    setFilteredRecords(records.filter((r) =>
-      r.part_number.toLowerCase().includes(term) ||
-      (r.description ?? '').toLowerCase().includes(term) ||
-      (r.unit_of_measure ?? '').toLowerCase().includes(term) ||
-      (r.registered_by ?? '').toLowerCase().includes(term) ||
-      (r.po ?? '').toLowerCase().includes(term)
-    ));
+    const term = normalizeSearchText(searchTerm.trim());
+    if (!term) { setFilteredRecords(records); return; }
+
+    setFilteredRecords(records.filter((r) => {
+      const searchableFields = [
+        r.part_number,
+        r.description,
+        r.unit_of_measure,
+        r.registered_by,
+        r.po,
+      ];
+
+      return searchableFields.some(field => normalizeSearchText(field).includes(term));
+    }));
   };
 
   const calculateStats = () => {
@@ -303,7 +311,7 @@ export function Dashboard() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-5 py-4 mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
               <div className="relative w-full sm:max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input type="text" placeholder="Buscar por part number, descripción..." value={searchTerm}
+                <input type="text" placeholder="Buscar por Part Number, descripción, usuario o PO..." value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all bg-gray-50" />
               </div>
