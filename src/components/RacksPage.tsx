@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -118,11 +118,14 @@ export function RacksPage() {
   // Modal asignar / agregar item
   const [assignModal, setAssignModal] = useState<Location | null>(null);
   const [entries, setEntries] = useState<EntryOption[]>([]);
-  // Selección múltiple: Set de IDs seleccionados
+  // La selección debe sobrevivir a cada actualización de la búsqueda.
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<number>>(new Set());
+  const [selectedEntries, setSelectedEntries] = useState<EntryOption[]>([]);
   const [entrySearch, setEntrySearch] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [entriesLoadError, setEntriesLoadError] = useState<string | null>(null);
+  const fetchEntriesRequest = useRef(0);
 
   // Modal detalle
   const [detailModal, setDetailModal] = useState<Location | null>(null);
@@ -179,12 +182,26 @@ export function RacksPage() {
 
   /* ── Fetch entries para el modal (excluye los ya asignados a alguna locación) ── */
   const fetchEntries = useCallback(async (term: string) => {
-    const { data: assignedData } = await supabase
+    const requestId = ++fetchEntriesRequest.current;
+    setEntriesLoadError(null);
+
+    const { data: assignedData, error: assignedError } = await supabase
       .from('location_items')
       .select('entry_id');
-    const assignedIds: number[] = (assignedData ?? [])
-      .map((r: { entry_id: number | null }) => r.entry_id)
-      .filter((id): id is number => id !== null);
+
+    if (assignedError) {
+      if (requestId !== fetchEntriesRequest.current) return;
+      console.error('Error consultando asignaciones existentes:', assignedError);
+      setEntries([]);
+      setEntriesLoadError(`No se pudieron consultar las asignaciones existentes: ${assignedError.message}`);
+      return;
+    }
+
+    const assignedIds = new Set(
+      (assignedData ?? [])
+        .map((row: { entry_id: number | null }) => row.entry_id)
+        .filter((id): id is number => id !== null),
+    );
 
     let query = supabase
       .from('entries')
@@ -193,18 +210,29 @@ export function RacksPage() {
     if (term.trim()) {
       query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
     }
-    if (assignedIds.length > 0) {
-      query = query.not('id', 'in', `(${assignedIds.join(',')})`);
+
+    const { data, error: entriesError } = await query;
+    if (entriesError) {
+      if (requestId !== fetchEntriesRequest.current) return;
+      console.error('Error consultando registros de inventario:', entriesError);
+      setEntries([]);
+      setEntriesLoadError(`No se pudieron cargar los números de parte: ${entriesError.message}`);
+      return;
     }
-    const { data } = await query;
-    setEntries((data as EntryOption[]) ?? []);
+
+    if (requestId !== fetchEntriesRequest.current) return;
+
+    // Filtrar localmente evita una URL NOT IN demasiado grande cuando hay muchas asignaciones.
+    setEntries((data as EntryOption[] ?? []).filter(entry => !assignedIds.has(entry.id)));
   }, []);
 
   useEffect(() => {
     if (assignModal) {
       setSaveError(null);
+      setEntriesLoadError(null);
       fetchEntries('');
       setSelectedEntryIds(new Set());
+      setSelectedEntries([]);
     }
   }, [assignModal, fetchEntries]);
 
@@ -237,42 +265,46 @@ export function RacksPage() {
 
   /* ── Toggle selección de un entry ── */
   const toggleEntrySelection = (entryId: number) => {
-    setSelectedEntryIds(prev => {
-      const next = new Set(prev);
-      if (next.has(entryId)) {
+    const selectedEntry = entries.find(entry => entry.id === entryId)
+      ?? selectedEntries.find(entry => entry.id === entryId);
+    if (!selectedEntry) return;
+
+    if (selectedEntryIds.has(entryId)) {
+      setSelectedEntryIds(prev => {
+        const next = new Set(prev);
         next.delete(entryId);
-      } else {
-        const selectedEntry = entries.find(entry => entry.id === entryId);
-        if (!selectedEntry) return next;
+        return next;
+      });
+      setSelectedEntries(prev => prev.filter(entry => entry.id !== entryId));
+      return;
+    }
 
-        const currentPartNumbers = getUniquePartNumberSet(
-          (assignModal?.items ?? []).map(item => item.part_number),
-        );
-        const selectedPartNumbers = getUniquePartNumberSet(
-          entries.filter(entry => next.has(entry.id)).map(entry => entry.part_number),
-        );
-        const nextPartNumberCount = new Set([
-          ...currentPartNumbers,
-          ...selectedPartNumbers,
-          normalizePartNumber(selectedEntry.part_number),
-        ]).size;
+    const currentPartNumbers = getUniquePartNumberSet(
+      (assignModal?.items ?? []).map(item => item.part_number),
+    );
+    const selectedPartNumbers = getUniquePartNumberSet(
+      selectedEntries.map(entry => entry.part_number),
+    );
+    const nextPartNumberCount = new Set([
+      ...currentPartNumbers,
+      ...selectedPartNumbers,
+      normalizePartNumber(selectedEntry.part_number),
+    ]).size;
 
-        // Los registros repetidos del mismo número de parte comparten un espacio.
-        if (nextPartNumberCount <= MAX_ITEMS) {
-          next.add(entryId);
-        }
-      }
-      return next;
-    });
+    // Los registros repetidos del mismo número de parte comparten un espacio.
+    if (nextPartNumberCount > MAX_ITEMS) return;
+
+    setSelectedEntryIds(prev => new Set([...prev, entryId]));
+    setSelectedEntries(prev => [...prev.filter(entry => entry.id !== entryId), selectedEntry]);
   };
 
   /* ── Asignar múltiples entries ── */
   const handleAssign = async () => {
-    if (!assignModal || selectedEntryIds.size === 0) return;
+    if (!assignModal || selectedEntries.length === 0) return;
 
     const currentItems = assignModal.items ?? [];
     const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
-    const selectedEntriesList = entries.filter(e => selectedEntryIds.has(e.id));
+    const selectedEntriesList = selectedEntries;
     const projectedPartNumberCount = new Set([
       ...currentPartNumbers,
       ...selectedEntriesList.map(entry => normalizePartNumber(entry.part_number)),
@@ -301,7 +333,8 @@ export function RacksPage() {
           .maybeSingle();
 
         if (fifoError) {
-          throw new Error(`No se pudo consultar el FIFO de ${entry.part_number}: ${fifoError.message}`);
+          // El FIFO es informativo; no debe impedir guardar una asignación válida en Rack.
+          console.warn(`No se pudo consultar el FIFO de ${entry.part_number}:`, fifoError);
         }
 
         locationItems.push({
@@ -311,22 +344,27 @@ export function RacksPage() {
           part_number: entry.part_number,
           po: entry.po,
           qty: entry.total_units,
-          fifo_number: fifoLabel?.fifo_number ?? null,
+          fifo_number: fifoError ? null : (fifoLabel?.fifo_number ?? null),
           assigned_at: assignedAt,
         });
       }
 
       // Insertar en lote evita dejar la locación a medias si se seleccionan varios registros.
-      const { data: insertedItems, error: itemsError } = await supabase
+      let { error: itemsError } = await supabase
         .from('location_items')
-        .insert(locationItems)
-        .select('id');
+        .insert(locationItems);
+
+      // Algunas bases antiguas fueron creadas antes de agregar fifo_number.
+      // Como el FIFO es opcional, reintentamos sin esa columna si Supabase la desconoce.
+      if (itemsError && /fifo_number|column .* does not exist/i.test(itemsError.message)) {
+        const legacyItems = locationItems.map(({ fifo_number: _fifoNumber, ...item }) => item);
+        const retry = await supabase.from('location_items').insert(legacyItems);
+        itemsError = retry.error;
+      }
 
       if (itemsError) {
         throw new Error(`No se pudo guardar la asignación: ${itemsError.message}`);
       }
-
-      const insertedItemIds = (insertedItems ?? []).map((item: { id: number }) => item.id);
 
       // Mantener los campos heredados de locations sincronizados con el primer item.
       if (currentItems.length === 0) {
@@ -344,15 +382,19 @@ export function RacksPage() {
           .eq('id', assignModal.id);
 
         if (locationError) {
-          if (insertedItemIds.length > 0) {
-            await supabase.from('location_items').delete().in('id', insertedItemIds);
-          }
+          // Revertir solo los items creados en este intento para no duplicarlos al reintentar.
+          await supabase
+            .from('location_items')
+            .delete()
+            .eq('location_id', assignModal.id)
+            .eq('assigned_at', assignedAt);
           throw new Error(`No se pudo actualizar la locación: ${locationError.message}`);
         }
       }
 
       setAssignModal(null);
       setSelectedEntryIds(new Set());
+      setSelectedEntries([]);
       setEntrySearch('');
       await fetchLocations();
     } catch (error) {
@@ -775,7 +817,7 @@ export function RacksPage() {
         const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
         const currentPartNumberCount = currentPartNumbers.size;
         const available = MAX_ITEMS - currentPartNumberCount;
-        const selectedList = entries.filter(e => selectedEntryIds.has(e.id));
+        const selectedList = selectedEntries;
         const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));
         const selectedUniquePartCount = selectedPartNumbers.size;
         const totalSelectedQty = selectedList.reduce((s, e) => s + e.total_units, 0);
@@ -800,7 +842,7 @@ export function RacksPage() {
                   </div>
                 </div>
                 <button
-                  onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); setSaveError(null); }}
+                  onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setSelectedEntries([]); setEntrySearch(''); setSaveError(null); }}
                   className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
                   <X className="h-5 w-5" />
                 </button>
@@ -820,7 +862,7 @@ export function RacksPage() {
                     </div>
                   </div>
                   <button
-                    onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); setSaveError(null); }}
+                    onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setSelectedEntries([]); setEntrySearch(''); setSaveError(null); }}
                     className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                     Cerrar
                   </button>
@@ -845,6 +887,16 @@ export function RacksPage() {
                         Puedes seleccionar registros de hasta <strong>{available}</strong> número{available !== 1 ? 's' : ''} de parte diferentes
                       </p>
                     </div>
+
+                    {entriesLoadError && (
+                      <div role="alert" className="flex items-start gap-2.5 bg-red-50 border border-red-200 rounded-xl px-3 py-3">
+                        <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-red-700">No se pudieron cargar los registros</p>
+                          <p className="text-xs text-red-600 mt-1 break-words">{entriesLoadError}</p>
+                        </div>
+                      </div>
+                    )}
 
                     {saveError && (
                       <div role="alert" className="flex items-start gap-2.5 bg-red-50 border border-red-200 rounded-xl px-3 py-3">
@@ -918,7 +970,7 @@ export function RacksPage() {
                     </div>
 
                     {/* Resumen de selección */}
-                    {selectedEntryIds.size > 0 && (
+                    {selectedEntries.length > 0 && (
                       <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 space-y-2">
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-bold text-indigo-700">
@@ -962,18 +1014,18 @@ export function RacksPage() {
                   {/* Footer con botones */}
                   <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 flex gap-3">
                     <button type="button"
-                      onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); setSaveError(null); }}
+                      onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setSelectedEntries([]); setEntrySearch(''); setSaveError(null); }}
                       className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                       Cancelar
                     </button>
                     <button type="button" onClick={handleAssign}
-                      disabled={selectedEntryIds.size === 0 || saving}
+                      disabled={selectedEntries.length === 0 || saving}
                       className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
                       style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       {saving
                         ? 'Guardando...'
-                        : selectedEntryIds.size === 0
+                        : selectedEntries.length === 0
                         ? 'Selecciona al menos uno'
                         : `${currentItems.length === 0 ? 'Asignar' : 'Agregar'} ${selectedList.length} registro${selectedList.length !== 1 ? 's' : ''}`
                       }
