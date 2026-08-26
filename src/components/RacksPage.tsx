@@ -226,6 +226,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
             };
           });
 
+      const entryIds = [...new Set([
+        ...rawItems.map(item => item.entry_id),
+        ...locs.map(location => toNumberOrNull(location.entry_id)),
+      ].filter((id): id is number => id !== null))];
       const boxesMap: Record<number, number> = Object.fromEntries(entryBoxesCache.current.entries());
       const rawItemsMissingBoxes = rawItems.filter(item => item.embedded_boxes === null);
       rawItems.forEach(item => {
@@ -234,11 +238,12 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         }
       });
 
-      const missingEntryIds = [...new Set(
-        rawItemsMissingBoxes
+      const missingEntryIds = [...new Set([
+        ...entryIds,
+        ...rawItemsMissingBoxes
           .map(item => item.entry_id)
           .filter((id): id is number => id !== null),
-      )];
+      ])];
       if (missingEntryIds.length > 0) {
         const { data: entriesData, error: entriesError } = await supabase
           .from('entries')
