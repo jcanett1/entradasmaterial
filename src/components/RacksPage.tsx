@@ -151,6 +151,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [entriesLoadError, setEntriesLoadError] = useState<string | null>(null);
   const [locationsLoadError, setLocationsLoadError] = useState<string | null>(null);
   const fetchEntriesRequest = useRef(0);
+  const entryBoxesCache = useRef(new Map<number, number>());
 
   // Modal detalle
   const [detailModal, setDetailModal] = useState<Location | null>(null);
@@ -199,29 +200,44 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
             entry_id: toNumberOrNull(item.entry_id),
           }));
 
-      const boxesMap: Record<number, number> = {};
+      const entryIds = [...new Set(rawItems.map(item => item.entry_id).filter((id): id is number => id !== null))];
+      const boxesMap: Record<number, number> = Object.fromEntries(entryBoxesCache.current.entries());
       const boxesByPartPo: Record<string, number> = {};
       const partNumbers = [...new Set(
         rawItems
           .map(item => item.part_number)
           .filter((partNumber): partNumber is string => Boolean(partNumber)),
       )];
-      let entriesData: unknown[] = [];
-      let entriesError: { message: string } | null = null;
+      const entriesData: unknown[] = [];
+      const entriesErrors: string[] = [];
       if (partNumbers.length > 0) {
-        const result = await supabase
-          .from('entries')
-          .select('id, part_number, po, total_boxes')
-          .in('part_number', partNumbers);
-        entriesData = result.data ?? [];
-        entriesError = result.error;
+        const queries = [
+          supabase
+            .from('entries')
+            .select('id, part_number, po, total_boxes')
+            .in('part_number', partNumbers),
+        ];
+        if (entryIds.length > 0) {
+          queries.push(
+            supabase
+              .from('entries')
+              .select('id, part_number, po, total_boxes')
+              .in('id', entryIds),
+          );
+        }
+        const results = await Promise.all(queries);
+        results.forEach(result => {
+          if (result.error) entriesErrors.push(result.error.message);
+          else entriesData.push(...(result.data ?? []));
+        });
       }
 
-      if (entriesError) {
-        console.warn('No se pudieron cargar las cajas de los registros asignados:', entriesError);
+      if (entriesErrors.length > 0) {
+        const errorMessage = [...new Set(entriesErrors)].join(' | ');
+        console.warn('No se pudieron cargar las cajas de los registros asignados:', errorMessage);
         setLocationsLoadError(prev => prev
-          ? `${prev} No se pudieron cargar las cajas desde entries: ${entriesError.message}`
-          : `Las asignaciones se cargaron, pero no se pudieron cargar las cajas desde entries: ${entriesError.message}`);
+          ? `${prev} No se pudieron cargar las cajas desde entries: ${errorMessage}`
+          : `Las asignaciones se cargaron, pero no se pudieron cargar las cajas desde entries: ${errorMessage}`);
       }
 
       entriesData.forEach((entry: { id: unknown; part_number: string | null; po: string | null; total_boxes: unknown }) => {
@@ -338,11 +354,16 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     if (requestId !== fetchEntriesRequest.current) return;
 
+    const normalizedEntries = ((data as EntryOption[]) ?? [])
+      .map(entry => ({ ...entry, id: toNumberOrNull(entry.id) ?? entry.id }));
+    normalizedEntries.forEach(entry => {
+      const totalBoxes = toNumberOrNull(entry.total_boxes);
+      if (totalBoxes !== null) entryBoxesCache.current.set(entry.id, totalBoxes);
+    });
+
     // Filtrar localmente evita una URL NOT IN demasiado grande cuando hay muchas asignaciones.
     // Se bloquea el registro exacto, no todos los registros que comparten su número de parte.
-    const availableEntries = ((data as EntryOption[]) ?? [])
-      .map(entry => ({ ...entry, id: toNumberOrNull(entry.id) ?? entry.id }))
-      .filter(entry => !assignedIds.has(entry.id));
+    const availableEntries = normalizedEntries.filter(entry => !assignedIds.has(entry.id));
     setEntries(availableEntries);
   }, []);
 
@@ -463,6 +484,12 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         );
       }
 
+      selectedEntriesList.forEach(entry => {
+        const entryId = toNumberOrNull(entry.id);
+        const totalBoxes = toNumberOrNull(entry.total_boxes);
+        if (entryId !== null && totalBoxes !== null) entryBoxesCache.current.set(entryId, totalBoxes);
+      });
+
       const assignedAt = new Date().toISOString();
       const locationItems = [];
 
@@ -488,6 +515,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           part_number: entry.part_number,
           po: entry.po,
           qty: entry.total_units,
+          boxes: entry.total_boxes,
           fifo_number: fifoError ? null : (fifoLabel?.fifo_number ?? null),
           assigned_at: assignedAt,
         });
