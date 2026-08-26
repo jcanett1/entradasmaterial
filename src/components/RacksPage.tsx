@@ -280,7 +280,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     const { data: assignedData, error: assignedError } = await supabase
       .from('location_items')
-      .select('entry_id, part_number');
+      .select('entry_id');
 
     if (assignedError) {
       if (requestId !== fetchEntriesRequest.current) return;
@@ -291,13 +291,9 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
 
     const assignedIds = new Set<number>();
-    const assignedPartNumbers = new Set<string>();
-    ((assignedData ?? []) as { entry_id: unknown; part_number: string | null }[]).forEach(row => {
+    ((assignedData ?? []) as { entry_id: unknown }[]).forEach(row => {
       const entryId = toNumberOrNull(row.entry_id);
       if (entryId !== null) assignedIds.add(entryId);
-
-      const partNumber = normalizePartNumber(row.part_number);
-      if (partNumber) assignedPartNumbers.add(partNumber);
     });
 
     let query = supabase
@@ -320,13 +316,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     if (requestId !== fetchEntriesRequest.current) return;
 
     // Filtrar localmente evita una URL NOT IN demasiado grande cuando hay muchas asignaciones.
-    // Un número de parte asignado en cualquier rack deja de estar disponible globalmente.
+    // Se bloquea el registro exacto, no todos los registros que comparten su número de parte.
     const availableEntries = ((data as EntryOption[]) ?? [])
       .map(entry => ({ ...entry, id: toNumberOrNull(entry.id) ?? entry.id }))
-      .filter(entry => (
-        !assignedIds.has(entry.id)
-        && !assignedPartNumbers.has(normalizePartNumber(entry.part_number))
-      ));
+      .filter(entry => !assignedIds.has(entry.id));
     setEntries(availableEntries);
   }, []);
 
@@ -423,23 +416,27 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setSaveError(null);
 
     try {
-      const selectedPartNumberSet = getUniquePartNumberSet(
-        selectedEntriesList.map(entry => entry.part_number),
+      const selectedEntryIdSet = new Set(
+        selectedEntriesList
+          .map(entry => toNumberOrNull(entry.id))
+          .filter((id): id is number => id !== null),
       );
       const { data: latestAssignments, error: assignmentsError } = await supabase
         .from('location_items')
-        .select('part_number, location_code');
+        .select('entry_id, location_code');
 
       if (assignmentsError) {
         throw new Error(`No se pudo validar si el material ya estaba asignado: ${assignmentsError.message}`);
       }
 
-      const conflict = ((latestAssignments ?? []) as { part_number: string; location_code: string | null }[])
-        .find(item => selectedPartNumberSet.has(normalizePartNumber(item.part_number)));
+      const conflict = ((latestAssignments ?? []) as { entry_id: unknown; location_code: string | null }[])
+        .find(item => {
+          const entryId = toNumberOrNull(item.entry_id);
+          return entryId !== null && selectedEntryIdSet.has(entryId);
+        });
       if (conflict) {
-        const conflictPartNumber = normalizePartNumber(conflict.part_number);
         throw new Error(
-          `El número de parte ${conflictPartNumber} ya está asignado${conflict.location_code ? ` a ${conflict.location_code}` : ''}.`,
+          `Uno de los registros seleccionados ya está asignado${conflict.location_code ? ` a ${conflict.location_code}` : ''}. Actualiza la lista e inténtalo nuevamente.`,
         );
       }
 
@@ -964,9 +961,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         const currentPartNumberCount = currentPartNumbers.size;
         const available = MAX_ITEMS - currentPartNumberCount;
         const allAssignedItems = locations.flatMap(location => location.items ?? []);
-        const allAssignedPartNumbers = getUniquePartNumberSet(
-          allAssignedItems.map(item => item.part_number),
-        );
         const allAssignedEntryIds = new Set(
           allAssignedItems
             .map(item => toNumberOrNull(item.entry_id))
@@ -974,8 +968,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         );
         const visibleEntries = entries.filter(entry => (
           !allAssignedEntryIds.has(toNumberOrNull(entry.id) ?? entry.id)
-          && !allAssignedPartNumbers.has(normalizePartNumber(entry.part_number))
-          && !currentPartNumbers.has(normalizePartNumber(entry.part_number))
         ));
         const selectedList = selectedEntries;
         const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));

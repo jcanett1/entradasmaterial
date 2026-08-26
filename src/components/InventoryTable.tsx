@@ -9,14 +9,6 @@ import {
 
 const PAGE_SIZE = 25;
 
-const normalizePartNumber = (value: string | null | undefined) =>
-  (value ?? '')
-    .normalize('NFKC')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[‐‑‒–—−]/g, '-')
-    .replace(/\s+/g, '')
-    .toUpperCase();
-
 interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
@@ -30,10 +22,6 @@ interface InventoryTableProps {
   assignedEntryIds?: Set<number>;
   /** Mapa de entry_id → location_code para mostrar la leyenda */
   assignedEntryLocations?: Record<number, string>;
-  /** Números de parte asignados globalmente a cualquier locación */
-  assignedPartNumbers?: Set<string>;
-  /** Mapa de número de parte normalizado → location_code */
-  assignedPartNumberLocations?: Record<string, string>;
 }
 
 export function InventoryTable({
@@ -47,8 +35,6 @@ export function InventoryTable({
   onToggleSelectAll,
   assignedEntryIds = new Set(),
   assignedEntryLocations = {},
-  assignedPartNumbers = new Set(),
-  assignedPartNumberLocations = {},
 }: InventoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -144,11 +130,8 @@ export function InventoryTable({
           <tbody>
             {pageRecords.map((record, idx) => {
               const isSelected = selectedIds.has(record.id);
-              const normalizedPartNumber = normalizePartNumber(record.part_number);
-              const isAssigned = assignedEntryIds.has(record.id) || assignedPartNumbers.has(normalizedPartNumber);
-              const locationCode = isAssigned
-                ? (assignedEntryLocations[record.id] ?? assignedPartNumberLocations[normalizedPartNumber] ?? '')
-                : '';
+              const isAssigned = assignedEntryIds.has(record.id);
+              const locationCode = isAssigned ? (assignedEntryLocations[record.id] ?? '') : '';
 
               return (
                 <tr

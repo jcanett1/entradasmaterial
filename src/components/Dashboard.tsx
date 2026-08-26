@@ -28,14 +28,6 @@ const toEntryId = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const normalizePartNumber = (value: string | null | undefined) =>
-  (value ?? '')
-    .normalize('NFKC')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[‐‑‒–—−]/g, '-')
-    .replace(/\s+/g, '')
-    .toUpperCase();
-
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
 
@@ -58,8 +50,6 @@ export function Dashboard() {
   const [assignedEntryIds, setAssignedEntryIds] = useState<Set<number>>(new Set());
   // Mapa de entry_id → location_code para mostrar la leyenda
   const [assignedEntryLocations, setAssignedEntryLocations] = useState<Record<number, string>>({});
-  const [assignedPartNumbers, setAssignedPartNumbers] = useState<Set<string>>(new Set());
-  const [assignedPartNumberLocations, setAssignedPartNumberLocations] = useState<Record<string, string>>({});
   const [assignedEntriesError, setAssignedEntriesError] = useState<string | null>(null);
 
   // ── Selección múltiple ──
@@ -93,8 +83,8 @@ export function Dashboard() {
     setAssignedEntriesError(null);
 
     const [itemsResult, locationsResult] = await Promise.all([
-      supabase.from('location_items').select('entry_id, part_number, location_code'),
-      supabase.from('locations').select('entry_id, part_number, location_code').not('entry_id', 'is', null),
+      supabase.from('location_items').select('entry_id, location_code'),
+      supabase.from('locations').select('entry_id, location_code').not('entry_id', 'is', null),
     ]);
 
     if (itemsResult.error && locationsResult.error) {
@@ -109,35 +99,24 @@ export function Dashboard() {
     }
 
     const rows = [
-      ...((itemsResult.data ?? []) as { entry_id: unknown; part_number: string | null; location_code: string | null }[]),
-      ...((locationsResult.data ?? []) as { entry_id: unknown; part_number: string | null; location_code: string | null }[]),
+      ...((itemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
+      ...((locationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
     ];
 
     const ids = new Set<number>();
-    const partNumbers = new Set<string>();
     const locMap: Record<number, string> = {};
-    const partLocMap: Record<string, string> = {};
     rows.forEach(row => {
       const entryId = toEntryId(row.entry_id);
-      const partNumber = normalizePartNumber(row.part_number);
       const locationCode = row.location_code?.trim() ?? '';
+      if (entryId === null) return;
 
-      if (entryId !== null) {
-        ids.add(entryId);
-        if (locationCode) locMap[entryId] = locationCode;
-      }
-
-      if (partNumber) {
-        partNumbers.add(partNumber);
-        if (locationCode) partLocMap[partNumber] = locationCode;
-      }
+      ids.add(entryId);
+      if (locationCode) locMap[entryId] = locationCode;
     });
 
     setAssignedEntryIds(ids);
     setAssignedEntryLocations(locMap);
-    setAssignedPartNumbers(partNumbers);
-    setAssignedPartNumberLocations(partLocMap);
-    setSelectedIds(new Set());
+    setSelectedIds(prev => new Set([...prev].filter(id => !ids.has(id))));
   }, []);
 
   useEffect(() => {
@@ -459,8 +438,6 @@ export function Dashboard() {
                 onToggleSelectAll={handleToggleSelectAll}
                 assignedEntryIds={assignedEntryIds}
                 assignedEntryLocations={assignedEntryLocations}
-                assignedPartNumbers={assignedPartNumbers}
-                assignedPartNumberLocations={assignedPartNumberLocations}
               />
             </div>
           </>
