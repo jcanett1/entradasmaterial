@@ -562,7 +562,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         || (entry.description ?? '').toLowerCase().includes(searchValue)
         || (entry.po ?? '').toLowerCase().includes(searchValue)
         || String(entry.fifo_number ?? '').includes(searchValue);
-      return matchesSearch;
+      return matchesSearch && !entry.assigned_location;
     });
     setEntries(availableEntries);
   }, []);
