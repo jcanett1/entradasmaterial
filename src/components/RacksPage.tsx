@@ -23,6 +23,14 @@ interface LocationItem {
   assigned_at: string;
 }
 
+type SupabaseLocationItemRow = Omit<LocationItem, 'boxes'> & {
+  entry?: { total_boxes: unknown } | null;
+};
+
+type RawLocationItem = Omit<LocationItem, 'boxes'> & {
+  embedded_boxes: number | null;
+};
+
 interface Location {
   id: number;
   rack: string;
@@ -183,79 +191,75 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         entry_id: toNumberOrNull(loc.entry_id),
       }));
 
-      const { data: itemsData, error: itemsError } = await supabase
+      let { data: itemsData, error: itemsError } = await supabase
         .from('location_items')
-        .select('*')
+        .select('*, entry:entries!location_items_entry_id_fkey(total_boxes)')
         .order('assigned_at', { ascending: true });
+
+      if (itemsError) {
+        console.warn('No se pudo cargar la relación entries junto con location_items; se usará la lectura básica:', itemsError);
+        const fallbackItems = await supabase
+          .from('location_items')
+          .select('*')
+          .order('assigned_at', { ascending: true });
+        itemsData = fallbackItems.data;
+        itemsError = fallbackItems.error;
+      }
 
       if (itemsError) {
         console.error('Error cargando location_items:', itemsError);
         setLocationsLoadError(`Las asignaciones se guardan, pero no se pueden leer desde location_items: ${itemsError.message}`);
       }
 
-      const rawItems = itemsError
+      const rawItems: RawLocationItem[] = itemsError
         ? []
-        : ((itemsData as Omit<LocationItem, 'boxes'>[]) ?? []).map(item => ({
-            ...item,
-            id: toNumberOrNull(item.id) ?? item.id,
-            location_id: toNumberOrNull(item.location_id) ?? item.location_id,
-            entry_id: toNumberOrNull(item.entry_id),
-          }));
+        : ((itemsData as SupabaseLocationItemRow[]) ?? []).map(item => {
+            const { entry, ...itemFields } = item;
+            return {
+              ...itemFields,
+              id: toNumberOrNull(item.id) ?? item.id,
+              location_id: toNumberOrNull(item.location_id) ?? item.location_id,
+              entry_id: toNumberOrNull(item.entry_id),
+              embedded_boxes: toNumberOrNull(entry?.total_boxes),
+            };
+          });
 
-      const entryIds = [...new Set(rawItems.map(item => item.entry_id).filter((id): id is number => id !== null))];
       const boxesMap: Record<number, number> = Object.fromEntries(entryBoxesCache.current.entries());
-      const boxesByPartPo: Record<string, number> = {};
-      const partNumbers = [...new Set(
-        rawItems
-          .map(item => item.part_number)
-          .filter((partNumber): partNumber is string => Boolean(partNumber)),
-      )];
-
-      const entriesQueries = [];
-      if (entryIds.length > 0) {
-        entriesQueries.push(
-          supabase
-            .from('entries')
-            .select('id, part_number, po, total_boxes')
-            .in('id', entryIds),
-        );
-      }
-      if (partNumbers.length > 0) {
-        entriesQueries.push(
-          supabase
-            .from('entries')
-            .select('id, part_number, po, total_boxes')
-            .in('part_number', partNumbers),
-        );
-      }
-
-      const entriesResults = await Promise.all(entriesQueries);
-      const entriesErrors = entriesResults
-        .filter(result => result.error)
-        .map(result => result.error!.message);
-      if (entriesErrors.length > 0) {
-        const errorMessage = [...new Set(entriesErrors)].join(' | ');
-        console.warn('No se pudieron cargar las cajas de los registros asignados:', errorMessage);
-        setLocationsLoadError(prev => prev
-          ? `${prev} No se pudieron cargar las cajas desde entries: ${errorMessage}`
-          : `Las asignaciones se cargaron, pero no se pudieron cargar las cajas desde entries: ${errorMessage}`);
-      }
-
-      entriesResults.forEach(result => {
-        (result.data ?? []).forEach((entry: { id: unknown; part_number: string | null; po: string | null; total_boxes: unknown }) => {
-          const entryId = toNumberOrNull(entry.id);
-          const totalBoxes = toNumberOrNull(entry.total_boxes);
-          if (totalBoxes === null) return;
-          if (entryId !== null) boxesMap[entryId] = totalBoxes;
-          boxesByPartPo[getPartPoKey(entry.part_number, entry.po)] = totalBoxes;
-        });
+      const rawItemsMissingBoxes = rawItems.filter(item => item.embedded_boxes === null);
+      rawItems.forEach(item => {
+        if (item.entry_id !== null && item.embedded_boxes !== null) {
+          boxesMap[item.entry_id] = item.embedded_boxes;
+        }
       });
 
-      const items: LocationItem[] = rawItems.map(item => ({
+      const missingEntryIds = [...new Set(
+        rawItemsMissingBoxes
+          .map(item => item.entry_id)
+          .filter((id): id is number => id !== null),
+      )];
+      if (missingEntryIds.length > 0) {
+        const { data: entriesData, error: entriesError } = await supabase
+          .from('entries')
+          .select('id, total_boxes')
+          .in('id', missingEntryIds);
+
+        if (entriesError) {
+          console.warn('No se pudieron cargar las cajas de registros sin relación embebida:', entriesError);
+          setLocationsLoadError(prev => prev
+            ? `${prev} No se pudieron cargar las cajas desde entries: ${entriesError.message}`
+            : `Las asignaciones se cargaron, pero no se pudieron cargar las cajas desde entries: ${entriesError.message}`);
+        }
+
+        (entriesData ?? []).forEach((entry: { id: unknown; total_boxes: unknown }) => {
+          const entryId = toNumberOrNull(entry.id);
+          const totalBoxes = toNumberOrNull(entry.total_boxes);
+          if (entryId !== null && totalBoxes !== null) boxesMap[entryId] = totalBoxes;
+        });
+      }
+
+      const items: LocationItem[] = rawItems.map(({ embedded_boxes: _embeddedBoxes, ...item }) => ({
         ...item,
-        boxes: item.entry_id !== null
-          ? (boxesMap[item.entry_id] ?? boxesByPartPo[getPartPoKey(item.part_number, item.po)] ?? 0)
-          : (boxesByPartPo[getPartPoKey(item.part_number, item.po)] ?? 0),
+        boxes: item.entry_id !== null ? (boxesMap[item.entry_id] ?? 0) : 0,
       }));
 
       const itemsByLocationId = new Map<number, LocationItem[]>();
