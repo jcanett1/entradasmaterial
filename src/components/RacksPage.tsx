@@ -61,6 +61,8 @@ interface EntryOption {
   total_units: number;
   total_boxes: number;
   po: string | null;
+  fifo_number: number | null;
+  selection_key: string;
 }
 
 /* El mismo número de parte ignora espacios y diferencias de mayúsculas/minúsculas. */
@@ -74,6 +76,12 @@ const normalizePartNumber = (partNumber: string | null | undefined) =>
 
 const normalizeLocationCode = (locationCode: string | null | undefined) =>
   (locationCode ?? '').trim().toUpperCase();
+
+const getEntrySelectionKey = (entryId: unknown, fifoNumber: unknown) => {
+  const normalizedId = toNumberOrNull(entryId);
+  const normalizedFifo = toNumberOrNull(fifoNumber);
+  return `${normalizedId ?? entryId}:${normalizedFifo ?? 'none'}`;
+};
 
 const normalizePo = (po: string | null | undefined) =>
   (po ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toUpperCase();
@@ -151,7 +159,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [assignModal, setAssignModal] = useState<Location | null>(null);
   const [entries, setEntries] = useState<EntryOption[]>([]);
   // La selección debe sobrevivir a cada actualización de la búsqueda.
-  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<number>>(new Set());
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [selectedEntries, setSelectedEntries] = useState<EntryOption[]>([]);
   const [entrySearch, setEntrySearch] = useState('');
   const [saving, setSaving] = useState(false);
@@ -443,7 +451,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setEntriesLoadError(null);
 
     const [itemsAssignments, legacyAssignments] = await Promise.all([
-      supabase.from('location_items').select('entry_id'),
+      supabase.from('location_items').select('entry_id, fifo_number'),
       supabase.from('locations').select('entry_id'),
     ]);
 
@@ -463,21 +471,24 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       console.warn('No se pudieron consultar las asignaciones heredadas de locations:', legacyAssignments.error);
     }
 
-    const assignedIds = new Set<number>();
-    ([
-      ...((itemsAssignments.data ?? []) as { entry_id: unknown }[]),
-      ...((legacyAssignments.data ?? []) as { entry_id: unknown }[]),
-    ]).forEach(row => {
-      const entryId = toNumberOrNull(row.entry_id);
-      if (entryId !== null) assignedIds.add(entryId);
+    const assignedSelectionKeys = new Set<string>();
+    ((itemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+      if (toNumberOrNull(row.entry_id) !== null) {
+        assignedSelectionKeys.add(getEntrySelectionKey(row.entry_id, row.fifo_number));
+      }
+    });
+    ((legacyAssignments.data ?? []) as { entry_id: unknown }[]).forEach(row => {
+      if (toNumberOrNull(row.entry_id) !== null) {
+        assignedSelectionKeys.add(getEntrySelectionKey(row.entry_id, null));
+      }
     });
 
     let query = supabase
       .from('entries')
       .select('id, part_number, description, total_units, total_boxes, po')
       .order('registered_at', { ascending: false });
-    if (term.trim()) {
-      query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
+    if (term.trim() && !/^\d+$/.test(term.trim())) {
+      query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%,po.ilike.%${term}%`);
     }
 
     const { data, error: entriesError } = await query;
@@ -491,16 +502,49 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     if (requestId !== fetchEntriesRequest.current) return;
 
-    const normalizedEntries = ((data as EntryOption[]) ?? [])
+    const normalizedEntries = ((data as Omit<EntryOption, 'fifo_number' | 'selection_key'>[]) ?? [])
       .map(entry => ({ ...entry, id: toNumberOrNull(entry.id) ?? entry.id }));
     normalizedEntries.forEach(entry => {
       const totalBoxes = toNumberOrNull(entry.total_boxes);
       if (totalBoxes !== null) entryBoxesCache.current.set(entry.id, totalBoxes);
     });
 
-    // Filtrar localmente evita una URL NOT IN demasiado grande cuando hay muchas asignaciones.
-    // Se bloquea el registro exacto, no todos los registros que comparten su número de parte.
-    const availableEntries = normalizedEntries.filter(entry => !assignedIds.has(entry.id));
+    const entryIds = normalizedEntries.map(entry => entry.id);
+    const { data: fifoData, error: fifoError } = entryIds.length > 0
+      ? await supabase.from('fifo_labels').select('entry_id, fifo_number').in('entry_id', entryIds).order('fifo_number', { ascending: true })
+      : { data: [], error: null };
+    if (fifoError) {
+      console.warn('No se pudieron cargar los FIFO para el modal:', fifoError);
+      setEntriesLoadError(`Los registros se cargaron, pero no se pudieron consultar los FIFO: ${fifoError.message}`);
+    }
+
+    const fifoByEntryId = new Map<number, Array<number | null>>();
+    ((fifoData ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+      const entryId = toNumberOrNull(row.entry_id);
+      if (entryId === null) return;
+      const fifoNumber = toNumberOrNull(row.fifo_number);
+      const current = fifoByEntryId.get(entryId) ?? [];
+      current.push(fifoNumber);
+      fifoByEntryId.set(entryId, current);
+    });
+
+    const options = normalizedEntries.flatMap(entry => {
+      const fifoNumbers = fifoByEntryId.get(entry.id) ?? [null];
+      return fifoNumbers.map(fifoNumber => ({
+        ...entry,
+        fifo_number: fifoNumber,
+        selection_key: getEntrySelectionKey(entry.id, fifoNumber),
+      }));
+    });
+    const searchValue = term.trim().toLowerCase();
+    const availableEntries = options.filter(entry => {
+      const matchesSearch = !searchValue
+        || entry.part_number.toLowerCase().includes(searchValue)
+        || (entry.description ?? '').toLowerCase().includes(searchValue)
+        || (entry.po ?? '').toLowerCase().includes(searchValue)
+        || String(entry.fifo_number ?? '').includes(searchValue);
+      return matchesSearch && !assignedSelectionKeys.has(entry.selection_key);
+    });
     setEntries(availableEntries);
   }, []);
 
@@ -542,18 +586,18 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   };
 
   /* ── Toggle selección de un entry ── */
-  const toggleEntrySelection = (entryId: number) => {
-    const selectedEntry = entries.find(entry => entry.id === entryId)
-      ?? selectedEntries.find(entry => entry.id === entryId);
+  const toggleEntrySelection = (selectionKey: string) => {
+    const selectedEntry = entries.find(entry => entry.selection_key === selectionKey)
+      ?? selectedEntries.find(entry => entry.selection_key === selectionKey);
     if (!selectedEntry) return;
 
-    if (selectedEntryIds.has(entryId)) {
+    if (selectedEntryIds.has(selectionKey)) {
       setSelectedEntryIds(prev => {
         const next = new Set(prev);
-        next.delete(entryId);
+        next.delete(selectionKey);
         return next;
       });
-      setSelectedEntries(prev => prev.filter(entry => entry.id !== entryId));
+      setSelectedEntries(prev => prev.filter(entry => entry.selection_key !== selectionKey));
       return;
     }
 
@@ -572,8 +616,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     // Los registros repetidos del mismo número de parte comparten un espacio.
     if (nextPartNumberCount > MAX_ITEMS) return;
 
-    setSelectedEntryIds(prev => new Set([...prev, entryId]));
-    setSelectedEntries(prev => [...prev.filter(entry => entry.id !== entryId), selectedEntry]);
+    setSelectedEntryIds(prev => new Set([...prev, selectionKey]));
+    setSelectedEntries(prev => [...prev.filter(entry => entry.selection_key !== selectionKey), selectedEntry]);
   };
 
   /* ── Asignar múltiples entries ── */
@@ -597,13 +641,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setSaveError(null);
 
     try {
+      const selectedEntryKeys = new Set(selectedEntriesList.map(entry => entry.selection_key));
       const selectedEntryIdSet = new Set(
         selectedEntriesList
           .map(entry => toNumberOrNull(entry.id))
           .filter((id): id is number => id !== null),
       );
       const [latestItemsAssignments, latestLegacyAssignments] = await Promise.all([
-        supabase.from('location_items').select('entry_id, location_code'),
+        supabase.from('location_items').select('entry_id, fifo_number, location_code'),
         supabase.from('locations').select('entry_id, location_code'),
       ]);
 
@@ -616,12 +661,17 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       }
 
       const latestAssignments = [
-        ...((latestItemsAssignments.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
-        ...((latestLegacyAssignments.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
+        ...((latestItemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; location_code: string | null }[]),
+        ...((latestLegacyAssignments.data ?? []).map(item => ({ ...item, fifo_number: null })) as { entry_id: unknown; fifo_number: unknown; location_code: string | null }[]),
       ];
       const conflict = latestAssignments.find(item => {
         const entryId = toNumberOrNull(item.entry_id);
-        return entryId !== null && selectedEntryIdSet.has(entryId);
+        if (entryId === null) return false;
+        const exactKeyMatch = selectedEntryKeys.has(getEntrySelectionKey(item.entry_id, item.fifo_number));
+        const legacyMatch = item.fifo_number === null
+          && selectedEntryIdSet.has(entryId)
+          && selectedEntriesList.some(entry => toNumberOrNull(entry.id) === entryId && entry.fifo_number === null);
+        return exactKeyMatch || legacyMatch;
       });
       if (conflict) {
         throw new Error(
@@ -639,20 +689,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       const locationItems = [];
 
       for (const entry of selectedEntriesList) {
-        // limit(1) evita que un registro histórico duplicado en fifo_labels bloquee la asignación.
-        const { data: fifoLabel, error: fifoError } = await supabase
-          .from('fifo_labels')
-          .select('fifo_number')
-          .eq('entry_id', entry.id)
-          .order('fifo_number', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (fifoError) {
-          // El FIFO es informativo; no debe impedir guardar una asignación válida en Rack.
-          console.warn(`No se pudo consultar el FIFO de ${entry.part_number}:`, fifoError);
-        }
-
         locationItems.push({
           location_id: assignModal.id,
           location_code: assignModal.location_code,
@@ -660,7 +696,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           part_number: entry.part_number,
           po: entry.po,
           qty: entry.total_units,
-          fifo_number: fifoError ? null : (fifoLabel?.fifo_number ?? null),
+          fifo_number: entry.fifo_number,
           assigned_at: assignedAt,
         });
       }
@@ -1168,16 +1204,13 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         const currentPartNumberCount = currentPartNumbers.size;
         const available = MAX_ITEMS - currentPartNumberCount;
         const allAssignedItems = locations.flatMap(location => location.items ?? []);
-        const allAssignedEntryIds = new Set([
-          ...allAssignedItems
-            .map(item => toNumberOrNull(item.entry_id))
-            .filter((id): id is number => id !== null),
+        const allAssignedSelectionKeys = new Set([
+          ...allAssignedItems.map(item => getEntrySelectionKey(item.entry_id, item.fifo_number)),
           ...locations
-            .map(location => toNumberOrNull(location.entry_id))
-            .filter((id): id is number => id !== null),
+            .map(location => getEntrySelectionKey(location.entry_id, null)),
         ]);
         const visibleEntries = entries.filter(entry => (
-          !allAssignedEntryIds.has(toNumberOrNull(entry.id) ?? entry.id)
+          !allAssignedSelectionKeys.has(entry.selection_key)
         ));
         const selectedList = selectedEntries;
         const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));
@@ -1288,7 +1321,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                       {visibleEntries.length === 0 ? (
                         <p className="text-center text-gray-400 text-sm py-6">Sin resultados disponibles</p>
                       ) : visibleEntries.map(entry => {
-                          const isSelected = selectedEntryIds.has(entry.id);
+                          const isSelected = selectedEntryIds.has(entry.selection_key);
                           const projectedPartNumberCount = new Set([
                             ...currentPartNumbers,
                             ...selectedPartNumbers,
@@ -1297,7 +1330,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                           const isDisabled = !isSelected && projectedPartNumberCount > MAX_ITEMS;
                         return (
                           <button key={entry.id} type="button"
-                            onClick={() => !isDisabled && toggleEntrySelection(entry.id)}
+                            onClick={() => !isDisabled && toggleEntrySelection(entry.selection_key)}
                             disabled={isDisabled}
                             className={`w-full text-left px-4 py-3 transition-colors flex items-start gap-3 ${
                               isSelected
@@ -1324,6 +1357,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                                 <span className="text-xs text-blue-600 font-semibold">QTY: {entry.total_units.toLocaleString()}</span>
                                 <span className="text-xs text-purple-600 font-semibold">Cajas: {entry.total_boxes}</span>
                                 {entry.po && <span className="text-xs text-gray-500 font-semibold">PO: {entry.po}</span>}
+                                {entry.fifo_number !== null && <span className="text-xs text-amber-600 font-semibold">FIFO: #{entry.fifo_number}</span>}
                               </div>
                             </div>
                           </button>
@@ -1348,12 +1382,12 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {selectedList.map((e, idx) => (
-                            <span key={e.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-100 border border-indigo-300 text-xs font-mono font-bold text-indigo-700">
+                            <span key={e.selection_key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-100 border border-indigo-300 text-xs font-mono font-bold text-indigo-700">
                               <span className="text-[9px] opacity-60">#{idx + 1}</span>
-                              {e.part_number}
+                              {e.part_number}{e.fifo_number !== null ? ` · F${e.fifo_number}` : ''}
                               <button
                                 type="button"
-                                onClick={(ev) => { ev.stopPropagation(); toggleEntrySelection(e.id); }}
+                                onClick={(ev) => { ev.stopPropagation(); toggleEntrySelection(e.selection_key); }}
                                 className="ml-0.5 text-indigo-400 hover:text-indigo-700"
                               >
                                 <X className="h-2.5 w-2.5" />
