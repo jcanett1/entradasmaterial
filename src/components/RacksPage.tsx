@@ -57,7 +57,12 @@ interface EntryOption {
 
 /* El mismo número de parte ignora espacios y diferencias de mayúsculas/minúsculas. */
 const normalizePartNumber = (partNumber: string | null | undefined) =>
-  (partNumber ?? '').trim().toUpperCase();
+  (partNumber ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/\s+/g, '')
+    .toUpperCase();
 
 const normalizeLocationCode = (locationCode: string | null | undefined) =>
   (locationCode ?? '').trim().toUpperCase();
@@ -958,6 +963,20 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
         const currentPartNumberCount = currentPartNumbers.size;
         const available = MAX_ITEMS - currentPartNumberCount;
+        const allAssignedItems = locations.flatMap(location => location.items ?? []);
+        const allAssignedPartNumbers = getUniquePartNumberSet(
+          allAssignedItems.map(item => item.part_number),
+        );
+        const allAssignedEntryIds = new Set(
+          allAssignedItems
+            .map(item => toNumberOrNull(item.entry_id))
+            .filter((id): id is number => id !== null),
+        );
+        const visibleEntries = entries.filter(entry => (
+          !allAssignedEntryIds.has(toNumberOrNull(entry.id) ?? entry.id)
+          && !allAssignedPartNumbers.has(normalizePartNumber(entry.part_number))
+          && !currentPartNumbers.has(normalizePartNumber(entry.part_number))
+        ));
         const selectedList = selectedEntries;
         const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));
         const selectedUniquePartCount = selectedPartNumbers.size;
@@ -1064,9 +1083,9 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
                     {/* Lista de entries con checkboxes */}
                     <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
-                      {entries.length === 0 ? (
+                      {visibleEntries.length === 0 ? (
                         <p className="text-center text-gray-400 text-sm py-6">Sin resultados disponibles</p>
-                      ) : entries.map(entry => {
+                      ) : visibleEntries.map(entry => {
                           const isSelected = selectedEntryIds.has(entry.id);
                           const projectedPartNumberCount = new Set([
                             ...currentPartNumbers,

@@ -9,6 +9,14 @@ import {
 
 const PAGE_SIZE = 25;
 
+const normalizePartNumber = (value: string | null | undefined) =>
+  (value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/\s+/g, '')
+    .toUpperCase();
+
 interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
@@ -136,7 +144,7 @@ export function InventoryTable({
           <tbody>
             {pageRecords.map((record, idx) => {
               const isSelected = selectedIds.has(record.id);
-              const normalizedPartNumber = record.part_number.trim().toUpperCase();
+              const normalizedPartNumber = normalizePartNumber(record.part_number);
               const isAssigned = assignedEntryIds.has(record.id) || assignedPartNumbers.has(normalizedPartNumber);
               const locationCode = isAssigned
                 ? (assignedEntryLocations[record.id] ?? assignedPartNumberLocations[normalizedPartNumber] ?? '')

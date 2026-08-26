@@ -29,7 +29,12 @@ const toEntryId = (value: unknown): number | null => {
 };
 
 const normalizePartNumber = (value: string | null | undefined) =>
-  (value ?? '').trim().toUpperCase();
+  (value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/\s+/g, '')
+    .toUpperCase();
 
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
