@@ -372,7 +372,11 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       };
     });
 
-    setDetailModal({ ...location, items: hydratedItems });
+    const hydratedLocation = { ...location, items: hydratedItems };
+    setLocations(previousLocations => previousLocations.map(previousLocation => (
+      previousLocation.id === location.id ? hydratedLocation : previousLocation
+    )));
+    setDetailModal(hydratedLocation);
     setDetailLoading(false);
   };
 
@@ -1400,11 +1404,9 @@ function LocationCell({
                   <span className="text-[7px] text-gray-500 font-semibold">
                     {group.totalQty} uds
                   </span>
-                  {group.totalBoxes > 0 && (
-                    <span className="text-[7px] text-purple-600 font-semibold">
-                      {group.totalBoxes}cj
-                    </span>
-                  )}
+                  <span className="text-[7px] text-purple-600 font-semibold">
+                    {group.totalBoxes}cj
+                  </span>
                   {group.count === 1 && firstItem.fifo_number && (
                     <span className="text-[7px] text-amber-600 font-bold">
                       F{firstItem.fifo_number}
@@ -1437,9 +1439,7 @@ function LocationCell({
           {/* Totales QTY y Cajas en la celda */}
           <div className="flex gap-1 mt-0.5">
             <span className="text-[7px] font-bold text-blue-600 bg-blue-50 rounded px-1">Q:{totalQty}</span>
-            {totalBoxes > 0 && (
-              <span className="text-[7px] font-bold text-purple-600 bg-purple-50 rounded px-1">C:{totalBoxes}</span>
-            )}
+            <span className="text-[7px] font-bold text-purple-600 bg-purple-50 rounded px-1">C:{totalBoxes}</span>
           </div>
         </div>
       )}
