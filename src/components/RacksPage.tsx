@@ -442,20 +442,32 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     const requestId = ++fetchEntriesRequest.current;
     setEntriesLoadError(null);
 
-    const { data: assignedData, error: assignedError } = await supabase
-      .from('location_items')
-      .select('entry_id');
+    const [itemsAssignments, legacyAssignments] = await Promise.all([
+      supabase.from('location_items').select('entry_id'),
+      supabase.from('locations').select('entry_id'),
+    ]);
 
-    if (assignedError) {
+    if (itemsAssignments.error && legacyAssignments.error) {
       if (requestId !== fetchEntriesRequest.current) return;
-      console.error('Error consultando asignaciones existentes:', assignedError);
+      const message = `${itemsAssignments.error.message} | ${legacyAssignments.error.message}`;
+      console.error('Error consultando asignaciones existentes:', message);
       setEntries([]);
-      setEntriesLoadError(`No se pudieron consultar las asignaciones existentes: ${assignedError.message}`);
+      setEntriesLoadError(`No se pudieron consultar las asignaciones existentes: ${message}`);
       return;
     }
 
+    if (itemsAssignments.error) {
+      console.warn('No se pudieron consultar las asignaciones de location_items:', itemsAssignments.error);
+    }
+    if (legacyAssignments.error) {
+      console.warn('No se pudieron consultar las asignaciones heredadas de locations:', legacyAssignments.error);
+    }
+
     const assignedIds = new Set<number>();
-    ((assignedData ?? []) as { entry_id: unknown }[]).forEach(row => {
+    ([
+      ...((itemsAssignments.data ?? []) as { entry_id: unknown }[]),
+      ...((legacyAssignments.data ?? []) as { entry_id: unknown }[]),
+    ]).forEach(row => {
       const entryId = toNumberOrNull(row.entry_id);
       if (entryId !== null) assignedIds.add(entryId);
     });
@@ -590,19 +602,27 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           .map(entry => toNumberOrNull(entry.id))
           .filter((id): id is number => id !== null),
       );
-      const { data: latestAssignments, error: assignmentsError } = await supabase
-        .from('location_items')
-        .select('entry_id, location_code');
+      const [latestItemsAssignments, latestLegacyAssignments] = await Promise.all([
+        supabase.from('location_items').select('entry_id, location_code'),
+        supabase.from('locations').select('entry_id, location_code'),
+      ]);
 
-      if (assignmentsError) {
-        throw new Error(`No se pudo validar si el material ya estaba asignado: ${assignmentsError.message}`);
+      if (latestItemsAssignments.error || latestLegacyAssignments.error) {
+        const errors = [latestItemsAssignments.error, latestLegacyAssignments.error]
+          .filter(Boolean)
+          .map(error => error!.message)
+          .join(' | ');
+        throw new Error(`No se pudo validar si el material ya estaba asignado: ${errors}`);
       }
 
-      const conflict = ((latestAssignments ?? []) as { entry_id: unknown; location_code: string | null }[])
-        .find(item => {
-          const entryId = toNumberOrNull(item.entry_id);
-          return entryId !== null && selectedEntryIdSet.has(entryId);
-        });
+      const latestAssignments = [
+        ...((latestItemsAssignments.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
+        ...((latestLegacyAssignments.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
+      ];
+      const conflict = latestAssignments.find(item => {
+        const entryId = toNumberOrNull(item.entry_id);
+        return entryId !== null && selectedEntryIdSet.has(entryId);
+      });
       if (conflict) {
         throw new Error(
           `Uno de los registros seleccionados ya está asignado${conflict.location_code ? ` a ${conflict.location_code}` : ''}. Actualiza la lista e inténtalo nuevamente.`,
@@ -1148,11 +1168,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         const currentPartNumberCount = currentPartNumbers.size;
         const available = MAX_ITEMS - currentPartNumberCount;
         const allAssignedItems = locations.flatMap(location => location.items ?? []);
-        const allAssignedEntryIds = new Set(
-          allAssignedItems
+        const allAssignedEntryIds = new Set([
+          ...allAssignedItems
             .map(item => toNumberOrNull(item.entry_id))
             .filter((id): id is number => id !== null),
-        );
+          ...locations
+            .map(location => toNumberOrNull(location.entry_id))
+            .filter((id): id is number => id !== null),
+        ]);
         const visibleEntries = entries.filter(entry => (
           !allAssignedEntryIds.has(toNumberOrNull(entry.id) ?? entry.id)
         ));
