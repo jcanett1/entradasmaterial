@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,13 +14,19 @@ import { KitteoPage } from './KitteoPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
-  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine,
+  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
 type MainTab = 'inventario' | 'racks' | 'kitteo';
 type RackSubTab = 'locaciones' | 'salidas';
+
+const toEntryId = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
@@ -44,6 +50,7 @@ export function Dashboard() {
   const [assignedEntryIds, setAssignedEntryIds] = useState<Set<number>>(new Set());
   // Mapa de entry_id → location_code para mostrar la leyenda
   const [assignedEntryLocations, setAssignedEntryLocations] = useState<Record<number, string>>({});
+  const [assignedEntriesError, setAssignedEntriesError] = useState<string | null>(null);
 
   // ── Selección múltiple ──
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -60,41 +67,67 @@ export function Dashboard() {
       .select('*')
       .order('registered_at', { ascending: false });
     if (error) console.error('Error fetching records:', error);
-    else setRecords(data ?? []);
+    else {
+      const normalizedRecords = (data ?? []).map(record => ({
+        ...record,
+        id: toEntryId(record.id) ?? record.id,
+      })) as Entry[];
+      setRecords(normalizedRecords);
+    }
     setLoading(false);
     setTimeout(() => setRefreshing(false), 600);
   };
 
   /* Fetch de entries asignados a locaciones */
-  const fetchAssignedEntries = async () => {
-    const { data } = await supabase
-      .from('location_items')
-      .select('entry_id, location_code');
-    if (data) {
-      const ids = new Set<number>();
-      const locMap: Record<number, string> = {};
-      (data as { entry_id: number | null; location_code: string }[]).forEach(row => {
-        if (row.entry_id !== null) {
-          ids.add(row.entry_id);
-          locMap[row.entry_id] = row.location_code;
-        }
-      });
-      setAssignedEntryIds(ids);
-      setAssignedEntryLocations(locMap);
+  const fetchAssignedEntries = useCallback(async () => {
+    setAssignedEntriesError(null);
+
+    const [itemsResult, locationsResult] = await Promise.all([
+      supabase.from('location_items').select('entry_id, location_code'),
+      supabase.from('locations').select('entry_id, location_code').not('entry_id', 'is', null),
+    ]);
+
+    if (itemsResult.error && locationsResult.error) {
+      console.error('Error consultando materiales asignados:', itemsResult.error, locationsResult.error);
+      setAssignedEntriesError(`No se pudieron actualizar los bloqueos: ${itemsResult.error.message}`);
+      return;
     }
-  };
+
+    if (itemsResult.error) {
+      console.warn('No se pudo leer location_items; se usarán los datos de locations:', itemsResult.error);
+      setAssignedEntriesError(`No se pudo leer location_items: ${itemsResult.error.message}`);
+    }
+
+    const rows = [
+      ...((itemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
+      ...((locationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
+    ];
+
+    const ids = new Set<number>();
+    const locMap: Record<number, string> = {};
+    rows.forEach(row => {
+      const entryId = toEntryId(row.entry_id);
+      if (entryId === null) return;
+      ids.add(entryId);
+      if (row.location_code) locMap[entryId] = row.location_code.trim();
+    });
+
+    setAssignedEntryIds(ids);
+    setAssignedEntryLocations(locMap);
+    setSelectedIds(prev => new Set([...prev].filter(id => !ids.has(id))));
+  }, []);
 
   useEffect(() => {
     fetchRecords();
     fetchAssignedEntries();
-  }, []);
+  }, [fetchAssignedEntries]);
 
   // Refrescar asignaciones cuando se cambia a la pestaña de inventario
   useEffect(() => {
     if (mainTab === 'inventario') {
       fetchAssignedEntries();
     }
-  }, [mainTab]);
+  }, [mainTab, fetchAssignedEntries]);
 
   /* =======================
      FILTER + STATS
@@ -300,6 +333,16 @@ export function Dashboard() {
         ══════════════════════════════ */}
         {mainTab === 'inventario' && (
           <>
+            {assignedEntriesError && (
+              <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+                <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-amber-800">No se pudieron actualizar todos los bloqueos</p>
+                  <p className="mt-1 text-xs text-amber-700">{assignedEntriesError}</p>
+                </div>
+              </div>
+            )}
+
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
               <StatCard icon={<ClipboardList className="h-6 w-6" />} label="Total Registros" value={stats.total} color="indigo" />
@@ -433,7 +476,7 @@ export function Dashboard() {
             </div>
 
             <div className="p-6">
-              {rackSubTab === 'locaciones' && <RacksPage />}
+              {rackSubTab === 'locaciones' && <RacksPage onAssignmentsChange={fetchAssignedEntries} />}
               {rackSubTab === 'salidas' && <ExitsPage />}
             </div>
           </div>

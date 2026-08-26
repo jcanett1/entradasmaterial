@@ -115,7 +115,11 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
 /* ════════════════════════════════════════════════════
    COMPONENTE PRINCIPAL
 ════════════════════════════════════════════════════ */
-export function RacksPage() {
+interface RacksPageProps {
+  onAssignmentsChange?: () => void | Promise<void>;
+}
+
+export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const { userProfile } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const [locations, setLocations] = useState<Location[]>([]);
@@ -481,6 +485,7 @@ export function RacksPage() {
       setSelectedEntries([]);
       setEntrySearch('');
       await fetchLocations();
+      await onAssignmentsChange?.();
     } catch (error) {
       console.error('Error asignando números de parte a la locación:', error);
       setSaveError(error instanceof Error ? error.message : 'No se pudo guardar la asignación. Intenta nuevamente.');
@@ -516,7 +521,8 @@ export function RacksPage() {
 
     setActionSaving(false);
     setDetailModal(null);
-    fetchLocations();
+    await fetchLocations();
+    await onAssignmentsChange?.();
   };
 
   /* ── Salida KITTEO item individual ── */
@@ -560,7 +566,8 @@ export function RacksPage() {
 
     setActionSaving(false);
     setDetailModal(null);
-    fetchLocations();
+    await fetchLocations();
+    await onAssignmentsChange?.();
   };
 
   /* ── Liberar toda la locación ── */
@@ -578,7 +585,8 @@ export function RacksPage() {
     }).eq('id', loc.id);
     setActionSaving(false);
     setDetailModal(null);
-    fetchLocations();
+    await fetchLocations();
+    await onAssignmentsChange?.();
   };
 
   if (loading) {
