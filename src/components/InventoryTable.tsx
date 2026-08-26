@@ -101,6 +101,9 @@ export function InventoryTable({
               <th className="px-4 py-3.5 border-b border-gray-200 w-10">
                 <div className="flex items-center justify-center">
                   <input
+                    id="inventory-select-all"
+                    name="inventory_select_all"
+                    aria-label="Seleccionar todos los registros de esta página"
                     type="checkbox"
                     checked={allPageSelected}
                     ref={(el) => {
@@ -156,6 +159,9 @@ export function InventoryTable({
                         </span>
                       ) : (
                         <input
+                          id={`inventory-select-${record.id}`}
+                          name={`inventory_select_${record.id}`}
+                          aria-label={`Seleccionar ${record.part_number}`}
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => onToggleSelect(record.id)}

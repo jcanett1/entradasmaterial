@@ -547,8 +547,8 @@ export function RacksPage() {
         </div>
         <div className="relative ml-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-          <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-            placeholder="Buscar locación, part number, PO..."
+          <input id="rack-location-search" name="rack_location_search" type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+            aria-label="Buscar locación, número de parte o PO" placeholder="Buscar locación, part number, PO..."
             className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50 w-64" />
         </div>
         <button onClick={fetchLocations}
@@ -910,12 +910,12 @@ export function RacksPage() {
 
                     {/* Búsqueda */}
                     <div>
-                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
+                      <label htmlFor="rack-entry-search" className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
                         Buscar registro de inventario
                       </label>
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-                        <input type="text" value={entrySearch} onChange={e => setEntrySearch(e.target.value)}
+                        <input id="rack-entry-search" name="rack_entry_search" type="text" value={entrySearch} onChange={e => setEntrySearch(e.target.value)}
                           placeholder="Part Number o descripción..."
                           className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50" />
                       </div>

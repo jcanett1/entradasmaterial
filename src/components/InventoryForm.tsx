@@ -201,14 +201,14 @@ export function InventoryForm({ record, userEmail, onSave, onCancel }: Inventory
 
       {/* Part Number */}
       <div ref={dropdownRef} className="relative">
-        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
-          <Hash className="h-3.5 w-3.5 text-indigo-400" />
+          <label htmlFor="inventory-part-number" className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+            <Hash className="h-3.5 w-3.5 text-indigo-400" />
           Part Number <span className="text-red-400">*</span>
         </label>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
           {loadingSuggestions && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-indigo-400 animate-spin pointer-events-none" />}
-          <input type="text" value={searchTerm} onChange={handleSearchChange}
+          <input id="inventory-part-number" name="part_number" type="text" value={searchTerm} onChange={handleSearchChange}
             onFocus={() => { if (suggestions.length > 0 && !partSelected) setShowDropdown(true); }}
             placeholder="Buscar por número de parte o descripción..."
             className={`w-full pl-10 pr-10 py-2.5 border rounded-xl text-sm transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent bg-gray-50 ${
@@ -238,11 +238,11 @@ export function InventoryForm({ record, userEmail, onSave, onCancel }: Inventory
 
       {/* Descripción */}
       <div>
-        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+        <label htmlFor="inventory-description" className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
           <FileText className="h-3.5 w-3.5 text-indigo-400" />
           Descripción <span className="text-red-400">*</span>
         </label>
-        <textarea name="description" value={formData.description ?? ''} onChange={handleChange} rows={2}
+        <textarea id="inventory-description" name="description" value={formData.description ?? ''} onChange={handleChange} rows={2}
           placeholder="Se llena automáticamente al seleccionar un Part Number..."
           className={inputClass('description') + ' resize-none'} />
         {errors.description && <p className="text-red-500 text-xs mt-1.5 flex items-center gap-1"><span>⚠</span> {errors.description}</p>}
@@ -250,20 +250,20 @@ export function InventoryForm({ record, userEmail, onSave, onCancel }: Inventory
 
       {/* PO */}
       <div>
-        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+        <label htmlFor="inventory-po" className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
           <ClipboardList className="h-3.5 w-3.5 text-purple-400" />
           PO (Orden de Compra)
         </label>
-        <input name="po" value={formData.po ?? ''} onChange={handleChange} placeholder="Ej. PO-2024-001" className={inputClass('po')} />
+        <input id="inventory-po" name="po" value={formData.po ?? ''} onChange={handleChange} placeholder="Ej. PO-2024-001" className={inputClass('po')} />
       </div>
 
       {/* Unidad de Medida */}
       <div>
-        <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+        <label htmlFor="inventory-unit-of-measure" className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
           <Ruler className="h-3.5 w-3.5 text-amber-400" />
           Unidad de Medida <span className="text-red-400">*</span>
         </label>
-        <select name="unit_of_measure" value={formData.unit_of_measure ?? 'Caja'} onChange={handleChange}
+        <select id="inventory-unit-of-measure" name="unit_of_measure" value={formData.unit_of_measure ?? 'Caja'} onChange={handleChange}
           className={inputClass('unit_of_measure') + ' cursor-pointer'}>
           <option value="">Seleccionar unidad...</option>
           {unitOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
@@ -329,7 +329,7 @@ export function InventoryForm({ record, userEmail, onSave, onCancel }: Inventory
               <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-start">
                 {/* QTY */}
                 <div>
-                  <input type="number" value={line.total_units} min={0} placeholder="QTY"
+                  <input id={`inventory-qty-${line.id}`} name={`total_units_${line.id}`} type="number" value={line.total_units} min={0} placeholder="QTY"
                     onChange={(e) => updateLine(line.id, 'total_units', Number(e.target.value))}
                     className={`w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white transition-all ${lineErrors[`${line.id}_units`] ? 'border-red-400' : 'border-gray-200'}`} />
                   {lineErrors[`${line.id}_units`] && <p className="text-red-500 text-xs mt-1">{lineErrors[`${line.id}_units`]}</p>}
@@ -337,7 +337,7 @@ export function InventoryForm({ record, userEmail, onSave, onCancel }: Inventory
 
                 {/* Cajas */}
                 <div>
-                  <input type="number" value={line.total_boxes} min={0} placeholder="Cajas"
+                  <input id={`inventory-boxes-${line.id}`} name={`total_boxes_${line.id}`} type="number" value={line.total_boxes} min={0} placeholder="Cajas"
                     onChange={(e) => updateLine(line.id, 'total_boxes', Number(e.target.value))}
                     className={`w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white transition-all ${lineErrors[`${line.id}_boxes`] ? 'border-red-400' : 'border-gray-200'}`} />
                   {lineErrors[`${line.id}_boxes`] && <p className="text-red-500 text-xs mt-1">{lineErrors[`${line.id}_boxes`]}</p>}
@@ -346,15 +346,15 @@ export function InventoryForm({ record, userEmail, onSave, onCancel }: Inventory
                 {/* Repetir: checkbox + número */}
                 <div className="flex flex-col items-center gap-1 pt-1">
                   {/* Checkbox */}
-                  <label className="flex items-center gap-1 cursor-pointer select-none" title="Repetir esta cantidad N veces">
-                    <input type="checkbox" checked={line.repeat}
+                  <label htmlFor={`inventory-repeat-${line.id}`} className="flex items-center gap-1 cursor-pointer select-none" title="Repetir esta cantidad N veces">
+                    <input id={`inventory-repeat-${line.id}`} name={`repeat_${line.id}`} type="checkbox" checked={line.repeat}
                       onChange={(e) => updateLine(line.id, 'repeat', e.target.checked)}
                       className="w-4 h-4 rounded accent-amber-500 cursor-pointer" />
                     <span className="text-xs text-gray-500 font-medium">x</span>
                   </label>
                   {/* Número de repeticiones */}
                   {line.repeat && (
-                    <input type="number" value={line.repeat_count} min={2} max={999}
+                    <input id={`inventory-repeat-count-${line.id}`} name={`repeat_count_${line.id}`} type="number" value={line.repeat_count} min={2} max={999}
                       onChange={(e) => updateLine(line.id, 'repeat_count', Math.max(2, Number(e.target.value)))}
                       className="w-14 px-2 py-1.5 border border-amber-300 rounded-lg text-sm text-center font-bold text-amber-700 bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-400" />
                   )}

@@ -105,12 +105,14 @@ export function Login() {
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                <label htmlFor="login-email" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
                   Correo electrónico
                 </label>
                 <div className="relative">
                   <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input
+                    id="login-email"
+                    name="email"
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -123,12 +125,14 @@ export function Login() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                <label htmlFor="login-password" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
                   Contraseña
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input
+                    id="login-password"
+                    name="password"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
