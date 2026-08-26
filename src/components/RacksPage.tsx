@@ -59,6 +59,15 @@ interface EntryOption {
 const normalizePartNumber = (partNumber: string | null | undefined) =>
   (partNumber ?? '').trim().toUpperCase();
 
+const normalizeLocationCode = (locationCode: string | null | undefined) =>
+  (locationCode ?? '').trim().toUpperCase();
+
+const toNumberOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const getUniquePartNumberSet = (partNumbers: string[]) =>
   new Set(partNumbers.map(normalizePartNumber).filter(Boolean));
 
@@ -125,6 +134,7 @@ export function RacksPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [entriesLoadError, setEntriesLoadError] = useState<string | null>(null);
+  const [locationsLoadError, setLocationsLoadError] = useState<string | null>(null);
   const fetchEntriesRequest = useRef(0);
 
   // Modal detalle
@@ -136,46 +146,120 @@ export function RacksPage() {
   /* ── Fetch ── */
   const fetchLocations = useCallback(async () => {
     setRefreshing(true);
-    const { data: locsData } = await supabase
-      .from('locations')
-      .select('*')
-      .order('rack', { ascending: true })
-      .order('location_code', { ascending: true });
+    setLocationsLoadError(null);
 
-    const locs: Location[] = (locsData as Location[]) ?? [];
+    try {
+      const { data: locsData, error: locationsError } = await supabase
+        .from('locations')
+        .select('*')
+        .order('rack', { ascending: true })
+        .order('location_code', { ascending: true });
 
-    const { data: itemsData } = await supabase
-      .from('location_items')
-      .select('*')
-      .order('assigned_at', { ascending: true });
+      if (locationsError) {
+        throw new Error(`No se pudieron cargar las locaciones: ${locationsError.message}`);
+      }
 
-    const rawItems = (itemsData as Omit<LocationItem, 'boxes'>[]) ?? [];
+      const locs: Location[] = ((locsData as Location[]) ?? []).map(loc => ({
+        ...loc,
+        id: toNumberOrNull(loc.id) ?? loc.id,
+        entry_id: toNumberOrNull(loc.entry_id),
+      }));
 
-    const entryIds = [...new Set(rawItems.map(i => i.entry_id).filter((id): id is number => id !== null))];
-    const boxesMap: Record<number, number> = {};
-    if (entryIds.length > 0) {
-      const { data: entriesData } = await supabase
-        .from('entries')
-        .select('id, total_boxes')
-        .in('id', entryIds);
-      (entriesData ?? []).forEach((e: { id: number; total_boxes: number }) => {
-        boxesMap[e.id] = e.total_boxes;
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('location_items')
+        .select('*')
+        .order('assigned_at', { ascending: true });
+
+      if (itemsError) {
+        console.error('Error cargando location_items:', itemsError);
+        setLocationsLoadError(`Las asignaciones se guardan, pero no se pueden leer desde location_items: ${itemsError.message}`);
+      }
+
+      const rawItems = itemsError
+        ? []
+        : ((itemsData as Omit<LocationItem, 'boxes'>[]) ?? []).map(item => ({
+            ...item,
+            id: toNumberOrNull(item.id) ?? item.id,
+            location_id: toNumberOrNull(item.location_id) ?? item.location_id,
+            entry_id: toNumberOrNull(item.entry_id),
+          }));
+
+      const entryIds = [...new Set(rawItems.map(item => item.entry_id).filter((id): id is number => id !== null))];
+      const boxesMap: Record<number, number> = {};
+      if (entryIds.length > 0) {
+        const { data: entriesData, error: entriesError } = await supabase
+          .from('entries')
+          .select('id, total_boxes')
+          .in('id', entryIds);
+
+        if (entriesError) {
+          console.warn('No se pudieron cargar las cajas de los registros asignados:', entriesError);
+        }
+
+        (entriesData ?? []).forEach((entry: { id: number; total_boxes: number }) => {
+          const entryId = toNumberOrNull(entry.id);
+          if (entryId !== null) boxesMap[entryId] = entry.total_boxes;
+        });
+      }
+
+      const items: LocationItem[] = rawItems.map(item => ({
+        ...item,
+        boxes: item.entry_id !== null ? (boxesMap[item.entry_id] ?? 0) : 0,
+      }));
+
+      const itemsByLocationId = new Map<number, LocationItem[]>();
+      const itemsByLocationCode = new Map<string, LocationItem[]>();
+      items.forEach(item => {
+        const byId = itemsByLocationId.get(item.location_id) ?? [];
+        byId.push(item);
+        itemsByLocationId.set(item.location_id, byId);
+
+        const code = normalizeLocationCode(item.location_code);
+        if (code) {
+          const byCode = itemsByLocationCode.get(code) ?? [];
+          byCode.push(item);
+          itemsByLocationCode.set(code, byCode);
+        }
       });
+
+      const locsWithItems = locs.map(loc => {
+        const normalizedLocId = toNumberOrNull(loc.id);
+        const code = normalizeLocationCode(loc.location_code);
+        const relatedItems = normalizedLocId !== null
+          ? (itemsByLocationId.get(normalizedLocId) ?? itemsByLocationCode.get(code) ?? [])
+          : (itemsByLocationCode.get(code) ?? []);
+
+        if (relatedItems.length > 0 || !loc.part_number) {
+          return { ...loc, items: relatedItems };
+        }
+
+        // Respaldo para bases donde locations sí se actualiza pero location_items no es legible.
+        const legacyEntryId = toNumberOrNull(loc.entry_id);
+        return {
+          ...loc,
+          items: [{
+            id: -(normalizedLocId ?? 0),
+            location_id: normalizedLocId ?? 0,
+            location_code: loc.location_code,
+            entry_id: legacyEntryId,
+            part_number: loc.part_number,
+            po: loc.po,
+            qty: loc.qty ?? 0,
+            boxes: legacyEntryId !== null ? (boxesMap[legacyEntryId] ?? 0) : 0,
+            fifo_number: null,
+            assigned_at: loc.assigned_at ?? new Date(0).toISOString(),
+          }],
+        };
+      });
+
+      setLocations(locsWithItems);
+    } catch (error) {
+      console.error('Error cargando racks y locaciones:', error);
+      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudieron cargar los racks.');
+    } finally {
+      setLoading(false);
+      setTimeout(() => setRefreshing(false), 500);
     }
-
-    const items: LocationItem[] = rawItems.map(item => ({
-      ...item,
-      boxes: item.entry_id ? (boxesMap[item.entry_id] ?? 0) : 0,
-    }));
-
-    const locsWithItems = locs.map(loc => ({
-      ...loc,
-      items: items.filter(it => it.location_id === loc.id),
-    }));
-
-    setLocations(locsWithItems);
-    setLoading(false);
-    setTimeout(() => setRefreshing(false), 500);
   }, []);
 
   useEffect(() => { fetchLocations(); }, [fetchLocations]);
@@ -508,6 +592,24 @@ export function RacksPage() {
 
   return (
     <div className="space-y-5">
+      {locationsLoadError && (
+        <div role="alert" className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-amber-800">Problema al leer las asignaciones de los racks</p>
+            <p className="mt-1 break-words text-xs text-amber-700">{locationsLoadError}</p>
+            <button
+              type="button"
+              onClick={fetchLocations}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-100"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Reintentar lectura
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Stats globales */}
       <div className="grid grid-cols-3 gap-4">
         {[
