@@ -67,12 +67,6 @@ const normalizePartNumber = (partNumber: string | null | undefined) =>
 const normalizeLocationCode = (locationCode: string | null | undefined) =>
   (locationCode ?? '').trim().toUpperCase();
 
-const normalizePo = (po: string | null | undefined) =>
-  (po ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toUpperCase();
-
-const getPartPoKey = (partNumber: string | null | undefined, po: string | null | undefined) =>
-  `${normalizePartNumber(partNumber)}|${normalizePo(po)}`;
-
 const toNumberOrNull = (value: unknown): number | null => {
   if (value === null || value === undefined || value === '') return null;
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -202,57 +196,30 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
       const entryIds = [...new Set(rawItems.map(item => item.entry_id).filter((id): id is number => id !== null))];
       const boxesMap: Record<number, number> = Object.fromEntries(entryBoxesCache.current.entries());
-      const boxesByPartPo: Record<string, number> = {};
-      const partNumbers = [...new Set(
-        rawItems
-          .map(item => item.part_number)
-          .filter((partNumber): partNumber is string => Boolean(partNumber)),
-      )];
-      const entriesData: unknown[] = [];
-      const entriesErrors: string[] = [];
-      if (partNumbers.length > 0) {
-        const queries = [
-          supabase
-            .from('entries')
-            .select('id, part_number, po, total_boxes')
-            .in('part_number', partNumbers),
-        ];
-        if (entryIds.length > 0) {
-          queries.push(
-            supabase
-              .from('entries')
-              .select('id, part_number, po, total_boxes')
-              .in('id', entryIds),
-          );
+
+      if (entryIds.length > 0) {
+        const { data: entriesData, error: entriesError } = await supabase
+          .from('entries')
+          .select('id, total_boxes')
+          .in('id', entryIds);
+
+        if (entriesError) {
+          console.warn('No se pudieron cargar las cajas de los registros asignados:', entriesError);
+          setLocationsLoadError(prev => prev
+            ? `${prev} No se pudieron cargar las cajas desde entries: ${entriesError.message}`
+            : `Las asignaciones se cargaron, pero no se pudieron cargar las cajas desde entries: ${entriesError.message}`);
         }
-        const results = await Promise.all(queries);
-        results.forEach(result => {
-          if (result.error) entriesErrors.push(result.error.message);
-          else entriesData.push(...(result.data ?? []));
+
+        (entriesData ?? []).forEach((entry: { id: unknown; total_boxes: unknown }) => {
+          const entryId = toNumberOrNull(entry.id);
+          const totalBoxes = toNumberOrNull(entry.total_boxes);
+          if (entryId !== null && totalBoxes !== null) boxesMap[entryId] = totalBoxes;
         });
       }
 
-      if (entriesErrors.length > 0) {
-        const errorMessage = [...new Set(entriesErrors)].join(' | ');
-        console.warn('No se pudieron cargar las cajas de los registros asignados:', errorMessage);
-        setLocationsLoadError(prev => prev
-          ? `${prev} No se pudieron cargar las cajas desde entries: ${errorMessage}`
-          : `Las asignaciones se cargaron, pero no se pudieron cargar las cajas desde entries: ${errorMessage}`);
-      }
-
-      entriesData.forEach((entry: { id: unknown; part_number: string | null; po: string | null; total_boxes: unknown }) => {
-        const entryId = toNumberOrNull(entry.id);
-        const totalBoxes = toNumberOrNull(entry.total_boxes);
-        if (totalBoxes === null) return;
-        if (entryId !== null) boxesMap[entryId] = totalBoxes;
-        boxesByPartPo[getPartPoKey(entry.part_number, entry.po)] = totalBoxes;
-      });
-
       const items: LocationItem[] = rawItems.map(item => ({
         ...item,
-        boxes: item.entry_id !== null
-          ? (boxesMap[item.entry_id] ?? boxesByPartPo[getPartPoKey(item.part_number, item.po)] ?? 0)
-          : (boxesByPartPo[getPartPoKey(item.part_number, item.po)] ?? 0),
+        boxes: item.entry_id !== null ? (boxesMap[item.entry_id] ?? 0) : 0,
       }));
 
       const itemsByLocationId = new Map<number, LocationItem[]>();
@@ -515,7 +482,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           part_number: entry.part_number,
           po: entry.po,
           qty: entry.total_units,
-          boxes: entry.total_boxes,
           fifo_number: fifoError ? null : (fifoLabel?.fifo_number ?? null),
           assigned_at: assignedAt,
         });
