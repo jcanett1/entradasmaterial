@@ -164,6 +164,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
   // Modal detalle
   const [detailModal, setDetailModal] = useState<Location | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailLoadError, setDetailLoadError] = useState<string | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
 
   const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
@@ -324,6 +326,55 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   }, []);
 
   useEffect(() => { fetchLocations(); }, [fetchLocations]);
+
+  const openLocationDetail = async (location: Location) => {
+    setDetailLoadError(null);
+    setDetailLoading(true);
+    setDetailModal(location);
+
+    const items = location.items ?? [];
+    const entryIds = [...new Set(
+      items
+        .map(item => toNumberOrNull(item.entry_id))
+        .filter((id): id is number => id !== null),
+    )];
+
+    if (entryIds.length === 0) {
+      setDetailLoading(false);
+      return;
+    }
+
+    const { data: entriesData, error: entriesError } = await supabase
+      .from('entries')
+      .select('id, total_boxes')
+      .in('id', entryIds);
+
+    if (entriesError) {
+      console.error('Error actualizando cajas del detalle:', entriesError);
+      setDetailLoadError(`No se pudieron actualizar las cajas desde entries: ${entriesError.message}`);
+      setDetailLoading(false);
+      return;
+    }
+
+    const boxesByEntryId: Record<number, number> = {};
+    (entriesData ?? []).forEach((entry: { id: unknown; total_boxes: unknown }) => {
+      const entryId = toNumberOrNull(entry.id);
+      const totalBoxes = toNumberOrNull(entry.total_boxes);
+      if (entryId !== null && totalBoxes !== null) boxesByEntryId[entryId] = totalBoxes;
+    });
+
+    const hydratedItems = items.map(item => {
+      const entryId = toNumberOrNull(item.entry_id);
+      return {
+        ...item,
+        entry_id: entryId,
+        boxes: entryId !== null ? (boxesByEntryId[entryId] ?? item.boxes) : item.boxes,
+      };
+    });
+
+    setDetailModal({ ...location, items: hydratedItems });
+    setDetailLoading(false);
+  };
 
   /* ── Fetch entries para el modal (excluye los ya asignados a alguna locación) ── */
   const fetchEntries = useCallback(async (term: string) => {
@@ -796,7 +847,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                   {rackLocs.map(loc => (
                     <LocationCell key={loc.id} loc={loc} colors={c}
                       onAssign={() => setAssignModal(loc)}
-                      onDetail={() => setDetailModal(loc)} />
+                      onDetail={() => openLocationDetail(loc)} />
                   ))}
                 </div>
               </div>
@@ -874,11 +925,23 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                   </div>
                 </div>
               </div>
-              <button onClick={() => setDetailModal(null)}
+              <button onClick={() => { setDetailModal(null); setDetailLoadError(null); }}
                 className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {detailLoading && (
+              <div className="mx-6 mt-3 flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Actualizando cajas desde Inventario...
+              </div>
+            )}
+            {detailLoadError && (
+              <div role="alert" className="mx-6 mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                <span className="font-bold">No se pudieron actualizar las cajas:</span> {detailLoadError}
+              </div>
+            )}
 
             {/* Resumen de inventario de la locación — QTY TOTAL, CAJAS TOTAL y lista de part numbers */}
             {(detailModal.items?.length ?? 0) > 0 && (() => {
