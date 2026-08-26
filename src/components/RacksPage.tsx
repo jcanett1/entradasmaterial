@@ -139,7 +139,7 @@ interface RacksPageProps {
 }
 
 export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
-  const { userProfile } = useAuth();
+  const { userProfile, loading: authLoading } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
@@ -325,7 +325,9 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
   }, []);
 
-  useEffect(() => { fetchLocations(); }, [fetchLocations]);
+  useEffect(() => {
+    if (!authLoading && userProfile) fetchLocations();
+  }, [authLoading, userProfile, fetchLocations]);
 
   const openLocationDetail = async (location: Location) => {
     setDetailLoadError(null);
