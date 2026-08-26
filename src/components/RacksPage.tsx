@@ -275,7 +275,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     const { data: assignedData, error: assignedError } = await supabase
       .from('location_items')
-      .select('entry_id');
+      .select('entry_id, part_number');
 
     if (assignedError) {
       if (requestId !== fetchEntriesRequest.current) return;
@@ -285,11 +285,15 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       return;
     }
 
-    const assignedIds = new Set(
-      (assignedData ?? [])
-        .map((row: { entry_id: number | null }) => row.entry_id)
-        .filter((id): id is number => id !== null),
-    );
+    const assignedIds = new Set<number>();
+    const assignedPartNumbers = new Set<string>();
+    ((assignedData ?? []) as { entry_id: unknown; part_number: string | null }[]).forEach(row => {
+      const entryId = toNumberOrNull(row.entry_id);
+      if (entryId !== null) assignedIds.add(entryId);
+
+      const partNumber = normalizePartNumber(row.part_number);
+      if (partNumber) assignedPartNumbers.add(partNumber);
+    });
 
     let query = supabase
       .from('entries')
@@ -311,7 +315,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     if (requestId !== fetchEntriesRequest.current) return;
 
     // Filtrar localmente evita una URL NOT IN demasiado grande cuando hay muchas asignaciones.
-    setEntries((data as EntryOption[] ?? []).filter(entry => !assignedIds.has(entry.id)));
+    // Un número de parte asignado en cualquier rack deja de estar disponible globalmente.
+    const availableEntries = ((data as EntryOption[]) ?? [])
+      .map(entry => ({ ...entry, id: toNumberOrNull(entry.id) ?? entry.id }))
+      .filter(entry => (
+        !assignedIds.has(entry.id)
+        && !assignedPartNumbers.has(normalizePartNumber(entry.part_number))
+      ));
+    setEntries(availableEntries);
   }, []);
 
   useEffect(() => {
@@ -407,6 +418,26 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setSaveError(null);
 
     try {
+      const selectedPartNumberSet = getUniquePartNumberSet(
+        selectedEntriesList.map(entry => entry.part_number),
+      );
+      const { data: latestAssignments, error: assignmentsError } = await supabase
+        .from('location_items')
+        .select('part_number, location_code');
+
+      if (assignmentsError) {
+        throw new Error(`No se pudo validar si el material ya estaba asignado: ${assignmentsError.message}`);
+      }
+
+      const conflict = ((latestAssignments ?? []) as { part_number: string; location_code: string | null }[])
+        .find(item => selectedPartNumberSet.has(normalizePartNumber(item.part_number)));
+      if (conflict) {
+        const conflictPartNumber = normalizePartNumber(conflict.part_number);
+        throw new Error(
+          `El número de parte ${conflictPartNumber} ya está asignado${conflict.location_code ? ` a ${conflict.location_code}` : ''}.`,
+        );
+      }
+
       const assignedAt = new Date().toISOString();
       const locationItems = [];
 
