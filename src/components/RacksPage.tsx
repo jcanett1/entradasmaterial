@@ -151,6 +151,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [entriesLoadError, setEntriesLoadError] = useState<string | null>(null);
   const [locationsLoadError, setLocationsLoadError] = useState<string | null>(null);
   const fetchEntriesRequest = useRef(0);
+  const fetchLocationsRequest = useRef(0);
   const entryBoxesCache = useRef(new Map<number, number>());
 
   // Modal detalle
@@ -161,6 +162,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
   /* ── Fetch ── */
   const fetchLocations = useCallback(async () => {
+    const requestId = ++fetchLocationsRequest.current;
     setRefreshing(true);
     setLocationsLoadError(null);
 
@@ -301,13 +303,19 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         };
       });
 
-      setLocations(locsWithItems);
+      if (requestId === fetchLocationsRequest.current) {
+        setLocations(locsWithItems);
+      }
     } catch (error) {
-      console.error('Error cargando racks y locaciones:', error);
-      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudieron cargar los racks.');
+      if (requestId === fetchLocationsRequest.current) {
+        console.error('Error cargando racks y locaciones:', error);
+        setLocationsLoadError(error instanceof Error ? error.message : 'No se pudieron cargar los racks.');
+      }
     } finally {
-      setLoading(false);
-      setTimeout(() => setRefreshing(false), 500);
+      if (requestId === fetchLocationsRequest.current) {
+        setLoading(false);
+        setTimeout(() => setRefreshing(false), 500);
+      }
     }
   }, []);
 
