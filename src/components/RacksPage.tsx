@@ -171,6 +171,44 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
   /* ── Fetch ── */
+  const hydrateLocationBoxes = useCallback(async (sourceLocations: Location[]) => {
+    const entryIds = [...new Set(sourceLocations.flatMap(location => [
+      toNumberOrNull(location.entry_id),
+      ...(location.items ?? []).map(item => toNumberOrNull(item.entry_id)),
+    ]).filter((id): id is number => id !== null))];
+    if (entryIds.length === 0) return;
+
+    const { data: entriesData, error: entriesError } = await supabase
+      .from('entries')
+      .select('id, total_boxes')
+      .in('id', entryIds);
+
+    if (entriesError) {
+      console.error('Error hidratando cajas para las tarjetas:', entriesError);
+      setLocationsLoadError(`No se pudieron actualizar las cajas de las tarjetas: ${entriesError.message}`);
+      return;
+    }
+
+    const boxesByEntryId: Record<number, number> = {};
+    (entriesData ?? []).forEach((entry: { id: unknown; total_boxes: unknown }) => {
+      const entryId = toNumberOrNull(entry.id);
+      const totalBoxes = toNumberOrNull(entry.total_boxes);
+      if (entryId !== null && totalBoxes !== null) boxesByEntryId[entryId] = totalBoxes;
+    });
+
+    setLocations(previousLocations => previousLocations.map(location => ({
+      ...location,
+      items: (location.items ?? []).map(item => {
+        const entryId = toNumberOrNull(item.entry_id);
+        return {
+          ...item,
+          entry_id: entryId,
+          boxes: entryId !== null ? (boxesByEntryId[entryId] ?? item.boxes) : item.boxes,
+        };
+      }),
+    })));
+  }, []);
+
   const fetchLocations = useCallback(async () => {
     const requestId = ++fetchLocationsRequest.current;
     setRefreshing(true);
@@ -329,6 +367,18 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       }
     }
   }, []);
+
+  const boxHydrationSignature = locations
+    .map(location => `${location.id}:${(location.items ?? []).map(item => item.entry_id ?? '').join(',')}`)
+    .join('|');
+  const lastHydratedSignature = useRef('');
+
+  useEffect(() => {
+    if (authLoading || !userProfile || loading || !boxHydrationSignature) return;
+    if (lastHydratedSignature.current === boxHydrationSignature) return;
+    lastHydratedSignature.current = boxHydrationSignature;
+    void hydrateLocationBoxes(locations);
+  }, [authLoading, userProfile, loading, boxHydrationSignature, hydrateLocationBoxes, locations]);
 
   useEffect(() => {
     if (!authLoading && userProfile) fetchLocations();
