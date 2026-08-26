@@ -122,6 +122,7 @@ export function RacksPage() {
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<number>>(new Set());
   const [entrySearch, setEntrySearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Modal detalle
   const [detailModal, setDetailModal] = useState<Location | null>(null);
@@ -201,6 +202,7 @@ export function RacksPage() {
 
   useEffect(() => {
     if (assignModal) {
+      setSaveError(null);
       fetchEntries('');
       setSelectedEntryIds(new Set());
     }
@@ -267,6 +269,7 @@ export function RacksPage() {
   /* ── Asignar múltiples entries ── */
   const handleAssign = async () => {
     if (!assignModal || selectedEntryIds.size === 0) return;
+
     const currentItems = assignModal.items ?? [];
     const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
     const selectedEntriesList = entries.filter(e => selectedEntryIds.has(e.id));
@@ -275,50 +278,89 @@ export function RacksPage() {
       ...selectedEntriesList.map(entry => normalizePartNumber(entry.part_number)),
     ]).size;
 
-    if (projectedPartNumberCount > MAX_ITEMS) return;
-
-    setSaving(true);
-
-    for (let i = 0; i < selectedEntriesList.length; i++) {
-      const entry = selectedEntriesList[i];
-
-      const { data: fifoLabel } = await supabase
-        .from('fifo_labels')
-        .select('fifo_number')
-        .eq('entry_id', entry.id)
-        .maybeSingle();
-      const fifoNumber = fifoLabel?.fifo_number ?? null;
-
-      await supabase.from('location_items').insert([{
-        location_id: assignModal.id,
-        location_code: assignModal.location_code,
-        entry_id: entry.id,
-        part_number: entry.part_number,
-        po: entry.po,
-        qty: entry.total_units,
-        fifo_number: fifoNumber,
-        assigned_at: new Date().toISOString(),
-      }]);
-
-      // Actualizar la tabla locations con el primer item (compatibilidad)
-      const isFirstItem = currentItems.length === 0 && i === 0;
-      if (isFirstItem) {
-        await supabase.from('locations').update({
-          status: 'ocupado',
-          entry_id: entry.id,
-          part_number: entry.part_number,
-          qty: entry.total_units,
-          po: entry.po,
-          assigned_at: new Date().toISOString(),
-        }).eq('id', assignModal.id);
-      }
+    if (projectedPartNumberCount > MAX_ITEMS) {
+      setSaveError(`No se puede superar el máximo de ${MAX_ITEMS} números de parte distintos por locación.`);
+      return;
     }
 
-    setSaving(false);
-    setAssignModal(null);
-    setSelectedEntryIds(new Set());
-    setEntrySearch('');
-    fetchLocations();
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const assignedAt = new Date().toISOString();
+      const locationItems = [];
+
+      for (const entry of selectedEntriesList) {
+        // limit(1) evita que un registro histórico duplicado en fifo_labels bloquee la asignación.
+        const { data: fifoLabel, error: fifoError } = await supabase
+          .from('fifo_labels')
+          .select('fifo_number')
+          .eq('entry_id', entry.id)
+          .order('fifo_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (fifoError) {
+          throw new Error(`No se pudo consultar el FIFO de ${entry.part_number}: ${fifoError.message}`);
+        }
+
+        locationItems.push({
+          location_id: assignModal.id,
+          location_code: assignModal.location_code,
+          entry_id: entry.id,
+          part_number: entry.part_number,
+          po: entry.po,
+          qty: entry.total_units,
+          fifo_number: fifoLabel?.fifo_number ?? null,
+          assigned_at: assignedAt,
+        });
+      }
+
+      // Insertar en lote evita dejar la locación a medias si se seleccionan varios registros.
+      const { data: insertedItems, error: itemsError } = await supabase
+        .from('location_items')
+        .insert(locationItems)
+        .select('id');
+
+      if (itemsError) {
+        throw new Error(`No se pudo guardar la asignación: ${itemsError.message}`);
+      }
+
+      const insertedItemIds = (insertedItems ?? []).map((item: { id: number }) => item.id);
+
+      // Mantener los campos heredados de locations sincronizados con el primer item.
+      if (currentItems.length === 0) {
+        const firstEntry = selectedEntriesList[0];
+        const { error: locationError } = await supabase
+          .from('locations')
+          .update({
+            status: 'ocupado',
+            entry_id: firstEntry.id,
+            part_number: firstEntry.part_number,
+            qty: firstEntry.total_units,
+            po: firstEntry.po,
+            assigned_at: assignedAt,
+          })
+          .eq('id', assignModal.id);
+
+        if (locationError) {
+          if (insertedItemIds.length > 0) {
+            await supabase.from('location_items').delete().in('id', insertedItemIds);
+          }
+          throw new Error(`No se pudo actualizar la locación: ${locationError.message}`);
+        }
+      }
+
+      setAssignModal(null);
+      setSelectedEntryIds(new Set());
+      setEntrySearch('');
+      await fetchLocations();
+    } catch (error) {
+      console.error('Error asignando números de parte a la locación:', error);
+      setSaveError(error instanceof Error ? error.message : 'No se pudo guardar la asignación. Intenta nuevamente.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   /* ── Liberar item individual ── */
@@ -757,7 +799,8 @@ export function RacksPage() {
                     </p>
                   </div>
                 </div>
-                <button onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); }}
+                <button
+                  onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); setSaveError(null); }}
                   className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
                   <X className="h-5 w-5" />
                 </button>
@@ -777,7 +820,7 @@ export function RacksPage() {
                     </div>
                   </div>
                   <button
-                    onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); }}
+                    onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); setSaveError(null); }}
                     className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                     Cerrar
                   </button>
@@ -802,6 +845,16 @@ export function RacksPage() {
                         Puedes seleccionar registros de hasta <strong>{available}</strong> número{available !== 1 ? 's' : ''} de parte diferentes
                       </p>
                     </div>
+
+                    {saveError && (
+                      <div role="alert" className="flex items-start gap-2.5 bg-red-50 border border-red-200 rounded-xl px-3 py-3">
+                        <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-red-700">No se pudo guardar la asignación</p>
+                          <p className="text-xs text-red-600 mt-1 break-words">{saveError}</p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Búsqueda */}
                     <div>
@@ -909,7 +962,7 @@ export function RacksPage() {
                   {/* Footer con botones */}
                   <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 flex gap-3">
                     <button type="button"
-                      onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); }}
+                      onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setEntrySearch(''); setSaveError(null); }}
                       className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                       Cancelar
                     </button>
