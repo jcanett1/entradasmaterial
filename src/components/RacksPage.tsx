@@ -83,6 +83,12 @@ const getEntrySelectionKey = (entryId: unknown, fifoNumber: unknown) => {
   return `${normalizedId ?? entryId}:${normalizedFifo ?? 'none'}`;
 };
 
+const getPartPoFifoKey = (
+  partNumber: string | null | undefined,
+  po: string | null | undefined,
+  fifoNumber: unknown,
+) => `${normalizePartNumber(partNumber)}|${normalizePo(po)}|${toNumberOrNull(fifoNumber) ?? 'none'}`;
+
 const normalizePo = (po: string | null | undefined) =>
   (po ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toUpperCase();
 
@@ -451,7 +457,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setEntriesLoadError(null);
 
     const [itemsAssignments, legacyAssignments] = await Promise.all([
-      supabase.from('location_items').select('entry_id, fifo_number'),
+      supabase.from('location_items').select('entry_id, fifo_number, part_number, po'),
       supabase.from('locations').select('entry_id'),
     ]);
 
@@ -472,9 +478,13 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
 
     const assignedSelectionKeys = new Set<string>();
-    ((itemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+    const assignedPartPoFifoKeys = new Set<string>();
+    ((itemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; part_number: string | null; po: string | null }[]).forEach(row => {
       if (toNumberOrNull(row.entry_id) !== null) {
         assignedSelectionKeys.add(getEntrySelectionKey(row.entry_id, row.fifo_number));
+      }
+      if (row.part_number && row.fifo_number !== null && row.fifo_number !== undefined) {
+        assignedPartPoFifoKeys.add(getPartPoFifoKey(row.part_number, row.po, row.fifo_number));
       }
     });
     ((legacyAssignments.data ?? []) as { entry_id: unknown }[]).forEach(row => {
@@ -543,7 +553,9 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         || (entry.description ?? '').toLowerCase().includes(searchValue)
         || (entry.po ?? '').toLowerCase().includes(searchValue)
         || String(entry.fifo_number ?? '').includes(searchValue);
-      return matchesSearch && !assignedSelectionKeys.has(entry.selection_key);
+      const isAssigned = assignedSelectionKeys.has(entry.selection_key)
+        || assignedPartPoFifoKeys.has(getPartPoFifoKey(entry.part_number, entry.po, entry.fifo_number));
+      return matchesSearch && !isAssigned;
     });
     setEntries(availableEntries);
   }, []);
@@ -661,17 +673,23 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       }
 
       const latestAssignments = [
-        ...((latestItemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; location_code: string | null }[]),
-        ...((latestLegacyAssignments.data ?? []).map(item => ({ ...item, fifo_number: null })) as { entry_id: unknown; fifo_number: unknown; location_code: string | null }[]),
+        ...((latestItemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; location_code: string | null; part_number?: string | null; po?: string | null }[]),
+        ...((latestLegacyAssignments.data ?? []).map(item => ({ ...item, fifo_number: null })) as { entry_id: unknown; fifo_number: unknown; location_code: string | null; part_number?: string | null; po?: string | null }[]),
       ];
       const conflict = latestAssignments.find(item => {
         const entryId = toNumberOrNull(item.entry_id);
-        if (entryId === null) return false;
-        const exactKeyMatch = selectedEntryKeys.has(getEntrySelectionKey(item.entry_id, item.fifo_number));
-        const legacyMatch = item.fifo_number === null
-          && selectedEntryIdSet.has(entryId)
-          && selectedEntriesList.some(entry => toNumberOrNull(entry.id) === entryId && entry.fifo_number === null);
-        return exactKeyMatch || legacyMatch;
+        const selectedEntry = selectedEntriesList.find(entry => {
+          const exactKeyMatch = selectedEntryKeys.has(getEntrySelectionKey(entry.id, item.fifo_number));
+          const partPoFifoMatch = Boolean(item.part_number && item.fifo_number !== null)
+            && getPartPoFifoKey(item.part_number, item.po, item.fifo_number)
+              === getPartPoFifoKey(entry.part_number, entry.po, entry.fifo_number);
+          const legacyMatch = item.fifo_number === null
+            && entry.fifo_number === null
+            && entryId !== null
+            && toNumberOrNull(entry.id) === entryId;
+          return exactKeyMatch || partPoFifoMatch || legacyMatch;
+        });
+        return Boolean(selectedEntry);
       });
       if (conflict) {
         throw new Error(
@@ -1209,8 +1227,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           ...locations
             .map(location => getEntrySelectionKey(location.entry_id, null)),
         ]);
+        const allAssignedPartPoFifoKeys = new Set(
+          allAssignedItems
+            .filter(item => item.fifo_number !== null)
+            .map(item => getPartPoFifoKey(item.part_number, item.po, item.fifo_number)),
+        );
         const visibleEntries = entries.filter(entry => (
           !allAssignedSelectionKeys.has(entry.selection_key)
+          && !allAssignedPartPoFifoKeys.has(getPartPoFifoKey(entry.part_number, entry.po, entry.fifo_number))
         ));
         const selectedList = selectedEntries;
         const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));
