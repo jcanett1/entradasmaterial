@@ -470,10 +470,40 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     const requestId = ++fetchEntriesRequest.current;
     setEntriesLoadError(null);
 
-    const [itemsAssignments, legacyAssignments] = await Promise.all([
-      supabase.from('location_items').select('entry_id, fifo_number, part_number, po, location_code'),
-      supabase.from('locations').select('entry_id, location_code, part_number, po'),
-    ]);
+    const pageSize = 1000;
+    const itemAssignmentRows: { entry_id: unknown; fifo_number: unknown; part_number: string | null; po: string | null; location_code?: string | null }[] = [];
+    const legacyAssignmentRows: { entry_id: unknown; location_code?: string | null }[] = [];
+    let itemsAssignmentError: { message: string } | null = null;
+    let legacyAssignmentError: { message: string } | null = null;
+
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from('location_items')
+        .select('entry_id, fifo_number, part_number, po, location_code')
+        .range(from, from + pageSize - 1);
+      if (error) {
+        itemsAssignmentError = error;
+        break;
+      }
+      itemAssignmentRows.push(...((data ?? []) as typeof itemAssignmentRows));
+      if ((data ?? []).length < pageSize) break;
+    }
+
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from('locations')
+        .select('entry_id, location_code, part_number, po')
+        .range(from, from + pageSize - 1);
+      if (error) {
+        legacyAssignmentError = error;
+        break;
+      }
+      legacyAssignmentRows.push(...((data ?? []) as typeof legacyAssignmentRows));
+      if ((data ?? []).length < pageSize) break;
+    }
+
+    const itemsAssignments = { data: itemAssignmentRows, error: itemsAssignmentError };
+    const legacyAssignments = { data: legacyAssignmentRows, error: legacyAssignmentError };
 
     if (itemsAssignments.error && legacyAssignments.error) {
       if (requestId !== fetchEntriesRequest.current) return;
