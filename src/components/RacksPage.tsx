@@ -90,6 +90,9 @@ const getPartPoFifoKey = (
   fifoNumber: unknown,
 ) => `${normalizePartNumber(partNumber)}|${normalizePo(po)}|${toNumberOrNull(fifoNumber) ?? 'none'}`;
 
+const isSameAssignment = (left: Pick<LocationItem, 'part_number' | 'po' | 'fifo_number'>, right: Pick<LocationItem, 'part_number' | 'po' | 'fifo_number'>) =>
+  getPartPoFifoKey(left.part_number, left.po, left.fifo_number) === getPartPoFifoKey(right.part_number, right.po, right.fifo_number);
+
 const normalizePo = (po: string | null | undefined) =>
   (po ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toUpperCase();
 
@@ -830,80 +833,111 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
   };
 
+  const deleteAssignmentRows = async (loc: Location, item: LocationItem) => {
+    let query = supabase
+      .from('location_items')
+      .delete()
+      .eq('location_id', loc.id)
+      .eq('part_number', item.part_number);
+
+    query = item.po === null ? query.is('po', null) : query.eq('po', item.po);
+    query = item.fifo_number === null ? query.is('fifo_number', null) : query.eq('fifo_number', item.fifo_number);
+    query = item.entry_id === null ? query.is('entry_id', null) : query.eq('entry_id', item.entry_id);
+
+    const { error } = await query;
+    if (error) throw new Error(`No se pudo liberar la asignación: ${error.message}`);
+  };
+
   /* ── Liberar item individual ── */
   const handleReleaseItem = async (loc: Location, item: LocationItem) => {
     setActionSaving(true);
-    await supabase.from('location_items').delete().eq('id', item.id);
+    try {
+      await deleteAssignmentRows(loc, item);
 
-    const remaining = (loc.items ?? []).filter(i => i.id !== item.id);
-    if (remaining.length === 0) {
-      await supabase.from('locations').update({
-        status: 'disponible',
-        entry_id: null,
-        part_number: null,
-        qty: null,
-        po: null,
-        assigned_at: null,
-      }).eq('id', loc.id);
-    } else {
-      const first = remaining[0];
-      await supabase.from('locations').update({
-        entry_id: first.entry_id,
-        part_number: first.part_number,
-        qty: first.qty,
-        po: first.po,
-      }).eq('id', loc.id);
+      const remaining = (loc.items ?? []).filter(i => !isSameAssignment(i, item));
+      if (remaining.length === 0) {
+        const { error } = await supabase.from('locations').update({
+          status: 'disponible',
+          entry_id: null,
+          part_number: null,
+          qty: null,
+          po: null,
+          assigned_at: null,
+        }).eq('id', loc.id);
+        if (error) throw new Error(`No se pudo liberar la locación: ${error.message}`);
+      } else {
+        const first = remaining[0];
+        const { error } = await supabase.from('locations').update({
+          entry_id: first.entry_id,
+          part_number: first.part_number,
+          qty: first.qty,
+          po: first.po,
+        }).eq('id', loc.id);
+        if (error) throw new Error(`No se pudo actualizar la locación: ${error.message}`);
+      }
+
+      setDetailModal(null);
+      await fetchLocations();
+      await onAssignmentsChange?.();
+    } catch (error) {
+      console.error('Error liberando asignación:', error);
+      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudo liberar la asignación.');
+    } finally {
+      setActionSaving(false);
     }
-
-    setActionSaving(false);
-    setDetailModal(null);
-    await fetchLocations();
-    await onAssignmentsChange?.();
   };
 
   /* ── Salida KITTEO item individual ── */
   const handleExitItem = async (loc: Location, item: LocationItem) => {
     setActionSaving(true);
+    try {
+      const { error: transferError } = await supabase.from('transferes').insert([{
+        part_number: item.part_number,
+        description: null,
+        qty: item.qty,
+        boxes: item.boxes,
+        po: item.po,
+        location_code: loc.location_code,
+        location_id: loc.id,
+        entry_id: item.entry_id,
+        destination: 'KITTEO',
+        registered_by: userDisplayName || null,
+      }]);
+      if (transferError) throw new Error(`No se pudo registrar la salida: ${transferError.message}`);
 
-    await supabase.from('transferes').insert([{
-      part_number: item.part_number,
-      description: null,
-      qty: item.qty,
-      boxes: item.boxes,
-      po: item.po,
-      location_code: loc.location_code,
-      location_id: loc.id,
-      entry_id: item.entry_id,
-      destination: 'KITTEO',
-      registered_by: userDisplayName || null,
-    }]);
+      await deleteAssignmentRows(loc, item);
 
-    await supabase.from('location_items').delete().eq('id', item.id);
+      const remaining = (loc.items ?? []).filter(i => !isSameAssignment(i, item));
+      if (remaining.length === 0) {
+        const { error } = await supabase.from('locations').update({
+          status: 'disponible',
+          entry_id: null,
+          part_number: null,
+          qty: null,
+          po: null,
+          assigned_at: null,
+        }).eq('id', loc.id);
+        if (error) throw new Error(`No se pudo liberar la locación: ${error.message}`);
+      } else {
+        const first = remaining[0];
+        const { error } = await supabase.from('locations').update({
+          entry_id: first.entry_id,
+          part_number: first.part_number,
+          qty: first.qty,
+          po: first.po,
+        }).eq('id', loc.id);
+        if (error) throw new Error(`No se pudo actualizar la locación: ${error.message}`);
+      }
 
-    const remaining = (loc.items ?? []).filter(i => i.id !== item.id);
-    if (remaining.length === 0) {
-      await supabase.from('locations').update({
-        status: 'disponible',
-        entry_id: null,
-        part_number: null,
-        qty: null,
-        po: null,
-        assigned_at: null,
-      }).eq('id', loc.id);
-    } else {
-      const first = remaining[0];
-      await supabase.from('locations').update({
-        entry_id: first.entry_id,
-        part_number: first.part_number,
-        qty: first.qty,
-        po: first.po,
-      }).eq('id', loc.id);
+      setDetailModal(null);
+      await fetchLocations();
+      await onAssignmentsChange?.();
+    } catch (error) {
+      console.error('Error registrando salida KITTEO:', error);
+      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudo registrar la salida.');
+    } finally {
+      setActionSaving(false);
     }
-
-    setActionSaving(false);
-    setDetailModal(null);
-    await fetchLocations();
-    await onAssignmentsChange?.();
   };
 
   /* ── Liberar toda la locación ── */
