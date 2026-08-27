@@ -10,6 +10,20 @@ import {
 } from 'lucide-react';
 
 /* ── Tipos ── */
+interface KitteoLocationItem {
+  id: number;
+  location_id: number;
+  location_code: string;
+  part_number: string;
+  qty: number;
+  boxes: number | null;
+  po: string | null;
+  entry_id: number | null;
+  description: string | null;
+  registered_by: string | null;
+  assigned_at: string;
+}
+
 interface KitteoLocation {
   id: number;
   rack: string;
@@ -23,6 +37,7 @@ interface KitteoLocation {
   description: string | null;
   registered_by: string | null;
   assigned_at: string | null;
+  items?: KitteoLocationItem[];
 }
 
 interface EntryOption {
@@ -46,6 +61,11 @@ interface KitteoExit {
   po: string | null;
   registered_by: string | null;
   exited_at: string;
+}
+
+interface ExitTarget {
+  location: KitteoLocation;
+  item: KitteoLocationItem;
 }
 
 /* ── Colores por rack ── */
@@ -88,12 +108,12 @@ export function KitteoPage() {
   const entryDropRef = useRef<HTMLDivElement>(null);
   const entryDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* Modal detalle / liberar */
+  /* Modal detalle: lista de partes y acciones individuales */
   const [detailModal, setDetailModal] = useState<KitteoLocation | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
 
-  /* Modal Salida Definitiva */
-  const [exitModal, setExitModal] = useState<KitteoLocation | null>(null);
+  /* Modal de salida definitiva para un artículo específico */
+  const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null);
   const [exitSaving, setExitSaving] = useState(false);
   const [exitSuccess, setExitSuccess] = useState(false);
 
@@ -106,15 +126,38 @@ export function KitteoPage() {
 
   const racks = ['ALL', '1', '2', '3', '4', '5', '6'];
 
-  /* ── Fetch locaciones ── */
+  /* ── Fetch locaciones y sus artículos ── */
   const fetchLocations = useCallback(async () => {
     setRefreshing(true);
-    const { data } = await supabase
-      .from('kitteo_locations')
-      .select('*')
-      .order('rack', { ascending: true })
-      .order('location_code', { ascending: true });
-    setLocations((data as KitteoLocation[]) ?? []);
+    const [{ data: locationsData, error: locationsError }, { data: itemsData, error: itemsError }] = await Promise.all([
+      supabase
+        .from('kitteo_locations')
+        .select('*')
+        .order('rack', { ascending: true })
+        .order('location_code', { ascending: true }),
+      supabase
+        .from('kitteo_location_items')
+        .select('*')
+        .order('assigned_at', { ascending: true })
+        .order('id', { ascending: true }),
+    ]);
+
+    if (locationsError) console.error('Error cargando locaciones KITTEO:', locationsError);
+    if (itemsError) console.error('Error cargando artículos KITTEO:', itemsError);
+
+    const itemsByLocationId = new Map<number, KitteoLocationItem[]>();
+    ((itemsData as KitteoLocationItem[]) ?? []).forEach(item => {
+      const current = itemsByLocationId.get(item.location_id) ?? [];
+      current.push(item);
+      itemsByLocationId.set(item.location_id, current);
+    });
+
+    const hydratedLocations = ((locationsData as KitteoLocation[]) ?? []).map(location => ({
+      ...location,
+      items: itemsByLocationId.get(location.id) ?? [],
+    }));
+
+    setLocations(hydratedLocations);
     setLoading(false);
     setTimeout(() => setRefreshing(false), 500);
   }, []);
@@ -176,12 +219,14 @@ export function KitteoPage() {
     setShowEntryDrop(false);
   };
 
-  /* ── Asignar material a locación ── */
+  /* ── Asignar material a una locación ── */
   const handleAssign = async () => {
     if (!assignModal || !selectedEntry) return;
     setSaving(true);
-    await supabase.from('kitteo_locations').update({
-      status: 'ocupado',
+
+    const { error: itemError } = await supabase.from('kitteo_location_items').insert([{
+      location_id: assignModal.id,
+      location_code: assignModal.location_code,
       part_number: selectedEntry.part_number,
       description: selectedEntry.description,
       qty,
@@ -190,11 +235,29 @@ export function KitteoPage() {
       entry_id: selectedEntry.id,
       registered_by: userDisplayName || null,
       assigned_at: new Date().toISOString(),
-    }).eq('id', assignModal.id);
+    }]);
+
+    if (itemError) {
+      console.error('Error asignando artículo KITTEO:', itemError);
+      alert(`No se pudo asignar el número de parte: ${itemError.message}`);
+      setSaving(false);
+      return;
+    }
+
+    const { error: locationError } = await supabase
+      .from('kitteo_locations')
+      .update({ status: 'ocupado' })
+      .eq('id', assignModal.id);
+
+    if (locationError) {
+      console.error('Error actualizando estado de locación KITTEO:', locationError);
+      alert(`El artículo se guardó, pero no se pudo actualizar el estado de la locación: ${locationError.message}`);
+    }
+
     setSaving(false);
     setAssignModal(null);
     resetAssignForm();
-    fetchLocations();
+    await fetchLocations();
   };
 
   const resetAssignForm = () => {
@@ -205,66 +268,114 @@ export function KitteoPage() {
     setEntries([]);
   };
 
-  /* ── Liberar locación (sin historial) ── */
-  const handleRelease = async (loc: KitteoLocation) => {
-    if (!confirm(`¿Liberar la locación ${loc.location_code}?`)) return;
+  /* ── Liberar un solo artículo (sin historial) ── */
+  const handleReleaseItem = async (loc: KitteoLocation, item: KitteoLocationItem) => {
+    if (!confirm(`¿Liberar solamente ${item.part_number} de la locación ${loc.location_code}?`)) return;
     setActionSaving(true);
-    await supabase.from('kitteo_locations').update({
-      status: 'disponible',
-      part_number: null,
-      description: null,
-      qty: null,
-      boxes: null,
-      po: null,
-      entry_id: null,
-      registered_by: null,
-      assigned_at: null,
-    }).eq('id', loc.id);
+
+    const { error: deleteError } = await supabase
+      .from('kitteo_location_items')
+      .delete()
+      .eq('id', item.id)
+      .eq('location_id', loc.id);
+
+    if (deleteError) {
+      console.error('Error liberando artículo KITTEO:', deleteError);
+      alert(`No se pudo liberar el número de parte: ${deleteError.message}`);
+      setActionSaving(false);
+      return;
+    }
+
+    const { count: remainingCount, error: countError } = await supabase
+      .from('kitteo_location_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('location_id', loc.id);
+
+    if (!countError && remainingCount === 0) {
+      await supabase.from('kitteo_locations').update({
+        status: 'disponible',
+        part_number: null,
+        description: null,
+        qty: null,
+        boxes: null,
+        po: null,
+        entry_id: null,
+        registered_by: null,
+        assigned_at: null,
+      }).eq('id', loc.id);
+    }
+
     setActionSaving(false);
     setDetailModal(null);
-    fetchLocations();
+    await fetchLocations();
   };
 
   /* ══════════════════════════════════════════
-     SALIDA DEFINITIVA
+     SALIDA DEFINITIVA DE UN SOLO ARTÍCULO
   ══════════════════════════════════════════ */
   const handleExitDefinitivo = async () => {
-    if (!exitModal) return;
+    if (!exitTarget) return;
+    const { location, item } = exitTarget;
     setExitSaving(true);
 
-    // 1. Guardar en historial kitteo_exits
-    await supabase.from('kitteo_exits').insert([{
-      rack: exitModal.rack,
-      location_code: exitModal.location_code,
-      part_number: exitModal.part_number,
-      description: exitModal.description,
-      qty: exitModal.qty,
-      boxes: exitModal.boxes,
-      po: exitModal.po,
+    const { error: exitError } = await supabase.from('kitteo_exits').insert([{
+      rack: location.rack,
+      location_code: location.location_code,
+      part_number: item.part_number,
+      description: item.description,
+      qty: item.qty,
+      boxes: item.boxes,
+      po: item.po,
       registered_by: userDisplayName || null,
       exited_at: new Date().toISOString(),
     }]);
 
-    // 2. Liberar la locación
-    await supabase.from('kitteo_locations').update({
-      status: 'disponible',
-      part_number: null,
-      description: null,
-      qty: null,
-      boxes: null,
-      po: null,
-      entry_id: null,
-      registered_by: null,
-      assigned_at: null,
-    }).eq('id', exitModal.id);
+    if (exitError) {
+      console.error('Error registrando salida KITTEO:', exitError);
+      alert(`No se pudo registrar la salida: ${exitError.message}`);
+      setExitSaving(false);
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from('kitteo_location_items')
+      .delete()
+      .eq('id', item.id)
+      .eq('location_id', location.id);
+
+    if (deleteError) {
+      console.error('Error retirando artículo después de registrar salida:', deleteError);
+      alert(`La salida quedó registrada, pero no se pudo retirar el artículo de la locación: ${deleteError.message}`);
+      setExitSaving(false);
+      return;
+    }
+
+    const { count: remainingCount, error: countError } = await supabase
+      .from('kitteo_location_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('location_id', location.id);
+
+    if (!countError && remainingCount === 0) {
+      await supabase.from('kitteo_locations').update({
+        status: 'disponible',
+        part_number: null,
+        description: null,
+        qty: null,
+        boxes: null,
+        po: null,
+        entry_id: null,
+        registered_by: null,
+        assigned_at: null,
+      }).eq('id', location.id);
+    }
 
     setExitSaving(false);
     setExitSuccess(true);
 
-    // Cerrar modal tras 1.5s y refrescar
     setTimeout(() => {
-      setExitModal(null);
+      setExitTarget(null);
       setExitSuccess(false);
+      setDetailModal(null);
       fetchLocations();
     }, 1500);
   };
@@ -273,11 +384,16 @@ export function KitteoPage() {
   const filtered = locations.filter((loc) => {
     const matchRack = selectedRack === 'ALL' || loc.rack === selectedRack;
     const term = searchTerm.toLowerCase();
+    const itemSearchText = (loc.items ?? [])
+      .flatMap(item => [item.part_number, item.po ?? '', item.description ?? ''])
+      .join(' ')
+      .toLowerCase();
     const matchSearch = !term ||
       loc.location_code.toLowerCase().includes(term) ||
       (loc.part_number ?? '').toLowerCase().includes(term) ||
       (loc.po ?? '').toLowerCase().includes(term) ||
-      (loc.description ?? '').toLowerCase().includes(term);
+      (loc.description ?? '').toLowerCase().includes(term) ||
+      itemSearchText.includes(term);
     return matchRack && matchSearch;
   });
 
@@ -455,6 +571,7 @@ export function KitteoPage() {
                       {pageLocs.map((loc, idx) => {
                         const c = RACK_COLORS[loc.rack] ?? RACK_COLORS['1'];
                         const isOcupado = loc.status === 'ocupado';
+                        const primaryItem = loc.items?.[0];
                         return (
                           <tr key={loc.id} className="border-b border-gray-100 last:border-0 hover:bg-orange-50/30 transition-colors"
                             style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafafa' }}>
@@ -482,61 +599,65 @@ export function KitteoPage() {
                                 </span>
                               )}
                             </td>
-                            {/* Part Number */}
+                            {/* Partes asignados */}
                             <td className="px-4 py-3">
-                              {loc.part_number ? (
+                              {loc.items && loc.items.length > 0 ? (
                                 <div>
-                                  <span className="inline-flex px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-xs font-semibold border border-indigo-100">
-                                    {loc.part_number}
+                                  <span className="inline-flex max-w-[190px] truncate px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-xs font-semibold border border-indigo-100">
+                                    {loc.items[0].part_number}
                                   </span>
-                                  {loc.description && (
-                                    <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[140px]">{loc.description}</p>
-                                  )}
+                                  <p className="text-xs text-gray-400 mt-0.5">
+                                    {loc.items.length === 1 ? '1 número de parte' : `${loc.items.length} números de parte`}
+                                  </p>
                                 </div>
+                              ) : loc.part_number ? (
+                                <span className="inline-flex max-w-[190px] truncate px-2.5 py-1 rounded-lg bg-gray-50 text-gray-500 font-mono text-xs font-semibold border border-gray-200">
+                                  {loc.part_number}
+                                </span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* QTY */}
                             <td className="px-4 py-3 text-center">
-                              {loc.qty != null ? (
+                              {primaryItem?.qty != null || loc.qty != null ? (
                                 <span className="inline-flex items-center justify-center min-w-[48px] px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
-                                  {loc.qty.toLocaleString()}
+                                  {(primaryItem?.qty ?? loc.qty ?? 0).toLocaleString()}
                                 </span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* Cajas */}
                             <td className="px-4 py-3 text-center">
-                              {(loc.boxes ?? 0) > 0 ? (
+                              {((primaryItem?.boxes ?? loc.boxes) ?? 0) > 0 ? (
                                 <span className="inline-flex items-center justify-center min-w-[44px] px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 font-bold text-sm border border-purple-100">
-                                  {loc.boxes}
+                                  {primaryItem?.boxes ?? loc.boxes}
                                 </span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* PO */}
                             <td className="px-4 py-3">
-                              {loc.po ? (
-                                <span className="inline-flex px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 font-mono text-xs font-semibold border border-purple-100">{loc.po}</span>
+                              {(primaryItem?.po ?? loc.po) ? (
+                                <span className="inline-flex px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 font-mono text-xs font-semibold border border-purple-100">{primaryItem?.po ?? loc.po}</span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* Registrado Por */}
                             <td className="px-4 py-3">
-                              {loc.registered_by ? (
+                              {(primaryItem?.registered_by ?? loc.registered_by) ? (
                                 <div className="flex items-center gap-1.5">
                                   <div className="h-6 w-6 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
-                                    <span className="text-orange-600 text-xs font-bold uppercase">{loc.registered_by[0]}</span>
+                                    <span className="text-orange-600 text-xs font-bold uppercase">{(primaryItem?.registered_by ?? loc.registered_by)?.[0]}</span>
                                   </div>
-                                  <span className="text-xs text-gray-600 truncate max-w-[100px]">{loc.registered_by}</span>
+                                  <span className="text-xs text-gray-600 truncate max-w-[100px]">{primaryItem?.registered_by ?? loc.registered_by}</span>
                                 </div>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* Asignado */}
                             <td className="px-4 py-3">
-                              {loc.assigned_at ? (
+                              {(primaryItem?.assigned_at ?? loc.assigned_at) ? (
                                 <div className="flex flex-col">
                                   <span className="text-xs text-gray-700 font-medium">
-                                    {new Date(loc.assigned_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    {new Date(primaryItem?.assigned_at ?? loc.assigned_at ?? '').toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
                                   </span>
                                   <span className="text-xs text-gray-400">
-                                    {new Date(loc.assigned_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                                    {new Date(primaryItem?.assigned_at ?? loc.assigned_at ?? '').toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 </div>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
@@ -544,18 +665,10 @@ export function KitteoPage() {
                             {/* ── ACCIONES ── */}
                             <td className="px-4 py-3">
                               {isOcupado ? (
-                                <div className="flex flex-col gap-1.5 items-center">
-                                  {/* Ver / Liberar */}
-                                  <button onClick={() => setDetailModal(loc)}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all whitespace-nowrap">
-                                    <LogOut className="h-3 w-3" />Ver / Liberar
-                                  </button>
-                                  {/* Salida Definitiva */}
-                                  <button onClick={() => { setExitModal(loc); setExitSuccess(false); }}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-all whitespace-nowrap shadow-sm">
-                                    <ArrowRightFromLine className="h-3 w-3" />Salida Definitiva
-                                  </button>
-                                </div>
+                                <button onClick={() => setDetailModal(loc)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all whitespace-nowrap">
+                                  <ClipboardList className="h-3 w-3" />Ver partes
+                                </button>
                               ) : (
                                 <button onClick={() => { setAssignModal(loc); fetchEntries(''); }}
                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all">
@@ -771,9 +884,9 @@ export function KitteoPage() {
       )}
 
       {/* ══════════════════════════════════════════
-          MODAL: SALIDA DEFINITIVA
+          MODAL: SALIDA DEFINITIVA DE UN PARTE
       ══════════════════════════════════════════ */}
-      {exitModal && (
+      {exitTarget && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-gray-100">
             <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
@@ -782,15 +895,15 @@ export function KitteoPage() {
                   <ArrowRightFromLine className="h-4 w-4 text-red-600" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-gray-900">Salida Definitiva</h2>
+                  <h2 className="text-base font-bold text-gray-900">Salida de un número de parte</h2>
                   <p className="text-xs text-gray-400">
-                    Locación: <span className="font-bold text-red-600">{exitModal.location_code}</span>
-                    {' · '}Rack <span className="font-bold">{exitModal.rack}</span>
+                    Locación: <span className="font-bold text-red-600">{exitTarget.location.location_code}</span>
+                    {' · '}Rack <span className="font-bold">{exitTarget.location.rack}</span>
                   </p>
                 </div>
               </div>
               {!exitSuccess && (
-                <button onClick={() => setExitModal(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
+                <button onClick={() => setExitTarget(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
                   <X className="h-5 w-5" />
                 </button>
               )}
@@ -798,63 +911,63 @@ export function KitteoPage() {
 
             <div className="px-6 py-5 space-y-4">
               {exitSuccess ? (
-                /* ── Éxito ── */
                 <div className="flex flex-col items-center justify-center py-6 gap-3">
                   <div className="p-4 bg-emerald-100 rounded-full">
                     <CheckCircle2 className="h-10 w-10 text-emerald-600" />
                   </div>
                   <p className="text-lg font-bold text-emerald-700">¡Salida registrada!</p>
                   <p className="text-sm text-gray-500 text-center">
-                    <strong>{exitModal.part_number}</strong> salió de la locación{' '}
-                    <strong className="text-red-600">{exitModal.location_code}</strong>.<br />
-                    La locación quedó <strong className="text-emerald-600">disponible</strong>.
+                    <strong>{exitTarget.item.part_number}</strong> salió de la locación{' '}
+                    <strong className="text-red-600">{exitTarget.location.location_code}</strong>.<br />
+                    {exitTarget.location.items && exitTarget.location.items.length > 1 ? (
+                      <>La locación conserva otros artículos asignados.</>
+                    ) : (
+                      <>La locación quedó <strong className="text-emerald-600">disponible</strong>.</>
+                    )}
                   </p>
                 </div>
               ) : (
                 <>
-                  {/* ── Advertencia ── */}
                   <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                     <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
                     <div>
                       <p className="text-sm font-bold text-red-700">Esta acción es definitiva</p>
-                      <p className="text-xs text-red-500 mt-0.5">El material saldrá de la locación y quedará libre. Se guardará en el historial de salidas.</p>
+                      <p className="text-xs text-red-500 mt-0.5">Solo saldrá el número de parte seleccionado. Se guardará en el historial de salidas.</p>
                     </div>
                   </div>
 
-                  {/* ── Detalle del material ── */}
                   <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 space-y-2">
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Material en salida</p>
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Material seleccionado</p>
                     <div>
                       <span className="inline-flex px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-sm font-bold border border-indigo-100">
-                        {exitModal.part_number}
+                        {exitTarget.item.part_number}
                       </span>
-                      {exitModal.description && (
-                        <p className="text-xs text-gray-500 mt-1">{exitModal.description}</p>
+                      {exitTarget.item.description && (
+                        <p className="text-xs text-gray-500 mt-1">{exitTarget.item.description}</p>
                       )}
                     </div>
                     <div className="flex gap-3 flex-wrap">
                       <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5 text-center">
                         <p className="text-[10px] text-gray-500 font-semibold uppercase">QTY</p>
-                        <p className="text-base font-black text-blue-700">{(exitModal.qty ?? 0).toLocaleString()}</p>
+                        <p className="text-base font-black text-blue-700">{(exitTarget.item.qty ?? 0).toLocaleString()}</p>
                       </div>
-                      {(exitModal.boxes ?? 0) > 0 && (
+                      {(exitTarget.item.boxes ?? 0) > 0 && (
                         <div className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 text-center">
                           <p className="text-[10px] text-gray-500 font-semibold uppercase">Cajas</p>
-                          <p className="text-base font-black text-purple-700">{exitModal.boxes}</p>
+                          <p className="text-base font-black text-purple-700">{exitTarget.item.boxes}</p>
                         </div>
                       )}
-                      {exitModal.po && (
+                      {exitTarget.item.po && (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-center">
                           <p className="text-[10px] text-gray-500 font-semibold uppercase">PO</p>
-                          <p className="text-sm font-bold text-amber-700">{exitModal.po}</p>
+                          <p className="text-sm font-bold text-amber-700">{exitTarget.item.po}</p>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* ── Botones ── */}
                   <div className="flex gap-3 pt-1">
-                    <button onClick={() => setExitModal(null)}
+                    <button onClick={() => setExitTarget(null)}
                       className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                       <X className="h-4 w-4 inline mr-1" />Cancelar
                     </button>
@@ -966,10 +1079,10 @@ export function KitteoPage() {
         </div>
       )}
 
-      {/* ── Modal Detalle / Liberar ── */}
+      {/* ── Modal Detalle: artículos de la locación ── */}
       {detailModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-gray-100">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-gray-100">
             <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-orange-100">
@@ -977,54 +1090,88 @@ export function KitteoPage() {
                 </div>
                 <div>
                   <h2 className="text-base font-bold text-gray-900">{detailModal.location_code}</h2>
-                  <p className="text-xs text-gray-400">Rack {detailModal.rack} · Ocupada</p>
+                  <p className="text-xs text-gray-400">
+                    Rack {detailModal.rack} · {detailModal.items?.length ?? 0} artículos asignados
+                  </p>
                 </div>
               </div>
               <button onClick={() => setDetailModal(null)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="px-6 py-5 space-y-3">
-              <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
-                <p className="text-xs text-gray-500 font-semibold uppercase mb-1">Part Number</p>
-                <p className="text-base font-black text-indigo-700">{detailModal.part_number}</p>
-                {detailModal.description && <p className="text-xs text-gray-500 mt-0.5">{detailModal.description}</p>}
+
+            <div className="px-6 py-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Números de parte en la locación</p>
+                  <p className="text-sm text-gray-400 mt-0.5">Selecciona una acción para un artículo específico.</p>
+                </div>
+                <span className="inline-flex items-center justify-center min-w-8 h-8 px-2 rounded-full bg-indigo-100 text-indigo-700 text-sm font-black">
+                  {detailModal.items?.length ?? 0}
+                </span>
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 text-center">
-                  <p className="text-[10px] text-gray-500 font-semibold uppercase">QTY</p>
-                  <p className="text-xl font-black text-blue-700">{detailModal.qty?.toLocaleString() ?? '—'}</p>
+
+              {detailModal.items && detailModal.items.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[26rem] overflow-y-auto pr-1">
+                  {detailModal.items.map(item => (
+                    <div key={item.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 hover:border-orange-200 hover:bg-orange-50/30 transition-colors">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="inline-flex max-w-full truncate px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-mono text-xs font-bold border border-indigo-100">
+                            {item.part_number}
+                          </span>
+                          {item.description && <p className="text-xs text-gray-500 mt-1 truncate">{item.description}</p>}
+                        </div>
+                        <span className="text-[10px] font-bold text-gray-400 uppercase">Artículo</span>
+                      </div>
+
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        <span className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
+                          QTY: {(item.qty ?? 0).toLocaleString()}
+                        </span>
+                        {(item.boxes ?? 0) > 0 && (
+                          <span className="px-2 py-1 rounded-lg bg-purple-50 text-purple-700 text-xs font-bold border border-purple-100">
+                            Cajas: {item.boxes}
+                          </span>
+                        )}
+                        {item.po && (
+                          <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-bold border border-amber-100">
+                            PO: {item.po}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={() => handleReleaseItem(detailModal, item)}
+                          disabled={actionSaving || exitSaving}
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition-all disabled:opacity-50"
+                        >
+                          {actionSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
+                          Liberar
+                        </button>
+                        <button
+                          onClick={() => { setExitTarget({ location: detailModal, item }); setExitSuccess(false); }}
+                          disabled={actionSaving || exitSaving}
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-all disabled:opacity-50"
+                        >
+                          <ArrowRightFromLine className="h-3.5 w-3.5" />Dar salida
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="bg-purple-50 border border-purple-200 rounded-xl px-3 py-2.5 text-center">
-                  <p className="text-[10px] text-gray-500 font-semibold uppercase">Cajas</p>
-                  <p className="text-xl font-black text-purple-700">{detailModal.boxes ?? '—'}</p>
-                </div>
-                <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-center">
-                  <p className="text-[10px] text-gray-500 font-semibold uppercase">PO</p>
-                  <p className="text-sm font-bold text-amber-700 truncate">{detailModal.po ?? '—'}</p>
-                </div>
-              </div>
-              {detailModal.registered_by && (
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <User className="h-3.5 w-3.5" />
-                  <span>Registrado por <strong>{detailModal.registered_by}</strong></span>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-5 text-center">
+                  <p className="text-sm font-semibold text-amber-800">No hay artículos cargados en la tabla hija.</p>
+                  <p className="text-xs text-amber-700 mt-1">Revisa que la importación se haya ejecutado en `kitteo_location_items`.</p>
                 </div>
               )}
-              {detailModal.assigned_at && (
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <Calendar className="h-3.5 w-3.5" />
-                  <span>{new Date(detailModal.assigned_at).toLocaleString('es-MX')}</span>
-                </div>
-              )}
-              <div className="flex gap-3 pt-2">
+
+              <div className="flex justify-end pt-1">
                 <button onClick={() => setDetailModal(null)}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
+                  className="px-5 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                   Cerrar
-                </button>
-                <button onClick={() => handleRelease(detailModal)} disabled={actionSaving}
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-all disabled:opacity-50">
-                  {actionSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
-                  Liberar
                 </button>
               </div>
             </div>
