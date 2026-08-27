@@ -97,10 +97,36 @@ export function Dashboard() {
   const fetchAssignedEntries = useCallback(async () => {
     setAssignedEntriesError(null);
 
+    const pageSize = 1000;
+    const loadAllPages = async (loadPage: (from: number, to: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }>) => {
+      const rows: unknown[] = [];
+      let error: { message: string } | null = null;
+      for (let from = 0; ; from += pageSize) {
+        const result = await loadPage(from, from + pageSize - 1);
+        if (result.error) {
+          error = result.error;
+          break;
+        }
+        rows.push(...(result.data ?? []));
+        if ((result.data ?? []).length < pageSize) break;
+      }
+      return { data: rows, error };
+    };
+
     const [itemsResult, locationsResult, fifoResult] = await Promise.all([
-      supabase.from('location_items').select('entry_id, location_code, part_number, po, fifo_number'),
-      supabase.from('locations').select('entry_id, location_code').not('entry_id', 'is', null),
-      supabase.from('fifo_labels').select('entry_id, part_number, po, fifo_number'),
+      loadAllPages(async (from, to) => supabase
+        .from('location_items')
+        .select('entry_id, location_code, part_number, po, fifo_number')
+        .range(from, to)),
+      loadAllPages(async (from, to) => supabase
+        .from('locations')
+        .select('entry_id, location_code')
+        .not('entry_id', 'is', null)
+        .range(from, to)),
+      loadAllPages(async (from, to) => supabase
+        .from('fifo_labels')
+        .select('entry_id, part_number, po, fifo_number')
+        .range(from, to)),
     ]);
 
     if (itemsResult.error && locationsResult.error && fifoResult.error) {
