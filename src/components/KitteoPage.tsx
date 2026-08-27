@@ -136,22 +136,48 @@ export function KitteoPage() {
 
   const racks = ['ALL', '1', '2', '3', '4', '5', '6'];
 
-  /* ── Fetch locaciones y sus artículos ── */
+  /* ── Fetch locaciones y todos sus artículos ── */
   const fetchLocations = useCallback(async () => {
     setRefreshing(true);
     setLocationsLoadError(null);
-    const [{ data: locationsData, error: locationsError }, { data: itemsData, error: itemsError }] = await Promise.all([
+
+    const [locationsResponse, itemsResponse] = await Promise.all([
       supabase
         .from('kitteo_locations')
         .select('*')
         .order('rack', { ascending: true })
         .order('location_code', { ascending: true }),
-      supabase
-        .from('kitteo_location_items')
-        .select('*')
-        .order('assigned_at', { ascending: true })
-        .order('id', { ascending: true }),
+      (async () => {
+        const pageSize = 1000;
+        let from = 0;
+        const allItems: KitteoLocationItem[] = [];
+        let itemsError: { message: string } | null = null;
+
+        while (true) {
+          const { data, error } = await supabase
+            .from('kitteo_location_items')
+            .select('*')
+            .order('assigned_at', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, from + pageSize - 1);
+
+          if (error) {
+            itemsError = error;
+            break;
+          }
+
+          const page = (data as KitteoLocationItem[]) ?? [];
+          allItems.push(...page);
+          if (page.length < pageSize) break;
+          from += pageSize;
+        }
+
+        return { data: allItems, error: itemsError };
+      })(),
     ]);
+
+    const { data: locationsData, error: locationsError } = locationsResponse;
+    const { data: itemsData, error: itemsError } = itemsResponse;
 
     if (locationsError) {
       console.error('Error cargando locaciones KITTEO:', locationsError);
