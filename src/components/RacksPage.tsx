@@ -249,19 +249,41 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         entry_id: toNumberOrNull(loc.entry_id),
       }));
 
-      let { data: itemsData, error: itemsError } = await supabase
-        .from('location_items')
-        .select('*, entry:entries!location_items_entry_id_fkey(total_boxes)')
-        .order('assigned_at', { ascending: true });
+      const pageSize = 1000;
+      let itemsData: unknown[] = [];
+      let itemsError: { message: string } | null = null;
+
+      for (let from = 0; ; from += pageSize) {
+        const page = await supabase
+          .from('location_items')
+          .select('*, entry:entries!location_items_entry_id_fkey(total_boxes)')
+          .order('assigned_at', { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (page.error) {
+          itemsError = page.error;
+          break;
+        }
+        itemsData.push(...(page.data ?? []));
+        if ((page.data ?? []).length < pageSize) break;
+      }
 
       if (itemsError) {
         console.warn('No se pudo cargar la relación entries junto con location_items; se usará la lectura básica:', itemsError);
-        const fallbackItems = await supabase
-          .from('location_items')
-          .select('*')
-          .order('assigned_at', { ascending: true });
-        itemsData = fallbackItems.data;
-        itemsError = fallbackItems.error;
+        itemsData = [];
+        itemsError = null;
+        for (let from = 0; ; from += pageSize) {
+          const page = await supabase
+            .from('location_items')
+            .select('*')
+            .order('assigned_at', { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (page.error) {
+            itemsError = page.error;
+            break;
+          }
+          itemsData.push(...(page.data ?? []));
+          if ((page.data ?? []).length < pageSize) break;
+        }
       }
 
       if (itemsError) {
