@@ -1707,6 +1707,11 @@ function ItemCard({
             #{index + 1}
           </span>
           <p className={`text-sm font-black font-mono ${c.text}`}>{item.part_number}</p>
+          {item.fifo_number !== null && (
+            <span className="inline-flex items-center rounded-md bg-amber-100 border border-amber-200 px-2 py-0.5 text-[10px] font-black text-amber-700 whitespace-nowrap">
+              FIFO #{item.fifo_number}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1731,7 +1736,7 @@ function ItemCard({
         </div>
 
         {/* FIFO */}
-        {item.fifo_number && (
+        {item.fifo_number !== null && (
           <div className="bg-white/70 rounded-lg px-2 py-1.5">
             <div className="flex items-center gap-1 mb-0.5">
               <Hash className="h-3 w-3 text-gray-400" />
