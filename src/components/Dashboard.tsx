@@ -28,6 +28,21 @@ const toEntryId = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeInventoryPart = (value: string | null | undefined) =>
+  (value ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/[‐‑‒–—−]/g, '-').replace(/\s+/g, '').toUpperCase();
+
+const normalizeInventoryPo = (value: string | null | undefined) =>
+  (value ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toUpperCase();
+
+const getInventoryAssignmentKey = (
+  partNumber: string | null | undefined,
+  po: string | null | undefined,
+  fifoNumber: unknown,
+) => {
+  const fifo = toEntryId(fifoNumber);
+  return `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}|${fifo ?? 'none'}`;
+};
+
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
 
@@ -82,13 +97,14 @@ export function Dashboard() {
   const fetchAssignedEntries = useCallback(async () => {
     setAssignedEntriesError(null);
 
-    const [itemsResult, locationsResult] = await Promise.all([
-      supabase.from('location_items').select('entry_id, location_code'),
+    const [itemsResult, locationsResult, fifoResult] = await Promise.all([
+      supabase.from('location_items').select('entry_id, location_code, part_number, po, fifo_number'),
       supabase.from('locations').select('entry_id, location_code').not('entry_id', 'is', null),
+      supabase.from('fifo_labels').select('entry_id, part_number, po, fifo_number'),
     ]);
 
-    if (itemsResult.error && locationsResult.error) {
-      console.error('Error consultando materiales asignados:', itemsResult.error, locationsResult.error);
+    if (itemsResult.error && locationsResult.error && fifoResult.error) {
+      console.error('Error consultando materiales asignados:', itemsResult.error, locationsResult.error, fifoResult.error);
       setAssignedEntriesError(`No se pudieron actualizar los bloqueos: ${itemsResult.error.message}`);
       return;
     }
@@ -97,22 +113,50 @@ export function Dashboard() {
       console.warn('No se pudo leer location_items; se usarán los datos de locations:', itemsResult.error);
       setAssignedEntriesError(`No se pudo leer location_items: ${itemsResult.error.message}`);
     }
+    if (locationsResult.error) {
+      console.warn('No se pudo leer locations para actualizar bloqueos:', locationsResult.error);
+    }
+    if (fifoResult.error) {
+      console.warn('No se pudo leer fifo_labels para resolver registros heredados:', fifoResult.error);
+    }
 
-    const rows = [
-      ...((itemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
-      ...((locationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[]),
-    ];
+    const itemRows = (itemsResult.data ?? []) as {
+      entry_id: unknown;
+      location_code: string | null;
+      part_number: string | null;
+      po: string | null;
+      fifo_number: unknown;
+    }[];
+    const legacyRows = (locationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+    const fifoRows = (fifoResult.data ?? []) as {
+      entry_id: unknown;
+      part_number: string | null;
+      po: string | null;
+      fifo_number: unknown;
+    }[];
+    const fifoToEntryId = new Map<string, number>();
+    fifoRows.forEach(row => {
+      const entryId = toEntryId(row.entry_id);
+      if (entryId !== null && row.part_number && row.fifo_number !== null && row.fifo_number !== undefined) {
+        fifoToEntryId.set(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number), entryId);
+      }
+    });
 
     const ids = new Set<number>();
     const locMap: Record<number, string> = {};
-    rows.forEach(row => {
-      const entryId = toEntryId(row.entry_id);
-      const locationCode = row.location_code?.trim() ?? '';
+    const addAssignment = (entryId: number | null, locationCode: string | null | undefined) => {
       if (entryId === null) return;
-
       ids.add(entryId);
-      if (locationCode) locMap[entryId] = locationCode;
+      const normalizedLocation = locationCode?.trim() ?? '';
+      if (normalizedLocation) locMap[entryId] = normalizedLocation;
+    };
+
+    itemRows.forEach(row => {
+      const directEntryId = toEntryId(row.entry_id);
+      const resolvedEntryId = directEntryId ?? fifoToEntryId.get(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number)) ?? null;
+      addAssignment(resolvedEntryId, row.location_code);
     });
+    legacyRows.forEach(row => addAssignment(toEntryId(row.entry_id), row.location_code));
 
     setAssignedEntryIds(ids);
     setAssignedEntryLocations(locMap);
