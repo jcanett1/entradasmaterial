@@ -93,6 +93,7 @@ export function KitteoPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedRack, setSelectedRack] = useState<string>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'disponible' | 'ocupado'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -383,6 +384,7 @@ export function KitteoPage() {
   /* ── Filtrar locaciones ── */
   const filtered = locations.filter((loc) => {
     const matchRack = selectedRack === 'ALL' || loc.rack === selectedRack;
+    const matchStatus = selectedStatus === 'ALL' || loc.status === selectedStatus;
     const term = searchTerm.toLowerCase();
     const itemSearchText = (loc.items ?? [])
       .flatMap(item => [item.part_number, item.po ?? '', item.description ?? ''])
@@ -394,7 +396,7 @@ export function KitteoPage() {
       (loc.po ?? '').toLowerCase().includes(term) ||
       (loc.description ?? '').toLowerCase().includes(term) ||
       itemSearchText.includes(term);
-    return matchRack && matchSearch;
+    return matchRack && matchStatus && matchSearch;
   });
 
   /* ── Filtrar historial ── */
@@ -525,6 +527,39 @@ export function KitteoPage() {
                 );
               })}
             </div>
+
+            <div className="flex gap-1 flex-wrap">
+              {[
+                { value: 'ALL' as const, label: 'Todos', count: locations.length },
+                { value: 'disponible' as const, label: 'Disponibles', count: stats.disponible },
+                { value: 'ocupado' as const, label: 'Ocupadas', count: stats.ocupado },
+              ].map(statusFilter => {
+                const isActive = selectedStatus === statusFilter.value;
+                return (
+                  <button
+                    key={statusFilter.value}
+                    onClick={() => { setSelectedStatus(statusFilter.value); setCurrentPage(1); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                      isActive
+                        ? statusFilter.value === 'disponible'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                          : statusFilter.value === 'ocupado'
+                            ? 'bg-orange-600 text-white border-orange-600 shadow-sm'
+                            : 'bg-gray-700 text-white border-gray-700 shadow-sm'
+                        : statusFilter.value === 'disponible'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                          : statusFilter.value === 'ocupado'
+                            ? 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    {statusFilter.label}
+                    <span className={`ml-1.5 text-xs ${isActive ? 'text-white/80' : 'text-gray-400'}`}>({statusFilter.count})</span>
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="relative ml-auto">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
               <input type="text" value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
