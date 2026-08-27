@@ -455,12 +455,18 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   /* ── Fetch entries para el modal (solo excluye los asignados en la locación destino) ── */
   const fetchEntries = useCallback(async (term: string, targetLocationCode?: string) => {
     const requestId = ++fetchEntriesRequest.current;
-    const targetLocation = normalizeLocationCode(targetLocationCode);
     setEntriesLoadError(null);
 
+    const locationFilter = targetLocationCode?.trim() || undefined;
+    const itemsAssignmentsQuery = supabase
+      .from('location_items')
+      .select('entry_id, fifo_number, part_number, po, location_code');
+    const legacyAssignmentsQuery = supabase
+      .from('locations')
+      .select('entry_id, location_code, part_number, po');
     const [itemsAssignments, legacyAssignments] = await Promise.all([
-      supabase.from('location_items').select('entry_id, fifo_number, part_number, po, location_code'),
-      supabase.from('locations').select('entry_id, location_code, part_number, po'),
+      locationFilter ? itemsAssignmentsQuery.eq('location_code', locationFilter) : itemsAssignmentsQuery,
+      locationFilter ? legacyAssignmentsQuery.eq('location_code', locationFilter) : legacyAssignmentsQuery,
     ]);
 
     if (itemsAssignments.error && legacyAssignments.error) {
@@ -483,7 +489,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     const assignedPartPoFifoLocations = new Map<string, string>();
     ((itemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; part_number: string | null; po: string | null; location_code?: string | null }[]).forEach(row => {
       const location = row.location_code || 'otra locación';
-      if (targetLocation && normalizeLocationCode(row.location_code) !== targetLocation) return;
       if (toNumberOrNull(row.entry_id) !== null) {
         assignedSelectionLocations.set(getEntrySelectionKey(row.entry_id, row.fifo_number), location);
       }
@@ -492,7 +497,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       }
     });
     ((legacyAssignments.data ?? []) as { entry_id: unknown; location_code?: string | null }[]).forEach(row => {
-      if (targetLocation && normalizeLocationCode(row.location_code) !== targetLocation) return;
       if (toNumberOrNull(row.entry_id) !== null) {
         assignedSelectionLocations.set(getEntrySelectionKey(row.entry_id, null), row.location_code || 'otra locación');
       }
