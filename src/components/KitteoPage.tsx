@@ -68,6 +68,14 @@ interface ExitTarget {
   item: KitteoLocationItem;
 }
 
+const toNumberOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeLocationCode = (value: unknown): string => String(value ?? '').trim().toUpperCase();
+
 /* ── Colores por rack ── */
 const RACK_COLORS: Record<string, { bg: string; border: string; text: string; badge: string; badgeBg: string }> = {
   '1': { bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    badge: 'bg-blue-600',    badgeBg: 'bg-blue-100' },
@@ -91,6 +99,7 @@ export function KitteoPage() {
   /* ── Estado locaciones ── */
   const [locations, setLocations] = useState<KitteoLocation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [locationsLoadError, setLocationsLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedRack, setSelectedRack] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'disponible' | 'ocupado'>('ALL');
@@ -130,6 +139,7 @@ export function KitteoPage() {
   /* ── Fetch locaciones y sus artículos ── */
   const fetchLocations = useCallback(async () => {
     setRefreshing(true);
+    setLocationsLoadError(null);
     const [{ data: locationsData, error: locationsError }, { data: itemsData, error: itemsError }] = await Promise.all([
       supabase
         .from('kitteo_locations')
@@ -143,20 +153,56 @@ export function KitteoPage() {
         .order('id', { ascending: true }),
     ]);
 
-    if (locationsError) console.error('Error cargando locaciones KITTEO:', locationsError);
-    if (itemsError) console.error('Error cargando artículos KITTEO:', itemsError);
+    if (locationsError) {
+      console.error('Error cargando locaciones KITTEO:', locationsError);
+      setLocationsLoadError(`No se pudieron cargar las locaciones: ${locationsError.message}`);
+    }
+    if (itemsError) {
+      console.error('Error cargando artículos KITTEO:', itemsError);
+      setLocationsLoadError(`No se pudieron cargar los números de parte: ${itemsError.message}`);
+    }
+
+    const normalizedLocations = ((locationsData as KitteoLocation[]) ?? []).map(location => ({
+      ...location,
+      id: toNumberOrNull(location.id) ?? location.id,
+    }));
+    const normalizedItems = itemsError
+      ? []
+      : ((itemsData as KitteoLocationItem[]) ?? []).map(item => ({
+          ...item,
+          id: toNumberOrNull(item.id) ?? item.id,
+          location_id: toNumberOrNull(item.location_id) ?? item.location_id,
+          entry_id: toNumberOrNull(item.entry_id),
+          qty: toNumberOrNull(item.qty) ?? 0,
+          boxes: toNumberOrNull(item.boxes),
+        }));
 
     const itemsByLocationId = new Map<number, KitteoLocationItem[]>();
-    ((itemsData as KitteoLocationItem[]) ?? []).forEach(item => {
-      const current = itemsByLocationId.get(item.location_id) ?? [];
-      current.push(item);
-      itemsByLocationId.set(item.location_id, current);
+    const itemsByLocationCode = new Map<string, KitteoLocationItem[]>();
+    normalizedItems.forEach(item => {
+      const normalizedLocationId = toNumberOrNull(item.location_id);
+      if (normalizedLocationId !== null) {
+        const current = itemsByLocationId.get(normalizedLocationId) ?? [];
+        current.push(item);
+        itemsByLocationId.set(normalizedLocationId, current);
+      }
+
+      const normalizedCode = normalizeLocationCode(item.location_code);
+      if (normalizedCode) {
+        const current = itemsByLocationCode.get(normalizedCode) ?? [];
+        current.push(item);
+        itemsByLocationCode.set(normalizedCode, current);
+      }
     });
 
-    const hydratedLocations = ((locationsData as KitteoLocation[]) ?? []).map(location => ({
-      ...location,
-      items: itemsByLocationId.get(location.id) ?? [],
-    }));
+    const hydratedLocations = normalizedLocations.map(location => {
+      const normalizedLocationId = toNumberOrNull(location.id);
+      const normalizedCode = normalizeLocationCode(location.location_code);
+      const relatedItems = normalizedLocationId !== null
+        ? (itemsByLocationId.get(normalizedLocationId) ?? itemsByLocationCode.get(normalizedCode) ?? [])
+        : (itemsByLocationCode.get(normalizedCode) ?? []);
+      return { ...location, items: relatedItems };
+    });
 
     setLocations(hydratedLocations);
     setLoading(false);
@@ -440,6 +486,16 @@ export function KitteoPage() {
 
   return (
     <div className="space-y-5">
+
+      {locationsLoadError && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">No se pudieron cargar los números de parte de Kitteo</p>
+            <p className="mt-0.5 text-xs">{locationsLoadError}. Verifica las políticas RLS de `kitteo_location_items` y actualiza la pantalla.</p>
+          </div>
+        </div>
+      )}
 
       {/* Header con tabs */}
       <div className="flex items-center justify-between">
