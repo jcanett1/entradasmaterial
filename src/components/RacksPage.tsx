@@ -842,8 +842,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     query = item.po === null ? query.is('po', null) : query.eq('po', item.po);
     query = item.fifo_number === null ? query.is('fifo_number', null) : query.eq('fifo_number', item.fifo_number);
-    query = item.entry_id === null ? query.is('entry_id', null) : query.eq('entry_id', item.entry_id);
 
+    // Las filas antiguas pueden repetir la misma combinación con entry_id NULL.
+    // La liberación debe quitar toda esa combinación solo dentro de esta locación,
+    // pero conservarla intacta en cualquier otra locación.
     const { error } = await query;
     if (error) throw new Error(`No se pudo liberar la asignación: ${error.message}`);
   };
