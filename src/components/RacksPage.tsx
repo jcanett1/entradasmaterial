@@ -416,10 +416,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       return;
     }
 
-    const { data: entriesData, error: entriesError } = await supabase
-      .from('entries')
-      .select('id, total_boxes')
-      .in('id', entryIds);
+    const [{ data: entriesData, error: entriesError }, { data: fifoData, error: fifoError }] = await Promise.all([
+      supabase.from('entries').select('id, total_boxes').in('id', entryIds),
+      supabase.from('fifo_labels').select('entry_id, fifo_number').in('entry_id', entryIds),
+    ]);
 
     if (entriesError) {
       console.error('Error actualizando cajas del detalle:', entriesError);
@@ -435,11 +435,24 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       if (entryId !== null && totalBoxes !== null) boxesByEntryId[entryId] = totalBoxes;
     });
 
+    if (fifoError) {
+      console.warn('No se pudo actualizar el FIFO del detalle:', fifoError);
+    }
+    const fifoByEntryId = new Map<number, number>();
+    (fifoData ?? []).forEach((label: { entry_id: unknown; fifo_number: unknown }) => {
+      const entryId = toNumberOrNull(label.entry_id);
+      const fifoNumber = toNumberOrNull(label.fifo_number);
+      if (entryId !== null && fifoNumber !== null && !fifoByEntryId.has(entryId)) {
+        fifoByEntryId.set(entryId, fifoNumber);
+      }
+    });
+
     const hydratedItems = items.map(item => {
       const entryId = toNumberOrNull(item.entry_id);
       return {
         ...item,
         entry_id: entryId,
+        fifo_number: item.fifo_number ?? (entryId !== null ? (fifoByEntryId.get(entryId) ?? null) : null),
         boxes: entryId !== null ? (boxesByEntryId[entryId] ?? item.boxes) : item.boxes,
       };
     });
@@ -1707,11 +1720,6 @@ function ItemCard({
             #{index + 1}
           </span>
           <p className={`text-sm font-black font-mono ${c.text}`}>{item.part_number}</p>
-          {item.fifo_number !== null && (
-            <span className="inline-flex items-center rounded-md bg-amber-100 border border-amber-200 px-2 py-0.5 text-[10px] font-black text-amber-700 whitespace-nowrap">
-              FIFO #{item.fifo_number}
-            </span>
-          )}
         </div>
       </div>
 
@@ -1735,17 +1743,6 @@ function ItemCard({
           <p className={`text-base font-black ${c.text}`}>{item.boxes}</p>
         </div>
 
-        {/* FIFO */}
-        {item.fifo_number !== null && (
-          <div className="bg-white/70 rounded-lg px-2 py-1.5">
-            <div className="flex items-center gap-1 mb-0.5">
-              <Hash className="h-3 w-3 text-gray-400" />
-              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">FIFO</p>
-            </div>
-            <p className={`text-base font-black ${c.text}`}>#{item.fifo_number}</p>
-          </div>
-        )}
-
         {/* PO */}
         {item.po && (
           <div className="bg-white/70 rounded-lg px-2 py-1.5">
@@ -1756,6 +1753,17 @@ function ItemCard({
             <p className={`text-xs font-bold ${c.text} truncate`}>{item.po}</p>
           </div>
         )}
+
+        {/* FIFO inmediatamente después del PO */}
+        <div className="bg-white/70 rounded-lg px-2 py-1.5">
+          <div className="flex items-center gap-1 mb-0.5">
+            <Hash className="h-3 w-3 text-gray-400" />
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">FIFO</p>
+          </div>
+          <p className={`text-base font-black ${c.text}`}>
+            {item.fifo_number !== null ? `#${item.fifo_number}` : '—'}
+          </p>
+        </div>
 
         {/* Fecha */}
         <div className="bg-white/70 rounded-lg px-2 py-1.5 col-span-2">
