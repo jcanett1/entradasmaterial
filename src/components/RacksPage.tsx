@@ -544,8 +544,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       const fifoNumbers = fifoByEntryId.get(entry.id) ?? [null];
       return fifoNumbers.map(fifoNumber => {
         const selectionKey = getEntrySelectionKey(entry.id, fifoNumber);
-        const assignedLocation = assignedSelectionLocations.get(selectionKey)
-          ?? assignedPartPoFifoLocations.get(getPartPoFifoKey(entry.part_number, entry.po, fifoNumber))
+        const assignedLocation = (entry.part_number && fifoNumber !== null
+          ? assignedPartPoFifoLocations.get(getPartPoFifoKey(entry.part_number, entry.po, fifoNumber))
+          : undefined)
+          ?? assignedSelectionLocations.get(selectionKey)
           ?? null;
         return {
           ...entry,
@@ -686,15 +688,17 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       const conflict = latestAssignments.find(item => {
         const entryId = toNumberOrNull(item.entry_id);
         const selectedEntry = selectedEntriesList.find(entry => {
-          const exactKeyMatch = selectedEntryKeys.has(getEntrySelectionKey(entry.id, item.fifo_number));
-          const partPoFifoMatch = Boolean(item.part_number && item.fifo_number !== null)
+          const hasCompleteAssignmentKey = Boolean(item.part_number && item.fifo_number !== null);
+          const partPoFifoMatch = hasCompleteAssignmentKey
             && getPartPoFifoKey(item.part_number, item.po, item.fifo_number)
               === getPartPoFifoKey(entry.part_number, entry.po, entry.fifo_number);
+          const exactKeyMatch = !hasCompleteAssignmentKey
+            && selectedEntryKeys.has(getEntrySelectionKey(entry.id, item.fifo_number));
           const legacyMatch = item.fifo_number === null
             && entry.fifo_number === null
             && entryId !== null
             && toNumberOrNull(entry.id) === entryId;
-          return exactKeyMatch || partPoFifoMatch || legacyMatch;
+          return partPoFifoMatch || exactKeyMatch || legacyMatch;
         });
         return Boolean(selectedEntry);
       });
