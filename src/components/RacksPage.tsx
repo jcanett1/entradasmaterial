@@ -452,21 +452,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setDetailLoading(false);
   };
 
-  /* ── Fetch entries para el modal (solo excluye los asignados en la locación destino) ── */
-  const fetchEntries = useCallback(async (term: string, targetLocationCode?: string) => {
+  /* ── Fetch entries para el modal (oculta los bloqueados en cualquier locación) ── */
+  const fetchEntries = useCallback(async (term: string) => {
     const requestId = ++fetchEntriesRequest.current;
     setEntriesLoadError(null);
 
-    const locationFilter = targetLocationCode?.trim() || undefined;
-    const itemsAssignmentsQuery = supabase
-      .from('location_items')
-      .select('entry_id, fifo_number, part_number, po, location_code');
-    const legacyAssignmentsQuery = supabase
-      .from('locations')
-      .select('entry_id, location_code, part_number, po');
     const [itemsAssignments, legacyAssignments] = await Promise.all([
-      locationFilter ? itemsAssignmentsQuery.eq('location_code', locationFilter) : itemsAssignmentsQuery,
-      locationFilter ? legacyAssignmentsQuery.eq('location_code', locationFilter) : legacyAssignmentsQuery,
+      supabase.from('location_items').select('entry_id, fifo_number, part_number, po, location_code'),
+      supabase.from('locations').select('entry_id, location_code, part_number, po'),
     ]);
 
     if (itemsAssignments.error && legacyAssignments.error) {
@@ -578,14 +571,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     if (assignModal) {
       setSaveError(null);
       setEntriesLoadError(null);
-      fetchEntries('', assignModal.location_code);
+      fetchEntries('');
       setSelectedEntryIds(new Set());
       setSelectedEntries([]);
     }
   }, [assignModal, fetchEntries]);
 
   useEffect(() => {
-    const t = setTimeout(() => { if (assignModal) fetchEntries(entrySearch, assignModal.location_code); }, 250);
+    const t = setTimeout(() => { if (assignModal) fetchEntries(entrySearch); }, 250);
     return () => clearTimeout(t);
   }, [entrySearch, assignModal, fetchEntries]);
 
@@ -686,11 +679,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         throw new Error(`No se pudo validar si el material ya estaba asignado: ${errors}`);
       }
 
-      const targetLocation = normalizeLocationCode(assignModal.location_code);
       const latestAssignments = [
         ...((latestItemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; location_code: string | null; part_number?: string | null; po?: string | null }[]),
         ...((latestLegacyAssignments.data ?? []).map(item => ({ ...item, fifo_number: null })) as { entry_id: unknown; fifo_number: unknown; location_code: string | null; part_number?: string | null; po?: string | null }[]),
-      ].filter(item => normalizeLocationCode(item.location_code) === targetLocation);
+      ];
       const conflict = latestAssignments.find(item => {
         const entryId = toNumberOrNull(item.entry_id);
         const selectedEntry = selectedEntriesList.find(entry => {
