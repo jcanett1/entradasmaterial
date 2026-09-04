@@ -6,7 +6,7 @@ import {
   RefreshCw, LogOut, Hash, Boxes, ClipboardList, Calendar,
   User, Archive, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, CheckCircle2, AlertCircle,
-  History, ArrowRightFromLine, Trash2,
+  History, ArrowRightFromLine, Trash2, ListChecks,
 } from 'lucide-react';
 
 /* ── Tipos ── */
@@ -126,6 +126,12 @@ export function KitteoPage() {
   const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null);
   const [exitSaving, setExitSaving] = useState(false);
   const [exitSuccess, setExitSuccess] = useState(false);
+
+  /* Modal de salidas masivas */
+  const [bulkExitOpen, setBulkExitOpen] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<number[]>([]);
+  const [bulkSearch, setBulkSearch] = useState('');
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   /* ── Estado historial ── */
   const [historial, setHistorial] = useState<KitteoExit[]>([]);
@@ -453,6 +459,75 @@ export function KitteoPage() {
     }, 1500);
   };
 
+  const bulkItems = locations.flatMap(location =>
+    (location.items ?? []).map(item => ({ location, item }))
+  );
+  const filteredBulkItems = bulkItems.filter(({ location, item }) => {
+    const term = bulkSearch.trim().toLowerCase();
+    return !term || [item.part_number, item.description ?? '', item.po ?? '', location.location_code, location.rack]
+      .join(' ').toLowerCase().includes(term);
+  });
+
+  const toggleBulkItem = (itemId: number) => {
+    setBulkSelectedIds(current => current.includes(itemId)
+      ? current.filter(id => id !== itemId)
+      : [...current, itemId]);
+  };
+
+  const handleBulkExit = async () => {
+    const selectedItems = bulkItems.filter(({ item }) => bulkSelectedIds.includes(item.id));
+    if (selectedItems.length === 0) return;
+    if (!confirm(`¿Registrar salida definitiva de ${selectedItems.length} número(s) de parte?`)) return;
+
+    setBulkSaving(true);
+    const now = new Date().toISOString();
+    const { error: insertError } = await supabase.from('kitteo_exits').insert(
+      selectedItems.map(({ location, item }) => ({
+        rack: location.rack, location_code: location.location_code,
+        part_number: item.part_number, description: item.description,
+        qty: item.qty, boxes: item.boxes, po: item.po,
+        registered_by: userDisplayName || null, exited_at: now,
+      }))
+    );
+
+    if (insertError) {
+      console.error('Error registrando salidas masivas KITTEO:', insertError);
+      alert(`No se pudieron registrar las salidas: ${insertError.message}`);
+      setBulkSaving(false);
+      return;
+    }
+
+    const deleteResults = await Promise.all(selectedItems.map(({ location, item }) =>
+      supabase.from('kitteo_location_items').delete().eq('id', item.id).eq('location_id', location.id)
+    ));
+    const deleteError = deleteResults.find(result => result.error)?.error;
+    if (deleteError) {
+      console.error('Error retirando artículos después de salidas masivas:', deleteError);
+      alert(`Las salidas quedaron registradas, pero algunos artículos no se pudieron retirar: ${deleteError.message}`);
+      setBulkSaving(false);
+      await fetchLocations();
+      return;
+    }
+
+    const affectedLocationIds = [...new Set(selectedItems.map(({ location }) => location.id))];
+    await Promise.all(affectedLocationIds.map(async locationId => {
+      const { count } = await supabase.from('kitteo_location_items')
+        .select('id', { count: 'exact', head: true }).eq('location_id', locationId);
+      if (count === 0) {
+        await supabase.from('kitteo_locations').update({
+          status: 'disponible', part_number: null, description: null, qty: null,
+          boxes: null, po: null, entry_id: null, registered_by: null, assigned_at: null,
+        }).eq('id', locationId);
+      }
+    }));
+
+    setBulkSaving(false);
+    setBulkExitOpen(false);
+    setBulkSelectedIds([]);
+    setBulkSearch('');
+    await fetchLocations();
+  };
+
   /* ── Filtrar locaciones ── */
   const filtered = locations.filter((loc) => {
     const matchRack = selectedRack === 'ALL' || loc.rack === selectedRack;
@@ -534,11 +609,19 @@ export function KitteoPage() {
             {stats.total} locaciones · {stats.ocupado} ocupadas · {stats.disponible} disponibles
           </p>
         </div>
-        <button
-          onClick={() => activeView === 'locaciones' ? fetchLocations() : fetchHistorial()}
-          className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-orange-600 hover:bg-orange-50 transition-all">
-          <RefreshCw className={`h-4 w-4 ${refreshing || histRefreshing ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setBulkExitOpen(true); setBulkSelectedIds([]); setBulkSearch(''); }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white text-sm font-bold shadow-sm hover:bg-red-700 transition-all">
+            <ListChecks className="h-4 w-4" />
+            Salidas en masa
+          </button>
+          <button
+            onClick={() => activeView === 'locaciones' ? fetchLocations() : fetchHistorial()}
+            className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-orange-600 hover:bg-orange-50 transition-all">
+            <RefreshCw className={`h-4 w-4 ${refreshing || histRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {/* Tabs: Locaciones | Historial */}
@@ -1289,6 +1372,74 @@ export function KitteoPage() {
                 <button onClick={() => setDetailModal(null)}
                   className="px-5 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                   Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkExitOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                  <ListChecks className="h-5 w-5 text-red-600" /> Salidas en masa
+                </h3>
+                <p className="mt-0.5 text-xs text-gray-500">Selecciona los números de parte que saldrán definitivamente de KITTEO.</p>
+              </div>
+              <button onClick={() => setBulkExitOpen(false)} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative min-w-[240px] flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input value={bulkSearch} onChange={e => setBulkSearch(e.target.value)}
+                    placeholder="Buscar número de parte, locación o PO..."
+                    className="w-full rounded-xl border border-gray-200 py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+                </div>
+                <span className="rounded-full bg-red-50 px-3 py-2 text-sm font-bold text-red-700">
+                  {bulkSelectedIds.length} seleccionados
+                </span>
+              </div>
+
+              <div className="max-h-[52vh] overflow-y-auto rounded-xl border border-gray-200">
+                {filteredBulkItems.length === 0 ? (
+                  <div className="px-6 py-12 text-center text-sm text-gray-500">No hay números de parte disponibles para salida.</div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {filteredBulkItems.map(({ location, item }) => {
+                      const checked = bulkSelectedIds.includes(item.id);
+                      return (
+                        <label key={item.id} className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors ${checked ? 'bg-red-50' : 'hover:bg-gray-50'}`}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleBulkItem(item.id)}
+                            className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">{item.part_number}</span>
+                              <span className="text-xs font-semibold text-gray-500">{location.location_code}</span>
+                              <span className="text-xs text-gray-400">Rack {location.rack}</span>
+                            </div>
+                            <p className="mt-1 truncate text-xs text-gray-500">QTY: {(item.qty ?? 0).toLocaleString()} {item.po ? `· PO: ${item.po}` : ''}{item.description ? ` · ${item.description}` : ''}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setBulkExitOpen(false)} disabled={bulkSaving}
+                  className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancelar</button>
+                <button onClick={handleBulkExit} disabled={bulkSaving || bulkSelectedIds.length === 0}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightFromLine className="h-4 w-4" />}
+                  Dar salida a {bulkSelectedIds.length || ''} seleccionado(s)
                 </button>
               </div>
             </div>
