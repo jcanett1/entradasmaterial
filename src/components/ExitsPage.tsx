@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, Archive, ArrowRightFromLine, CheckCircle2,
+  ChevronsLeft, ChevronsRight, Archive, ArrowRightFromLine, CheckCircle2, ListChecks,
 } from 'lucide-react';
 
 interface Exit {
@@ -95,6 +95,13 @@ export function ExitsPage() {
   const [selectedKitteoLoc, setSelectedKitteoLoc] = useState<KitteoLocation | null>(null);
   const [kitteoLocSearch, setKitteoLocSearch] = useState('');
   const [loadingKitteoLocs, setLoadingKitteoLocs] = useState(false);
+
+  /* ── Salidas masivas a locaciones KITTEO ── */
+  const [bulkKitteoOpen, setBulkKitteoOpen] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<number[]>([]);
+  const [bulkLocationIds, setBulkLocationIds] = useState<Record<number, number>>({});
+  const [bulkKitteoSaving, setBulkKitteoSaving] = useState(false);
+  const [bulkKitteoLocations, setBulkKitteoLocations] = useState<KitteoLocation[]>([]);
 
   useEffect(() => { fetchExits(); }, []);
 
@@ -296,6 +303,50 @@ export function ExitsPage() {
     setKitteoLocSearch('');
   };
 
+  const openBulkKitteo = async () => {
+    setBulkSelectedIds([]);
+    setBulkLocationIds({});
+    setBulkKitteoOpen(true);
+    setLoadingKitteoLocs(true);
+    const { data } = await supabase.from('kitteo_locations')
+      .select('id, rack, location_code, status').eq('status', 'disponible')
+      .order('rack', { ascending: true }).order('location_code', { ascending: true });
+    setBulkKitteoLocations((data as KitteoLocation[]) ?? []);
+    setLoadingKitteoLocs(false);
+  };
+
+  const handleBulkKitteoSave = async () => {
+    const selected = exits.filter(exit => bulkSelectedIds.includes(exit.id));
+    if (selected.length === 0 || selected.some(exit => !bulkLocationIds[exit.id])) return;
+    const locationIds = selected.map(exit => bulkLocationIds[exit.id]);
+    if (new Set(locationIds).size !== locationIds.length) {
+      alert('Cada número de parte debe tener una locación KITTEO diferente.');
+      return;
+    }
+    if (!confirm(`¿Enviar ${selected.length} transferencia(s) a KITTEO?`)) return;
+    setBulkKitteoSaving(true);
+    const now = new Date().toISOString();
+    const results = await Promise.all(selected.map(exit => {
+      const location = bulkKitteoLocations.find(loc => loc.id === bulkLocationIds[exit.id]);
+      return location ? supabase.from('kitteo_locations').update({
+        status: 'ocupado', part_number: exit.part_number, description: exit.description,
+        qty: exit.qty, boxes: exit.boxes, po: exit.po, entry_id: null,
+        registered_by: userDisplayName || null, assigned_at: now,
+      }).eq('id', location.id) : Promise.resolve({ error: { message: 'Locación no encontrada' } });
+    }));
+    const error = results.find(result => result.error)?.error;
+    if (error) {
+      alert(`No se pudieron completar todas las salidas: ${error.message}`);
+      setBulkKitteoSaving(false);
+      return;
+    }
+    setBulkKitteoSaving(false);
+    setBulkKitteoOpen(false);
+    setBulkSelectedIds([]);
+    setBulkLocationIds({});
+    await fetchExits();
+  };
+
   // Totales calculados
   const totalQtyAll = exits.reduce((s, e) => s + e.qty, 0);
   const totalBoxesAll = exits.reduce((s, e) => s + (e.boxes ?? 0), 0);
@@ -321,6 +372,11 @@ export function ExitsPage() {
           <button onClick={fetchExits}
             className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+          <button onClick={openBulkKitteo}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold text-white bg-red-600 shadow-md hover:bg-red-700 transition-all active:scale-95">
+            <ListChecks className="h-4 w-4" />
+            Salidas en masa
           </button>
           <button onClick={() => setShowForm(true)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
@@ -373,6 +429,7 @@ export function ExitsPage() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   {[
+                    { icon: <ListChecks className="h-3.5 w-3.5" />, label: 'Sel.' },
                     { icon: <Hash className="h-3.5 w-3.5" />, label: 'Part Number' },
                     { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
                     { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
@@ -392,9 +449,14 @@ export function ExitsPage() {
                 </tr>
               </thead>
               <tbody>
-                {pageExits.map((exit, idx) => (
-                  <tr key={exit.id} className="border-b border-gray-100 last:border-0 hover:bg-red-50/30 transition-colors"
+                  {pageExits.map((exit, idx) => (
+                    <tr key={exit.id} className="border-b border-gray-100 last:border-0 hover:bg-red-50/30 transition-colors"
                     style={{ background: idx % 2 === 0 ? '#ffffff' : '#fafafa' }}>
+                    <td className="px-3 py-4 text-center">
+                      <input type="checkbox" checked={bulkSelectedIds.includes(exit.id)}
+                        onChange={() => setBulkSelectedIds(current => current.includes(exit.id) ? current.filter(id => id !== exit.id) : [...current, exit.id])}
+                        className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" />
+                    </td>
                     {/* Part Number */}
                     <td className="px-5 py-4">
                       <div>
@@ -520,6 +582,47 @@ export function ExitsPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {bulkKitteoOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl border border-gray-100 max-h-[90vh] overflow-hidden">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2"><ListChecks className="h-5 w-5 text-red-600" /> Salidas en masa a KITTEO</h2>
+                <p className="text-xs text-gray-500 mt-1">Selecciona transferencias y asigna una locación disponible a cada una.</p>
+              </div>
+              <button onClick={() => setBulkKitteoOpen(false)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {loadingKitteoLocs ? <div className="py-10 flex justify-center"><Loader2 className="h-8 w-8 text-red-500 animate-spin" /></div> : (
+                <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-gray-200 divide-y divide-gray-100">
+                  {exits.map(exit => {
+                    const selected = bulkSelectedIds.includes(exit.id);
+                    return <div key={exit.id} className={`flex items-center gap-3 px-4 py-3 ${selected ? 'bg-red-50' : ''}`}>
+                      <input type="checkbox" checked={selected} onChange={() => setBulkSelectedIds(current => current.includes(exit.id) ? current.filter(id => id !== exit.id) : [...current, exit.id])} className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" />
+                      <span className="flex-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">{exit.part_number}</span>
+                      <span className="text-xs text-gray-500">QTY: {exit.qty.toLocaleString()}</span>
+                      <select value={bulkLocationIds[exit.id] ?? ''} disabled={!selected} onChange={e => setBulkLocationIds(current => ({ ...current, [exit.id]: Number(e.target.value) }))} className="w-44 rounded-lg border border-gray-200 bg-white px-2 py-2 text-sm disabled:bg-gray-100">
+                        <option value="">Locación KITTEO...</option>
+                        {bulkKitteoLocations.map(loc => <option key={loc.id} value={loc.id}>Rack {loc.rack} · {loc.location_code}</option>)}
+                      </select>
+                    </div>;
+                  })}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-gray-600">{bulkSelectedIds.length} seleccionada(s)</span>
+                <div className="flex gap-2">
+                  <button onClick={() => setBulkKitteoOpen(false)} disabled={bulkKitteoSaving} className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancelar</button>
+                  <button onClick={handleBulkKitteoSave} disabled={bulkKitteoSaving || bulkSelectedIds.length === 0 || bulkSelectedIds.some(id => !bulkLocationIds[id])} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    {bulkKitteoSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightFromLine className="h-4 w-4" />} Enviar a KITTEO
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
