@@ -12,6 +12,7 @@ import {
 /* ── Tipos ── */
 interface KitteoLocationItem {
   id: number;
+  source_transfer_id: number | null;
   location_id: number;
   location_code: string;
   part_number: string;
@@ -42,6 +43,7 @@ interface KitteoLocation {
 
 interface EntryOption {
   id: number;
+  entry_id: number | null;
   part_number: string;
   description: string | null;
   qty: number;
@@ -233,7 +235,31 @@ export function KitteoPage() {
       const relatedItems = normalizedLocationId !== null
         ? (itemsByLocationId.get(normalizedLocationId) ?? itemsByLocationCode.get(normalizedCode) ?? [])
         : (itemsByLocationCode.get(normalizedCode) ?? []);
-      return { ...location, items: relatedItems };
+
+      // Compatibilidad con locaciones ocupadas antes de que existiera la tabla hija.
+      // La fila virtual permite consultar y dar salida al artículo mientras se ejecuta
+      // la migración de respaldo; las asignaciones nuevas sí se guardan en la tabla hija.
+      if (relatedItems.length > 0 || !location.part_number) {
+        return { ...location, items: relatedItems };
+      }
+
+      return {
+        ...location,
+        items: [{
+          id: -(normalizedLocationId ?? 0),
+          source_transfer_id: null,
+          location_id: normalizedLocationId ?? 0,
+          location_code: location.location_code,
+          part_number: location.part_number,
+          description: location.description,
+          qty: location.qty ?? 0,
+          boxes: location.boxes,
+          po: location.po,
+          entry_id: toNumberOrNull(location.entry_id),
+          registered_by: location.registered_by,
+          assigned_at: location.assigned_at ?? new Date(0).toISOString(),
+        }],
+      };
     });
 
     setLocations(hydratedLocations);
@@ -273,7 +299,7 @@ export function KitteoPage() {
   const fetchEntries = useCallback(async (term: string) => {
     let query = supabase
       .from('transferes')
-      .select('id, part_number, description, qty, boxes, po, exited_at')
+      .select('id, entry_id, part_number, description, qty, boxes, po, exited_at')
       .order('exited_at', { ascending: false });
     if (term.trim()) {
       query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
@@ -306,12 +332,13 @@ export function KitteoPage() {
     const { error: itemError } = await supabase.from('kitteo_location_items').insert([{
       location_id: assignModal.id,
       location_code: assignModal.location_code,
+      source_transfer_id: selectedEntry.id,
       part_number: selectedEntry.part_number,
       description: selectedEntry.description,
       qty,
       boxes: selectedEntry.boxes,
       po: po || null,
-      entry_id: selectedEntry.id,
+      entry_id: selectedEntry.entry_id ?? null,
       registered_by: userDisplayName || null,
       assigned_at: new Date().toISOString(),
     }]);
@@ -333,6 +360,16 @@ export function KitteoPage() {
       alert(`El artículo se guardó, pero no se pudo actualizar el estado de la locación: ${locationError.message}`);
     }
 
+    const { error: transferError } = await supabase
+      .from('transferes')
+      .delete()
+      .eq('id', selectedEntry.id);
+
+    if (transferError) {
+      console.error('Error retirando transferencia después de asignar a KITTEO:', transferError);
+      alert(`El artículo se asignó a KITTEO, pero no se pudo retirar de Transferencia KITTEO: ${transferError.message}`);
+    }
+
     setSaving(false);
     setAssignModal(null);
     resetAssignForm();
@@ -352,11 +389,13 @@ export function KitteoPage() {
     if (!confirm(`¿Liberar solamente ${item.part_number} de la locación ${loc.location_code}?`)) return;
     setActionSaving(true);
 
-    const { error: deleteError } = await supabase
-      .from('kitteo_location_items')
-      .delete()
-      .eq('id', item.id)
-      .eq('location_id', loc.id);
+    const { error: deleteError } = item.id > 0
+      ? await supabase
+          .from('kitteo_location_items')
+          .delete()
+          .eq('id', item.id)
+          .eq('location_id', loc.id)
+      : { error: null };
 
     if (deleteError) {
       console.error('Error liberando artículo KITTEO:', deleteError);
@@ -416,11 +455,13 @@ export function KitteoPage() {
       return;
     }
 
-    const { error: deleteError } = await supabase
-      .from('kitteo_location_items')
-      .delete()
-      .eq('id', item.id)
-      .eq('location_id', location.id);
+    const { error: deleteError } = item.id > 0
+      ? await supabase
+          .from('kitteo_location_items')
+          .delete()
+          .eq('id', item.id)
+          .eq('location_id', location.id)
+      : { error: null };
 
     if (deleteError) {
       console.error('Error retirando artículo después de registrar salida:', deleteError);
@@ -498,7 +539,9 @@ export function KitteoPage() {
     }
 
     const deleteResults = await Promise.all(selectedItems.map(({ location, item }) =>
-      supabase.from('kitteo_location_items').delete().eq('id', item.id).eq('location_id', location.id)
+      item.id > 0
+        ? supabase.from('kitteo_location_items').delete().eq('id', item.id).eq('location_id', location.id)
+        : Promise.resolve({ error: null })
     ));
     const deleteError = deleteResults.find(result => result.error)?.error;
     if (deleteError) {

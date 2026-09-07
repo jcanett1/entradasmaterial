@@ -273,23 +273,93 @@ export function ExitsPage() {
     setSelectedKitteoLoc(null);
   }, [selectedKitteoRack, kitteoLocations, kitteoLocSearch]);
 
+  const clearKitteoLocation = async (locationId: number) => {
+    await supabase.from('kitteo_locations').update({
+      status: 'disponible',
+      part_number: null,
+      description: null,
+      qty: null,
+      boxes: null,
+      po: null,
+      entry_id: null,
+      registered_by: null,
+      assigned_at: null,
+    }).eq('id', locationId);
+  };
+
+  const moveTransferToKitteo = async (exit: Exit, location: KitteoLocation, assignedAt: string) => {
+    const { error: itemError } = await supabase.from('kitteo_location_items').insert([{
+      location_id: location.id,
+      location_code: location.location_code,
+      source_transfer_id: exit.id,
+      part_number: exit.part_number,
+      description: exit.description,
+      qty: exit.qty,
+      boxes: exit.boxes,
+      po: exit.po,
+      entry_id: exit.entry_id ?? null,
+      registered_by: userDisplayName || null,
+      assigned_at: assignedAt,
+    }]);
+
+    if (itemError) return itemError;
+
+    const { error: locationError } = await supabase.from('kitteo_locations').update({
+      status: 'ocupado',
+      part_number: exit.part_number,
+      description: exit.description,
+      qty: exit.qty,
+      boxes: exit.boxes,
+      po: exit.po,
+      entry_id: exit.entry_id ?? null,
+      registered_by: userDisplayName || null,
+      assigned_at: assignedAt,
+    }).eq('id', location.id);
+
+    if (locationError) {
+      await supabase.from('kitteo_location_items')
+        .delete()
+        .eq('location_id', location.id)
+        .eq('part_number', exit.part_number)
+        .eq('assigned_at', assignedAt);
+      return locationError;
+    }
+
+    const { error: transferError } = await supabase
+      .from('transferes')
+      .delete()
+      .eq('id', exit.id);
+
+    if (transferError) {
+      await supabase.from('kitteo_location_items')
+        .delete()
+        .eq('location_id', location.id)
+        .eq('part_number', exit.part_number)
+        .eq('assigned_at', assignedAt);
+      await clearKitteoLocation(location.id);
+      return transferError;
+    }
+
+    return null;
+  };
+
   /* Confirmar salida a KITTEO */
   const handleKitteoSave = async () => {
     if (!kitteoModal || !selectedKitteoLoc) return;
     setKitteoSaving(true);
 
-    // 1. Asignar el material a la locación KITTEO seleccionada
-    await supabase.from('kitteo_locations').update({
-      status: 'ocupado',
-      part_number: kitteoModal.part_number,
-      description: kitteoModal.description,
-      qty: kitteoModal.qty,
-      boxes: kitteoModal.boxes,
-      po: kitteoModal.po,
-      entry_id: null,
-      registered_by: userDisplayName || null,
-      assigned_at: new Date().toISOString(),
-    }).eq('id', selectedKitteoLoc.id);
+    const error = await moveTransferToKitteo(
+      kitteoModal,
+      selectedKitteoLoc,
+      new Date().toISOString(),
+    );
+
+    if (error) {
+      console.error('Error moviendo transferencia a KITTEO:', error);
+      alert(`No se pudo completar la salida a KITTEO: ${error.message}`);
+      setKitteoSaving(false);
+      return;
+    }
 
     setKitteoSaving(false);
     setKitteoSuccess(true);
@@ -336,16 +406,15 @@ export function ExitsPage() {
     const now = new Date().toISOString();
     const results = await Promise.all(selected.map(exit => {
       const location = bulkKitteoLocations.find(loc => loc.id === bulkLocationIds[exit.id]);
-      return location ? supabase.from('kitteo_locations').update({
-        status: 'ocupado', part_number: exit.part_number, description: exit.description,
-        qty: exit.qty, boxes: exit.boxes, po: exit.po, entry_id: null,
-        registered_by: userDisplayName || null, assigned_at: now,
-      }).eq('id', location.id) : Promise.resolve({ error: { message: 'Locación no encontrada' } });
+      return location
+        ? moveTransferToKitteo(exit, location, now)
+        : Promise.resolve({ message: 'Locación no encontrada' });
     }));
-    const error = results.find(result => result.error)?.error;
+    const error = results.find(result => result)?.message;
     if (error) {
-      alert(`No se pudieron completar todas las salidas: ${error.message}`);
+      alert(`No se pudieron completar todas las salidas: ${error}`);
       setBulkKitteoSaving(false);
+      await fetchExits();
       return;
     }
     setBulkKitteoSaving(false);
