@@ -5,6 +5,7 @@ import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Archive, ArrowRightFromLine, CheckCircle2, ListChecks,
+  History,
 } from 'lucide-react';
 
 interface Exit {
@@ -20,6 +21,22 @@ interface Exit {
   destination: string;
   registered_by: string | null;
   exited_at: string;
+}
+
+interface ShippingDirectRecord {
+  id: number;
+  source_transfer_id: number;
+  part_number: string;
+  description: string | null;
+  qty: number;
+  boxes: number | null;
+  po: string | null;
+  location_code: string | null;
+  destination: string;
+  registered_by: string | null;
+  exited_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
 }
 
 interface EntryOption {
@@ -111,6 +128,14 @@ export function ExitsPage() {
   const [shippingDirectSearch, setShippingDirectSearch] = useState('');
   const [shippingDirectSaving, setShippingDirectSaving] = useState(false);
 
+  /* ── Historial de Shipping Direct: solo lectura ── */
+  const [shippingDirectHistoryOpen, setShippingDirectHistoryOpen] = useState(false);
+  const [shippingDirectHistory, setShippingDirectHistory] = useState<ShippingDirectRecord[]>([]);
+  const [shippingDirectHistoryLoading, setShippingDirectHistoryLoading] = useState(false);
+  const [shippingDirectHistoryRefreshing, setShippingDirectHistoryRefreshing] = useState(false);
+  const [shippingDirectHistorySearch, setShippingDirectHistorySearch] = useState('');
+  const [shippingDirectHistoryError, setShippingDirectHistoryError] = useState<string | null>(null);
+
   useEffect(() => { fetchExits(); }, []);
 
   useEffect(() => {
@@ -131,6 +156,33 @@ export function ExitsPage() {
     setExits((data as Exit[]) ?? []);
     setLoading(false);
     setTimeout(() => setRefreshing(false), 500);
+  };
+
+  const fetchShippingDirectHistory = async () => {
+    setShippingDirectHistoryLoading(true);
+    setShippingDirectHistoryRefreshing(true);
+    setShippingDirectHistoryError(null);
+    const { data, error } = await supabase
+      .from('shipping_direct')
+      .select('id, source_transfer_id, part_number, description, qty, boxes, po, location_code, destination, registered_by, exited_at, reviewed_at, reviewed_by')
+      .order('exited_at', { ascending: false });
+
+    if (error) {
+      console.error('Error cargando historial Shipping Direct:', error);
+      setShippingDirectHistoryError(`No se pudo cargar el historial: ${error.message}`);
+      setShippingDirectHistory([]);
+    } else {
+      setShippingDirectHistory((data as ShippingDirectRecord[]) ?? []);
+    }
+
+    setShippingDirectHistoryLoading(false);
+    setTimeout(() => setShippingDirectHistoryRefreshing(false), 500);
+  };
+
+  const openShippingDirectHistory = () => {
+    setShippingDirectHistorySearch('');
+    setShippingDirectHistoryOpen(true);
+    void fetchShippingDirectHistory();
   };
 
   const fetchEntries = useCallback(async (term: string) => {
@@ -441,6 +493,20 @@ export function ExitsPage() {
     ].join(' ').toLowerCase().includes(term);
   });
 
+  const filteredShippingDirectHistory = shippingDirectHistory.filter(record => {
+    const term = shippingDirectHistorySearch.trim().toLowerCase();
+    return !term || [
+      record.part_number,
+      record.description ?? '',
+      record.po ?? '',
+      record.location_code ?? '',
+      record.registered_by ?? '',
+      record.destination,
+    ].join(' ').toLowerCase().includes(term);
+  });
+  const shippingDirectHistoryQty = filteredShippingDirectHistory.reduce((sum, record) => sum + (record.qty ?? 0), 0);
+  const shippingDirectHistoryBoxes = filteredShippingDirectHistory.reduce((sum, record) => sum + (record.boxes ?? 0), 0);
+
   const toggleShippingDirectSelection = (exitId: number) => {
     setShippingDirectSelectedIds(current => current.includes(exitId)
       ? current.filter(id => id !== exitId)
@@ -550,6 +616,11 @@ export function ExitsPage() {
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold text-white bg-indigo-600 shadow-md hover:bg-indigo-700 transition-all active:scale-95">
             <ArrowRightFromLine className="h-4 w-4" />
             Salida definitiva (Shipping Direct)
+          </button>
+          <button onClick={openShippingDirectHistory}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 shadow-sm hover:bg-indigo-100 transition-all active:scale-95">
+            <History className="h-4 w-4" />
+            Historial de transferencias a Shipping Direct
           </button>
           <button onClick={() => setShowForm(true)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
@@ -935,6 +1006,135 @@ export function ExitsPage() {
                   Registrar salida definitiva
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════
+          MODAL: HISTORIAL SHIPPING DIRECT — SOLO LECTURA
+      ══════════════════════════════════════════ */}
+      {shippingDirectHistoryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                  <History className="h-5 w-5 text-indigo-600" />
+                  Historial de transferencias a Shipping Direct
+                </h2>
+                <p className="mt-1 text-xs text-gray-500">Consulta de solo lectura. No se pueden editar ni eliminar registros.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void fetchShippingDirectHistory()}
+                  disabled={shippingDirectHistoryLoading}
+                  className="rounded-xl border border-gray-200 p-2 text-gray-500 transition-all hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                  aria-label="Actualizar historial de Shipping Direct"
+                >
+                  <RefreshCw className={`h-4 w-4 ${shippingDirectHistoryRefreshing ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShippingDirectHistoryOpen(false)}
+                  className="rounded-xl p-2 text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600"
+                  aria-label="Cerrar historial de Shipping Direct"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-4 overflow-y-auto p-6">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total salidas</p>
+                  <p className="text-2xl font-black text-indigo-700">{filteredShippingDirectHistory.length.toLocaleString()}</p>
+                </div>
+                <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">QTY total</p>
+                  <p className="text-2xl font-black text-blue-700">{shippingDirectHistoryQty.toLocaleString()}</p>
+                </div>
+                <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Cajas totales</p>
+                  <p className="text-2xl font-black text-purple-700">{shippingDirectHistoryBoxes.toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={shippingDirectHistorySearch}
+                  onChange={event => setShippingDirectHistorySearch(event.target.value)}
+                  placeholder="Buscar número de parte, PO, locación o usuario..."
+                  className="w-full rounded-xl border border-gray-200 py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+
+              {shippingDirectHistoryError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {shippingDirectHistoryError}
+                </div>
+              ) : shippingDirectHistoryLoading ? (
+                <div className="flex justify-center py-16"><Loader2 className="h-10 w-10 animate-spin text-indigo-500" /></div>
+              ) : filteredShippingDirectHistory.length === 0 ? (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 px-6 py-14 text-center">
+                  <History className="mx-auto mb-3 h-10 w-10 text-gray-300" />
+                  <p className="font-semibold text-gray-600">Sin salidas a Shipping Direct</p>
+                  <p className="mt-1 text-sm text-gray-400">Los registros enviados aparecerán aquí.</p>
+                </div>
+              ) : (
+                <div className="max-h-[48vh] overflow-auto rounded-xl border border-gray-200">
+                  <table className="w-full min-w-[980px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        {[
+                          { icon: <Hash className="h-3.5 w-3.5" />, label: 'Part Number' },
+                          { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
+                          { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
+                          { icon: <ClipboardList className="h-3.5 w-3.5" />, label: 'PO' },
+                          { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Locación' },
+                          { icon: <LogOut className="h-3.5 w-3.5" />, label: 'Destino', center: true },
+                          { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado por' },
+                          { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Fecha de salida' },
+                          { icon: <Hash className="h-3.5 w-3.5" />, label: 'ID transferencia' },
+                        ].map(header => (
+                          <th key={header.label} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider text-gray-500 ${header.center ? 'text-center' : 'text-left'}`}>
+                            <div className={`flex items-center gap-1.5 ${header.center ? 'justify-center' : ''}`}>
+                              <span className="text-indigo-400">{header.icon}</span>{header.label}
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredShippingDirectHistory.map((record, index) => (
+                        <tr key={record.id} className="border-b border-gray-100 last:border-0" style={{ background: index % 2 === 0 ? '#ffffff' : '#fafafa' }}>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">{record.part_number}</span>
+                            {record.description && <p className="mt-1 max-w-[180px] truncate text-xs text-gray-400">{record.description}</p>}
+                          </td>
+                          <td className="px-4 py-3 text-center"><span className="font-bold text-blue-700">{(record.qty ?? 0).toLocaleString()}</span></td>
+                          <td className="px-4 py-3 text-center"><span className="font-bold text-purple-700">{(record.boxes ?? 0).toLocaleString()}</span></td>
+                          <td className="px-4 py-3"><span className="font-mono text-sm text-purple-700">{record.po || '—'}</span></td>
+                          <td className="px-4 py-3"><span className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700">{record.location_code ? <><MapPin className="h-3 w-3" />{record.location_code}</> : '—'}</span></td>
+                          <td className="px-4 py-3 text-center"><span className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{record.destination}</span></td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{record.registered_by || 'Sin registro'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium text-gray-700">{new Date(record.exited_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                              <span className="mt-0.5 text-xs text-gray-400">{new Date(record.exited_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-500">#{record.source_transfer_id}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>
