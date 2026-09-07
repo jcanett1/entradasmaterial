@@ -185,6 +185,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
+  const [selectedDetailItemIds, setSelectedDetailItemIds] = useState<Set<number>>(new Set());
 
   const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
@@ -427,6 +428,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const openLocationDetail = async (location: Location) => {
     setDetailLoadError(null);
     setDetailLoading(true);
+    setSelectedDetailItemIds(new Set());
     setDetailModal(location);
 
     const items = location.items ?? [];
@@ -872,6 +874,43 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     if (error) throw new Error(`No se pudo liberar la asignación: ${error.message}`);
   };
 
+  const updateLocationAfterItemsChange = async (loc: Location, remaining: LocationItem[]) => {
+    const updates = remaining.length === 0
+      ? {
+          status: 'disponible' as const,
+          entry_id: null,
+          part_number: null,
+          qty: null,
+          po: null,
+          assigned_at: null,
+        }
+      : {
+          status: 'ocupado' as const,
+          entry_id: remaining[0].entry_id,
+          part_number: remaining[0].part_number,
+          qty: remaining[0].qty,
+          po: remaining[0].po,
+          assigned_at: remaining[0].assigned_at,
+        };
+    const { error } = await supabase.from('locations').update(updates).eq('id', loc.id);
+    if (error) throw new Error(`No se pudo actualizar la locación: ${error.message}`);
+  };
+
+  const toggleDetailItemSelection = (itemId: number) => {
+    setSelectedDetailItemIds(current => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
+  const getSelectedDetailItems = (loc: Location) =>
+    (loc.items ?? []).filter(item => selectedDetailItemIds.has(item.id));
+
+  const getUniqueSelectedAssignments = (items: LocationItem[]) =>
+    items.filter((item, index) => items.findIndex(candidate => isSameAssignment(candidate, item)) === index);
+
   /* ── Liberar item individual ── */
   const handleReleaseItem = async (loc: Location, item: LocationItem) => {
     setActionSaving(true);
@@ -964,6 +1003,80 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
   };
 
+  const handleReleaseSelected = async () => {
+    if (!detailModal) return;
+    const selectedItems = getSelectedDetailItems(detailModal);
+    const selectedAssignments = getUniqueSelectedAssignments(selectedItems);
+    if (selectedAssignments.length === 0) return;
+    if (!confirm(`¿Liberar ${selectedItems.length} número(s) de parte seleccionado(s) de ${detailModal.location_code}?`)) return;
+
+    setActionSaving(true);
+    try {
+      for (const item of selectedAssignments) {
+        await deleteAssignmentRows(detailModal, item);
+      }
+
+      const remaining = (detailModal.items ?? []).filter(item =>
+        !selectedItems.some(selected => isSameAssignment(item, selected)),
+      );
+      await updateLocationAfterItemsChange(detailModal, remaining);
+      setSelectedDetailItemIds(new Set());
+      setDetailModal(null);
+      await fetchLocations();
+      await onAssignmentsChange?.();
+    } catch (error) {
+      console.error('Error liberando artículos seleccionados:', error);
+      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudieron liberar los artículos seleccionados.');
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleExitSelected = async () => {
+    if (!detailModal) return;
+    const selectedItems = getSelectedDetailItems(detailModal);
+    const selectedAssignments = getUniqueSelectedAssignments(selectedItems);
+    if (selectedAssignments.length === 0) return;
+    if (!confirm(`¿Enviar ${selectedItems.length} número(s) de parte seleccionado(s) a Transferencia KITTEO?`)) return;
+
+    setActionSaving(true);
+    try {
+      const { error: transferError } = await supabase.from('transferes').insert(
+        selectedAssignments.map(item => ({
+          part_number: item.part_number,
+          description: null,
+          qty: item.qty,
+          boxes: item.boxes,
+          po: item.po,
+          location_code: detailModal.location_code,
+          location_id: detailModal.id,
+          entry_id: item.entry_id,
+          destination: 'KITTEO',
+          registered_by: userDisplayName || null,
+        })),
+      );
+      if (transferError) throw new Error(`No se pudo registrar la transferencia: ${transferError.message}`);
+
+      for (const item of selectedAssignments) {
+        await deleteAssignmentRows(detailModal, item);
+      }
+
+      const remaining = (detailModal.items ?? []).filter(item =>
+        !selectedItems.some(selected => isSameAssignment(item, selected)),
+      );
+      await updateLocationAfterItemsChange(detailModal, remaining);
+      setSelectedDetailItemIds(new Set());
+      setDetailModal(null);
+      await fetchLocations();
+      await onAssignmentsChange?.();
+    } catch (error) {
+      console.error('Error transfiriendo artículos seleccionados a KITTEO:', error);
+      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudieron transferir los artículos seleccionados.');
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
   /* ── Liberar toda la locación ── */
   const handleReleaseAll = async (loc: Location) => {
     if (!confirm(`¿Liberar toda la locación ${loc.location_code}? Se eliminarán todos los ${loc.items?.length ?? 0} números de parte asignados.`)) return;
@@ -978,10 +1091,15 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       assigned_at: null,
     }).eq('id', loc.id);
     setActionSaving(false);
+    setSelectedDetailItemIds(new Set());
     setDetailModal(null);
     await fetchLocations();
     await onAssignmentsChange?.();
   };
+
+  const detailSelectedCount = detailModal
+    ? (detailModal.items ?? []).filter(item => selectedDetailItemIds.has(item.id)).length
+    : 0;
 
   if (loading) {
     return (
@@ -1293,6 +1411,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                     groupIndex={groupIndex}
                     loc={detailModal}
                     actionSaving={actionSaving}
+                    selectedItemIds={selectedDetailItemIds}
+                    onToggleItem={toggleDetailItemSelection}
                     onRelease={item => handleReleaseItem(detailModal, item)}
                     onExit={item => handleExitItem(detailModal, item)}
                   />
@@ -1302,6 +1422,43 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
             {/* Footer acciones */}
             <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 space-y-2">
+              {detailSelectedCount > 0 && (
+                <>
+                  <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-indigo-700">
+                      <CheckSquare className="h-4 w-4" />
+                      {detailSelectedCount} seleccionado{detailSelectedCount === 1 ? '' : 's'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDetailItemIds(new Set())}
+                      className="text-xs font-semibold text-indigo-600 underline hover:text-indigo-800"
+                    >
+                      Limpiar selección
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={handleReleaseSelected}
+                      disabled={actionSaving}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50"
+                    >
+                      {actionSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlock className="h-3.5 w-3.5" />}
+                      Liberar seleccionados
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExitSelected}
+                      disabled={actionSaving}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-bold text-red-600 hover:bg-red-100 transition-all disabled:opacity-50"
+                    >
+                      {actionSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
+                      Transferencia KITTEO
+                    </button>
+                  </div>
+                </>
+              )}
               {countUniquePartNumbers(detailModal.items ?? []) < MAX_ITEMS && (
                 <button
                   onClick={() => { setAssignModal(detailModal); setDetailModal(null); }}
@@ -1691,12 +1848,14 @@ function LocationCell({
    GRUPO DE NÚMERO DE PARTE dentro del modal de detalle
 ════════════════════════════════════════════════════ */
 function PartNumberGroupCard({
-  group, groupIndex, loc, actionSaving, onRelease, onExit,
+  group, groupIndex, loc, actionSaving, selectedItemIds, onToggleItem, onRelease, onExit,
 }: {
   group: PartNumberGroup;
   groupIndex: number;
   loc: Location;
   actionSaving: boolean;
+  selectedItemIds: Set<number>;
+  onToggleItem: (itemId: number) => void;
   onRelease: (item: LocationItem) => void;
   onExit: (item: LocationItem) => void;
 }) {
@@ -1764,6 +1923,8 @@ function PartNumberGroupCard({
               index={index}
               loc={loc}
               actionSaving={actionSaving}
+              selected={selectedItemIds.has(item.id)}
+              onToggle={() => onToggleItem(item.id)}
               onRelease={() => onRelease(item)}
               onExit={() => onExit(item)}
             />
@@ -1778,12 +1939,14 @@ function PartNumberGroupCard({
    TARJETA DE ITEM dentro del modal de detalle
 ════════════════════════════════════════════════════ */
 function ItemCard({
-  item, index, loc, actionSaving, onRelease, onExit,
+  item, index, loc, actionSaving, selected, onToggle, onRelease, onExit,
 }: {
   item: LocationItem;
   index: number;
   loc: Location;
   actionSaving: boolean;
+  selected: boolean;
+  onToggle: () => void;
   onRelease: () => void;
   onExit: () => void;
 }) {
@@ -1803,12 +1966,21 @@ function ItemCard({
     <div className={`${c.bg} ${c.border} border rounded-xl p-3`}>
       {/* Encabezado del item */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggle}
+            onClick={event => event.stopPropagation()}
+            aria-label={`Seleccionar ${item.part_number}`}
+            className="h-4 w-4 flex-shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+          />
           <span className={`${c.badge} text-white text-[10px] font-black px-1.5 py-0.5 rounded`}>
             #{index + 1}
           </span>
-          <p className={`text-sm font-black font-mono ${c.text}`}>{item.part_number}</p>
+          <p className={`text-sm font-black font-mono ${c.text} break-all`}>{item.part_number}</p>
         </div>
+        {selected && <CheckSquare className="h-4 w-4 flex-shrink-0 text-indigo-600" aria-hidden="true" />}
       </div>
 
       {/* Datos en grid */}
