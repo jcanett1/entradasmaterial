@@ -15,6 +15,8 @@ interface Exit {
   boxes: number;
   po: string | null;
   location_code: string | null;
+  location_id: number | null;
+  entry_id: number | null;
   destination: string;
   registered_by: string | null;
   exited_at: string;
@@ -102,6 +104,12 @@ export function ExitsPage() {
   const [bulkLocationIds, setBulkLocationIds] = useState<Record<number, number>>({});
   const [bulkKitteoSaving, setBulkKitteoSaving] = useState(false);
   const [bulkKitteoLocations, setBulkKitteoLocations] = useState<KitteoLocation[]>([]);
+
+  /* ── Salida definitiva a Shipping Direct ── */
+  const [shippingDirectOpen, setShippingDirectOpen] = useState(false);
+  const [shippingDirectSelectedIds, setShippingDirectSelectedIds] = useState<number[]>([]);
+  const [shippingDirectSearch, setShippingDirectSearch] = useState('');
+  const [shippingDirectSaving, setShippingDirectSaving] = useState(false);
 
   useEffect(() => { fetchExits(); }, []);
 
@@ -347,6 +355,97 @@ export function ExitsPage() {
     await fetchExits();
   };
 
+  const openShippingDirect = () => {
+    setShippingDirectSelectedIds([]);
+    setShippingDirectSearch('');
+    setShippingDirectOpen(true);
+  };
+
+  const filteredShippingDirectExits = exits.filter(exit => {
+    const term = shippingDirectSearch.trim().toLowerCase();
+    return !term || [
+      exit.part_number,
+      exit.description ?? '',
+      exit.po ?? '',
+      exit.location_code ?? '',
+      exit.destination,
+    ].join(' ').toLowerCase().includes(term);
+  });
+
+  const toggleShippingDirectSelection = (exitId: number) => {
+    setShippingDirectSelectedIds(current => current.includes(exitId)
+      ? current.filter(id => id !== exitId)
+      : [...current, exitId]);
+  };
+
+  const toggleAllShippingDirectSelection = () => {
+    const visibleIds = filteredShippingDirectExits.map(exit => exit.id);
+    const allVisibleSelected = visibleIds.length > 0
+      && visibleIds.every(id => shippingDirectSelectedIds.includes(id));
+    setShippingDirectSelectedIds(current => allVisibleSelected
+      ? current.filter(id => !visibleIds.includes(id))
+      : [...new Set([...current, ...visibleIds])]);
+  };
+
+  const handleShippingDirectSave = async () => {
+    const selected = exits.filter(exit => shippingDirectSelectedIds.includes(exit.id));
+    if (selected.length === 0) return;
+    if (!confirm(`¿Registrar ${selected.length} salida(s) definitiva(s) a Shipping Direct?`)) return;
+
+    setShippingDirectSaving(true);
+    const { error: insertError } = await supabase.from('shipping_direct').insert(
+      selected.map(exit => ({
+        source_transfer_id: exit.id,
+        part_number: exit.part_number,
+        description: exit.description,
+        qty: exit.qty,
+        boxes: exit.boxes,
+        po: exit.po,
+        location_code: exit.location_code,
+        location_id: exit.location_id ?? null,
+        entry_id: exit.entry_id ?? null,
+        destination: 'SHIPPING DIRECT',
+        registered_by: userDisplayName || null,
+        exited_at: new Date().toISOString(),
+      })),
+    );
+
+    if (insertError) {
+      console.error('Error registrando salidas definitivas a Shipping Direct:', insertError);
+      alert(`No se pudieron registrar las salidas en Shipping Direct: ${insertError.message}`);
+      setShippingDirectSaving(false);
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from('transferes')
+      .delete()
+      .in('id', selected.map(exit => exit.id));
+
+    if (deleteError) {
+      console.error('Error retirando transferencias después de enviarlas a Shipping Direct:', deleteError);
+      const { error: rollbackError } = await supabase
+        .from('shipping_direct')
+        .delete()
+        .in('source_transfer_id', selected.map(exit => exit.id));
+      if (rollbackError) {
+        console.error('No se pudo revertir el registro parcial en Shipping Direct:', rollbackError);
+      }
+      alert(rollbackError
+        ? `No se completó la salida definitiva y quedó un registro parcial en Shipping Direct. Revisa la tabla antes de reintentar: ${rollbackError.message}`
+        : `No se completó la salida definitiva: no se pudieron retirar las transferencias de KITTEO (${deleteError.message}).`);
+      setShippingDirectSaving(false);
+      await fetchExits();
+      return;
+    }
+
+    setShippingDirectSaving(false);
+    setShippingDirectOpen(false);
+    setShippingDirectSelectedIds([]);
+    setShippingDirectSearch('');
+    await fetchExits();
+  };
+
   // Totales calculados
   const totalQtyAll = exits.reduce((s, e) => s + e.qty, 0);
   const totalBoxesAll = exits.reduce((s, e) => s + (e.boxes ?? 0), 0);
@@ -360,7 +459,7 @@ export function ExitsPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <LogOut className="h-5 w-5 text-red-500" />
@@ -368,7 +467,7 @@ export function ExitsPage() {
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">Todas las transferencias tienen como destino KITTEO</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button onClick={fetchExits}
             className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
@@ -377,6 +476,11 @@ export function ExitsPage() {
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold text-white bg-red-600 shadow-md hover:bg-red-700 transition-all active:scale-95">
             <ListChecks className="h-4 w-4" />
             Salidas en masa
+          </button>
+          <button onClick={openShippingDirect}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold text-white bg-indigo-600 shadow-md hover:bg-indigo-700 transition-all active:scale-95">
+            <ArrowRightFromLine className="h-4 w-4" />
+            Salida definitiva (Shipping Direct)
           </button>
           <button onClick={() => setShowForm(true)}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
@@ -620,6 +724,147 @@ export function ExitsPage() {
                     {bulkKitteoSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightFromLine className="h-4 w-4" />} Enviar a KITTEO
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════
+          MODAL: SALIDA DEFINITIVA — SHIPPING DIRECT
+      ══════════════════════════════════════════ */}
+      {shippingDirectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                  <ArrowRightFromLine className="h-5 w-5 text-indigo-600" />
+                  Salida definitiva (Shipping Direct)
+                </h2>
+                <p className="mt-1 text-xs text-gray-500">
+                  Selecciona uno o varios números de parte para enviarlos directamente a Shipping Direct.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShippingDirectOpen(false)}
+                disabled={shippingDirectSaving}
+                className="rounded-xl p-2 text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+                aria-label="Cerrar salida definitiva"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 overflow-y-auto p-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative min-w-[260px] flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={shippingDirectSearch}
+                    onChange={event => setShippingDirectSearch(event.target.value)}
+                    placeholder="Buscar número de parte, PO, locación o descripción..."
+                    className="w-full rounded-xl border border-gray-200 py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                </div>
+                <span className="rounded-full bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">
+                  {shippingDirectSelectedIds.length} seleccionado(s)
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-indigo-800">
+                  <input
+                    type="checkbox"
+                    checked={filteredShippingDirectExits.length > 0 && filteredShippingDirectExits.every(exit => shippingDirectSelectedIds.includes(exit.id))}
+                    onChange={toggleAllShippingDirectSelection}
+                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  Seleccionar todos los visibles
+                  <span className="text-xs font-normal text-indigo-600">({filteredShippingDirectExits.length})</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShippingDirectSelectedIds([])}
+                  disabled={shippingDirectSelectedIds.length === 0 || shippingDirectSaving}
+                  className="text-xs font-semibold text-indigo-600 underline hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Limpiar selección
+                </button>
+              </div>
+
+              <div className="max-h-[52vh] overflow-y-auto rounded-xl border border-gray-200 p-2">
+                {filteredShippingDirectExits.length === 0 ? (
+                  <div className="px-6 py-12 text-center text-sm text-gray-500">
+                    No hay transferencias disponibles para salida definitiva.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {filteredShippingDirectExits.map(exit => {
+                      const selected = shippingDirectSelectedIds.includes(exit.id);
+                      return (
+                        <label
+                          key={exit.id}
+                          className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${selected ? 'border-indigo-300 bg-indigo-50' : 'border-gray-100 bg-white hover:border-indigo-200 hover:bg-gray-50'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleShippingDirectSelection(exit.id)}
+                            className="mt-1 h-4 w-4 flex-shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">
+                                {exit.part_number}
+                              </span>
+                              {exit.location_code && (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
+                                  <MapPin className="h-3 w-3" />{exit.location_code}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+                              <span className="font-semibold text-blue-700">QTY: {exit.qty.toLocaleString()}</span>
+                              <span className="font-semibold text-purple-700">Cajas: {(exit.boxes ?? 0).toLocaleString()}</span>
+                              {exit.po && <span>PO: {exit.po}</span>}
+                            </div>
+                            {exit.description && <p className="mt-1 truncate text-xs text-gray-400">{exit.description}</p>}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                <ArrowRightFromLine className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+                <p>
+                  Esta acción es definitiva. Los registros seleccionados se guardarán en <strong>shipping_direct</strong> y dejarán de aparecer en la cola de Transferencia KITTEO.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShippingDirectOpen(false)}
+                  disabled={shippingDirectSaving}
+                  className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShippingDirectSave}
+                  disabled={shippingDirectSaving || shippingDirectSelectedIds.length === 0}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {shippingDirectSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightFromLine className="h-4 w-4" />}
+                  Registrar salida definitiva
+                </button>
               </div>
             </div>
           </div>
