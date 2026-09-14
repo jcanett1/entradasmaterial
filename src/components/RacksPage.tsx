@@ -105,6 +105,47 @@ const toNumberOrNull = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const ENTRY_QUERY_CHUNK_SIZE = 500;
+type EntryBoxRow = { id: unknown; total_boxes: unknown };
+type FifoLabelRow = { entry_id: unknown; fifo_number: unknown };
+
+async function fetchEntryBoxesByIds(entryIds: number[]) {
+  const uniqueEntryIds = [...new Set(entryIds)];
+  const entriesData: EntryBoxRow[] = [];
+
+  for (let index = 0; index < uniqueEntryIds.length; index += ENTRY_QUERY_CHUNK_SIZE) {
+    const chunk = uniqueEntryIds.slice(index, index + ENTRY_QUERY_CHUNK_SIZE);
+    const { data, error } = await supabase
+      .from('entries')
+      .select('id, total_boxes')
+      .in('id', chunk);
+
+    if (error) return { data: entriesData, error };
+    entriesData.push(...((data ?? []) as EntryBoxRow[]));
+  }
+
+  return { data: entriesData, error: null };
+}
+
+async function fetchFifoLabelsByEntryIds(entryIds: number[]) {
+  const uniqueEntryIds = [...new Set(entryIds)];
+  const fifoData: FifoLabelRow[] = [];
+
+  for (let index = 0; index < uniqueEntryIds.length; index += ENTRY_QUERY_CHUNK_SIZE) {
+    const chunk = uniqueEntryIds.slice(index, index + ENTRY_QUERY_CHUNK_SIZE);
+    const { data, error } = await supabase
+      .from('fifo_labels')
+      .select('entry_id, fifo_number')
+      .in('entry_id', chunk)
+      .order('fifo_number', { ascending: true });
+
+    if (error) return { data: fifoData, error };
+    fifoData.push(...((data ?? []) as FifoLabelRow[]));
+  }
+
+  return { data: fifoData, error: null };
+}
+
 const getUniquePartNumberSet = (partNumbers: string[]) =>
   new Set(partNumbers.map(normalizePartNumber).filter(Boolean));
 
@@ -197,10 +238,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     ]).filter((id): id is number => id !== null))];
     if (entryIds.length === 0) return;
 
-    const { data: entriesData, error: entriesError } = await supabase
-      .from('entries')
-      .select('id, total_boxes')
-      .in('id', entryIds);
+    const { data: entriesData, error: entriesError } = await fetchEntryBoxesByIds(entryIds);
 
     if (entriesError) {
       console.error('Error hidratando cajas para las tarjetas:', entriesError);
@@ -324,10 +362,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           .filter((id): id is number => id !== null),
       ])];
       if (missingEntryIds.length > 0) {
-        const { data: entriesData, error: entriesError } = await supabase
-          .from('entries')
-          .select('id, total_boxes')
-          .in('id', missingEntryIds);
+        const { data: entriesData, error: entriesError } = await fetchEntryBoxesByIds(missingEntryIds);
 
         if (entriesError) {
           console.warn('No se pudieron cargar las cajas de registros sin relación embebida:', entriesError);
@@ -444,8 +479,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
 
     const [{ data: entriesData, error: entriesError }, { data: fifoData, error: fifoError }] = await Promise.all([
-      supabase.from('entries').select('id, total_boxes').in('id', entryIds),
-      supabase.from('fifo_labels').select('entry_id, fifo_number').in('entry_id', entryIds),
+      fetchEntryBoxesByIds(entryIds),
+      fetchFifoLabelsByEntryIds(entryIds),
     ]);
 
     if (entriesError) {
@@ -593,7 +628,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     const entryIds = normalizedEntries.map(entry => entry.id);
     const { data: fifoData, error: fifoError } = entryIds.length > 0
-      ? await supabase.from('fifo_labels').select('entry_id, fifo_number').in('entry_id', entryIds).order('fifo_number', { ascending: true })
+      ? await fetchFifoLabelsByEntryIds(entryIds)
       : { data: [], error: null };
     if (fifoError) {
       console.warn('No se pudieron cargar los FIFO para el modal:', fifoError);
