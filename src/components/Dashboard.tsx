@@ -77,16 +77,35 @@ export function Dashboard() {
   const fetchRecords = async () => {
     setRefreshing(true);
     setLoading(true);
-    const { data, error } = await supabase
-      .from('entries')
-      .select('*')
-      .order('registered_at', { ascending: false });
-    if (error) console.error('Error fetching records:', error);
+    const pageSize = 1000;
+    const recordsData: unknown[] = [];
+    let recordsError: { message: string } | null = null;
+
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from('entries')
+        .select('*')
+        .order('registered_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        recordsError = error;
+        break;
+      }
+
+      recordsData.push(...(data ?? []));
+      if ((data ?? []).length < pageSize) break;
+    }
+
+    if (recordsError) console.error('Error fetching records:', recordsError);
     else {
-      const normalizedRecords = (data ?? []).map(record => ({
-        ...record,
-        id: toEntryId(record.id) ?? record.id,
-      })) as Entry[];
+      const normalizedRecords = recordsData.map(record => {
+        const entry = record as Entry;
+        return {
+          ...entry,
+          id: toEntryId(entry.id) ?? entry.id,
+        };
+      });
       setRecords(normalizedRecords);
     }
     setLoading(false);

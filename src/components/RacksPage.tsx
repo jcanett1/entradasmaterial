@@ -632,15 +632,28 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       }
     });
 
-    let query = supabase
-      .from('entries')
-      .select('id, part_number, description, total_units, total_boxes, po')
-      .order('registered_at', { ascending: false });
-    if (term.trim() && !/^\d+$/.test(term.trim())) {
-      query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%,po.ilike.%${term}%`);
+    const entriesData: Omit<EntryOption, 'fifo_number' | 'selection_key'>[] = [];
+    let entriesError: { message: string } | null = null;
+
+    for (let from = 0; ; from += pageSize) {
+      let query = supabase
+        .from('entries')
+        .select('id, part_number, description, total_units, total_boxes, po')
+        .order('registered_at', { ascending: false });
+      if (term.trim() && !/^\d+$/.test(term.trim())) {
+        query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%,po.ilike.%${term}%`);
+      }
+
+      const { data, error } = await query.range(from, from + pageSize - 1);
+      if (error) {
+        entriesError = error;
+        break;
+      }
+
+      entriesData.push(...((data ?? []) as Omit<EntryOption, 'fifo_number' | 'selection_key'>[]));
+      if ((data ?? []).length < pageSize) break;
     }
 
-    const { data, error: entriesError } = await query;
     if (entriesError) {
       if (requestId !== fetchEntriesRequest.current) return;
       console.error('Error consultando registros de inventario:', entriesError);
@@ -651,7 +664,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
     if (requestId !== fetchEntriesRequest.current) return;
 
-    const normalizedEntries = ((data as Omit<EntryOption, 'fifo_number' | 'selection_key'>[]) ?? [])
+    const normalizedEntries = entriesData
       .map(entry => ({ ...entry, id: toNumberOrNull(entry.id) ?? entry.id }));
     normalizedEntries.forEach(entry => {
       const totalBoxes = toNumberOrNull(entry.total_boxes);
