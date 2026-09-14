@@ -180,6 +180,36 @@ const groupLocationItems = (items: LocationItem[]): PartNumberGroup[] => {
   return Array.from(groups.values());
 };
 
+const filterLocationGroups = (groups: PartNumberGroup[], searchTerm: string): PartNumberGroup[] => {
+  const trimmedTerm = searchTerm.trim();
+  if (!trimmedTerm) return groups;
+
+  const normalizedPartTerm = normalizePartNumber(trimmedTerm);
+  const normalizedFifoTerm = trimmedTerm
+    .replace(/^(?:FIFO|F)\s*#?/i, '')
+    .replace(/^#/, '')
+    .trim();
+
+  return groups.flatMap(group => {
+    if (normalizePartNumber(group.partNumber).includes(normalizedPartTerm)) {
+      return [group];
+    }
+
+    const matchingItems = normalizedFifoTerm
+      ? group.items.filter(item => String(item.fifo_number ?? '').includes(normalizedFifoTerm))
+      : [];
+    if (matchingItems.length === 0) return [];
+
+    return [{
+      ...group,
+      items: matchingItems,
+      count: matchingItems.length,
+      totalQty: matchingItems.reduce((sum, item) => sum + item.qty, 0),
+      totalBoxes: matchingItems.reduce((sum, item) => sum + item.boxes, 0),
+    }];
+  });
+};
+
 const RACK_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   A: { bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    badge: 'bg-blue-600' },
   B: { bg: 'bg-indigo-50',  border: 'border-indigo-200',  text: 'text-indigo-700',  badge: 'bg-indigo-600' },
@@ -227,6 +257,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
   const [selectedDetailItemIds, setSelectedDetailItemIds] = useState<Set<number>>(new Set());
+  const [detailSearchTerm, setDetailSearchTerm] = useState('');
 
   const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
 
@@ -464,6 +495,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setDetailLoadError(null);
     setDetailLoading(true);
     setSelectedDetailItemIds(new Set());
+    setDetailSearchTerm('');
     setDetailModal(location);
 
     const items = location.items ?? [];
@@ -1135,6 +1167,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const detailSelectedCount = detailModal
     ? (detailModal.items ?? []).filter(item => selectedDetailItemIds.has(item.id)).length
     : 0;
+  const detailGroups = detailModal ? groupLocationItems(detailModal.items ?? []) : [];
+  const visibleDetailGroups = filterLocationGroups(detailGroups, detailSearchTerm);
 
   if (loading) {
     return (
@@ -1285,7 +1319,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                 {filtered.map(loc => (
                   <LocationCell key={loc.id} loc={loc} colors={c}
                     onAssign={() => setAssignModal(loc)}
-                    onDetail={() => setDetailModal(loc)} />
+                    onDetail={() => { setDetailSearchTerm(''); setDetailModal(loc); }} />
                 ))}
               </div>
             </div>
@@ -1325,11 +1359,46 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                   </div>
                 </div>
               </div>
-              <button onClick={() => { setDetailModal(null); setDetailLoadError(null); }}
+              <button onClick={() => { setDetailModal(null); setDetailLoadError(null); setDetailSearchTerm(''); }}
                 className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {(detailModal.items?.length ?? 0) > 0 && (
+              <div className="px-6 pt-3 flex-shrink-0">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-indigo-400" />
+                  <input
+                    id="rack-detail-search"
+                    name="rack_detail_search"
+                    type="search"
+                    value={detailSearchTerm}
+                    onChange={event => setDetailSearchTerm(event.target.value)}
+                    aria-label={`Buscar en la locación ${detailModal.location_code} por número de parte o FIFO`}
+                    placeholder="Buscar número de parte o FIFO..."
+                    className="w-full rounded-xl border border-indigo-200 bg-indigo-50/50 py-2.5 pl-9 pr-10 text-sm text-gray-700 outline-none transition-all placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-200"
+                  />
+                  {detailSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setDetailSearchTerm('')}
+                      aria-label="Limpiar búsqueda de la locación"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1 text-gray-400 hover:bg-white hover:text-gray-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                {detailSearchTerm.trim() && (
+                  <p className="mt-1.5 px-1 text-[10px] font-semibold text-gray-500">
+                    {visibleDetailGroups.length > 0
+                      ? `${visibleDetailGroups.length} número${visibleDetailGroups.length === 1 ? '' : 's'} de parte encontrado${visibleDetailGroups.length === 1 ? '' : 's'}`
+                      : 'No hay coincidencias en esta locación'}
+                  </p>
+                )}
+              </div>
+            )}
 
             {detailLoading && (
               <div className="mx-6 mt-3 flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">
@@ -1372,10 +1441,11 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                   <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                       <Hash className="h-3 w-3 text-indigo-400" />
-                      Números de parte en esta locación ({groupLocationItems(locItems).length} distintos)
+                      Números de parte en esta locación ({detailGroups.length} distintos)
+                      {detailSearchTerm.trim() ? ` · ${visibleDetailGroups.length} encontrados` : ''}
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                      {groupLocationItems(locItems).map((group, idx) => {
+                      {(detailSearchTerm.trim() ? visibleDetailGroups : detailGroups).map((group, idx) => {
                         const tagColors = [
                           'bg-indigo-100 text-indigo-700 border-indigo-200',
                           'bg-purple-100 text-purple-700 border-purple-200',
@@ -1438,8 +1508,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                   <CheckCircle2 className="h-10 w-10 mx-auto mb-2 text-emerald-300" />
                   <p className="text-sm font-medium">Locación disponible</p>
                 </div>
+              ) : visibleDetailGroups.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <Search className="h-10 w-10 mx-auto mb-2 text-indigo-200" />
+                  <p className="text-sm font-medium">No se encontraron registros</p>
+                  <p className="mt-1 text-xs">Prueba con otro número de parte o FIFO.</p>
+                </div>
               ) : (
-                groupLocationItems(detailModal.items ?? []).map((group, groupIndex) => (
+                visibleDetailGroups.map((group, groupIndex) => (
                   <PartNumberGroupCard
                     key={group.key}
                     group={group}
