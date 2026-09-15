@@ -59,6 +59,7 @@ interface EntryOption {
   id: number;
   part_number: string;
   description: string | null;
+  registered_at: string;
   total_units: number;
   total_boxes: number;
   po: string | null;
@@ -109,6 +110,29 @@ const toNumberOrNull = (value: unknown): number | null => {
 const ENTRY_QUERY_CHUNK_SIZE = 500;
 type EntryBoxRow = { id: unknown; total_boxes: unknown };
 type FifoLabelRow = { entry_id: unknown; fifo_number: unknown };
+type HistoricalExitRow = {
+  entry_id: unknown;
+  part_number: string | null;
+  po: string | null;
+  qty: unknown;
+  boxes: unknown;
+  exited_at: string | null;
+};
+
+const matchesHistoricalExit = (entry: EntryOption, exit: HistoricalExitRow) => {
+  const exitEntryId = toNumberOrNull(exit.entry_id);
+  if (exitEntryId !== null) return entry.id === exitEntryId;
+  if (getPartPoKey(entry.part_number, entry.po) !== getPartPoKey(exit.part_number, exit.po)) return false;
+
+  const entryTime = Date.parse(entry.registered_at);
+  const exitTime = exit.exited_at ? Date.parse(exit.exited_at) : Number.NaN;
+  if (Number.isNaN(entryTime) || Number.isNaN(exitTime) || entryTime > exitTime) return false;
+
+  const exitQty = toNumberOrNull(exit.qty);
+  const exitBoxes = toNumberOrNull(exit.boxes);
+  return (exitQty === null || entry.total_units === exitQty)
+    && (exitBoxes === null || entry.total_boxes === exitBoxes);
+};
 
 async function fetchEntryBoxesByIds(entryIds: number[]) {
   const uniqueEntryIds = [...new Set(entryIds)];
@@ -566,6 +590,20 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     setEntriesLoadError(null);
 
     const pageSize = 1000;
+    const loadAllPages = async <T,>(loadPage: (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>) => {
+      const rows: T[] = [];
+      let error: { message: string } | null = null;
+      for (let from = 0; ; from += pageSize) {
+        const result = await loadPage(from, from + pageSize - 1);
+        if (result.error) {
+          error = result.error;
+          break;
+        }
+        rows.push(...(result.data ?? []));
+        if ((result.data ?? []).length < pageSize) break;
+      }
+      return { data: rows, error };
+    };
     const itemAssignmentRows: { entry_id: unknown; fifo_number: unknown; part_number: string | null; po: string | null; location_code?: string | null }[] = [];
     const legacyAssignmentRows: { entry_id: unknown; location_code?: string | null }[] = [];
     let itemsAssignmentError: { message: string } | null = null;
@@ -600,6 +638,43 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     const itemsAssignments = { data: itemAssignmentRows, error: itemsAssignmentError };
     const legacyAssignments = { data: legacyAssignmentRows, error: legacyAssignmentError };
 
+    const [shippingDirectResult, kitteoExitsResult, transferesResult, kitteoItemsResult, kitteoLocationsResult] = await Promise.all([
+      loadAllPages<HistoricalExitRow>(async (from, to) => supabase
+        .from('shipping_direct')
+        .select('entry_id, part_number, po, qty, boxes, exited_at')
+        .range(from, to)),
+      (async () => {
+        const currentSchema = await loadAllPages<HistoricalExitRow>(async (from, to) => supabase
+          .from('kitteo_exits')
+          .select('entry_id, part_number, po, qty, boxes, exited_at')
+          .range(from, to));
+        if (!currentSchema.error) return currentSchema;
+
+        const legacySchema = await loadAllPages<Omit<HistoricalExitRow, 'entry_id'>>(async (from, to) => supabase
+          .from('kitteo_exits')
+          .select('part_number, po, qty, boxes, exited_at')
+          .range(from, to));
+        return {
+          data: legacySchema.data.map(row => ({ ...row, entry_id: null })),
+          error: legacySchema.error,
+        };
+      })(),
+      loadAllPages<{ entry_id: unknown; location_code: string | null }>(async (from, to) => supabase
+        .from('transferes')
+        .select('entry_id, location_code')
+        .range(from, to)),
+      loadAllPages<{ entry_id: unknown; location_code: string | null }>(async (from, to) => supabase
+        .from('kitteo_location_items')
+        .select('entry_id, location_code')
+        .range(from, to)),
+      loadAllPages<{ entry_id: unknown; location_code: string | null }>(async (from, to) => supabase
+        .from('kitteo_locations')
+        .select('entry_id, location_code')
+        .eq('status', 'ocupado')
+        .not('entry_id', 'is', null)
+        .range(from, to)),
+    ]);
+
     if (itemsAssignments.error && legacyAssignments.error) {
       if (requestId !== fetchEntriesRequest.current) return;
       const message = `${itemsAssignments.error.message} | ${legacyAssignments.error.message}`;
@@ -615,11 +690,27 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     if (legacyAssignments.error) {
       console.warn('No se pudieron consultar las asignaciones heredadas de locations:', legacyAssignments.error);
     }
+    if (shippingDirectResult.error) {
+      console.warn('No se pudo consultar el historial de Shipping Direct:', shippingDirectResult.error);
+    }
+    if (kitteoExitsResult.error) {
+      console.warn('No se pudo consultar el historial de salidas definitivas KITTEO:', kitteoExitsResult.error);
+    }
+    if (transferesResult.error) {
+      console.warn('No se pudieron consultar las transferencias activas:', transferesResult.error);
+    }
+    if (kitteoItemsResult.error) {
+      console.warn('No se pudieron consultar los artículos activos de KITTEO:', kitteoItemsResult.error);
+    }
+    if (kitteoLocationsResult.error) {
+      console.warn('No se pudieron consultar las locaciones activas de KITTEO:', kitteoLocationsResult.error);
+    }
 
     // Inventario considera bloqueada toda la entrada cuando alguna de sus
     // asignaciones aparece en una locación, sin importar el FIFO seleccionado.
     // El modal debe aplicar el mismo criterio y no mostrar otros FIFO de esa entrada.
     const blockedEntryIds = new Set<number>();
+    const unavailableEntryIds = new Set<number>();
     const assignedSelectionLocations = new Map<string, string>();
     const assignedPartPoFifoLocations = new Map<string, string>();
     ((itemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; part_number: string | null; po: string | null; location_code?: string | null }[]).forEach(row => {
@@ -640,6 +731,13 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         assignedSelectionLocations.set(getEntrySelectionKey(entryId, null), row.location_code || 'otra locación');
       }
     });
+    const addUnavailableEntry = (entryId: unknown) => {
+      const normalizedId = toNumberOrNull(entryId);
+      if (normalizedId !== null) unavailableEntryIds.add(normalizedId);
+    };
+    transferesResult.data.forEach(row => addUnavailableEntry(row.entry_id));
+    kitteoItemsResult.data.forEach(row => addUnavailableEntry(row.entry_id));
+    kitteoLocationsResult.data.forEach(row => addUnavailableEntry(row.entry_id));
 
     const entriesData: Omit<EntryOption, 'fifo_number' | 'selection_key'>[] = [];
     let entriesError: { message: string } | null = null;
@@ -647,7 +745,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     for (let from = 0; ; from += pageSize) {
       let query = supabase
         .from('entries')
-        .select('id, part_number, description, total_units, total_boxes, po')
+        .select('id, part_number, description, registered_at, total_units, total_boxes, po')
         .order('registered_at', { ascending: false });
       if (term.trim() && !/^\d+$/.test(term.trim())) {
         query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%,po.ilike.%${term}%`);
@@ -716,6 +814,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         };
       });
     });
+    const terminalExitRows = [
+      ...shippingDirectResult.data,
+      ...kitteoExitsResult.data,
+    ];
     const searchValue = term.trim().toLowerCase();
     const availableEntries = options.filter(entry => {
       const matchesSearch = !searchValue
@@ -723,9 +825,14 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         || (entry.description ?? '').toLowerCase().includes(searchValue)
         || (entry.po ?? '').toLowerCase().includes(searchValue)
         || String(entry.fifo_number ?? '').includes(searchValue);
+      const hasHistoricalExit = terminalExitRows.some(exit => matchesHistoricalExit(entry, exit));
       // También cubre entradas asignadas con una fila heredada o con un FIFO
       // distinto al que se está mostrando en esta opción.
-      return matchesSearch && !blockedEntryIds.has(entry.id) && !entry.assigned_location;
+      return matchesSearch
+        && !blockedEntryIds.has(entry.id)
+        && !unavailableEntryIds.has(entry.id)
+        && !hasHistoricalExit
+        && !entry.assigned_location;
     });
     setEntries(availableEntries);
   }, []);
@@ -1683,25 +1790,27 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                     </div>
 
                     {/* Lista de entries con checkboxes */}
-                    <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                    <div className="rounded-xl border border-gray-200 p-2 overflow-y-auto max-h-[42vh]">
                       {visibleEntries.length === 0 ? (
                         <p className="text-center text-gray-400 text-sm py-6">Sin resultados disponibles</p>
-                      ) : visibleEntries.map(entry => {
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {visibleEntries.map(entry => {
                           const isSelected = selectedEntryIds.has(entry.selection_key);
                           const isAssigned = Boolean(entry.assigned_location);
                           const isDisabled = isAssigned;
                         return (
-                          <button key={entry.id} type="button"
+                          <button key={entry.selection_key} type="button"
                             onClick={() => !isDisabled && toggleEntrySelection(entry.selection_key)}
                             disabled={isDisabled}
-                            className={`w-full text-left px-4 py-3 transition-colors flex items-start gap-3 ${
+                            className={`w-full text-left px-4 py-3 rounded-xl border transition-colors flex items-start gap-3 ${
                               isSelected
-                                ? 'bg-indigo-50 border-l-4 border-indigo-500'
+                                ? 'bg-indigo-50 border-indigo-300'
                                 : isAssigned
-                                ? 'opacity-60 cursor-not-allowed bg-red-50'
+                                ? 'opacity-60 cursor-not-allowed bg-red-50 border-red-100'
                                 : isDisabled
-                                ? 'opacity-40 cursor-not-allowed bg-gray-50'
-                                : 'hover:bg-indigo-50/60 cursor-pointer'
+                                ? 'opacity-40 cursor-not-allowed bg-gray-50 border-gray-100'
+                                : 'border-gray-100 hover:bg-indigo-50/60 cursor-pointer'
                             }`}>
                             {/* Checkbox visual */}
                             <div className={`mt-0.5 flex-shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center transition-all ${
@@ -1727,7 +1836,9 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                             </div>
                           </button>
                         );
-                      })}
+                          })}
+                        </div>
+                      )}
                     </div>
 
                     {/* Resumen de selección */}
