@@ -7,7 +7,8 @@ import {
   AlertTriangle, Plus, Layers, Archive, CheckSquare, Square,
 } from 'lucide-react';
 
-const MAX_ITEMS = 8;
+// Umbral visual de advertencia; no limita la selección ni el guardado.
+const PART_NUMBER_WARNING_THRESHOLD = 8;
 
 /* ── Tipos ── */
 interface LocationItem {
@@ -782,21 +783,6 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       return;
     }
 
-    const currentPartNumbers = getUniquePartNumberSet(
-      (assignModal?.items ?? []).map(item => item.part_number),
-    );
-    const selectedPartNumbers = getUniquePartNumberSet(
-      selectedEntries.map(entry => entry.part_number),
-    );
-    const nextPartNumberCount = new Set([
-      ...currentPartNumbers,
-      ...selectedPartNumbers,
-      normalizePartNumber(selectedEntry.part_number),
-    ]).size;
-
-    // Los registros repetidos del mismo número de parte comparten un espacio.
-    if (nextPartNumberCount > MAX_ITEMS) return;
-
     setSelectedEntryIds(prev => new Set([...prev, selectionKey]));
     setSelectedEntries(prev => [...prev.filter(entry => entry.selection_key !== selectionKey), selectedEntry]);
   };
@@ -806,17 +792,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     if (!assignModal || selectedEntries.length === 0) return;
 
     const currentItems = assignModal.items ?? [];
-    const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
     const selectedEntriesList = selectedEntries;
-    const projectedPartNumberCount = new Set([
-      ...currentPartNumbers,
-      ...selectedEntriesList.map(entry => normalizePartNumber(entry.part_number)),
-    ]).size;
-
-    if (projectedPartNumberCount > MAX_ITEMS) {
-      setSaveError(`No se puede superar el máximo de ${MAX_ITEMS} números de parte distintos por locación.`);
-      return;
-    }
 
     setSaving(true);
     setSaveError(null);
@@ -1377,7 +1353,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                       </span>
                     )}
                     <span className="text-xs text-gray-400 font-medium">
-                      {countUniquePartNumbers(detailModal.items ?? [])}/{MAX_ITEMS} números de parte distintos
+                      {countUniquePartNumbers(detailModal.items ?? [])} números de parte distintos
                     </span>
                   </div>
                 </div>
@@ -1499,27 +1475,29 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
               );
             })()}
 
-            {/* Barra de capacidad */}
+            {/* Indicador informativo de cantidad de números de parte */}
             <div className="px-6 pt-3 flex-shrink-0">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Capacidad utilizada</span>
-                <span className={`text-xs font-bold ${countUniquePartNumbers(detailModal.items ?? []) >= MAX_ITEMS ? 'text-red-600' : 'text-gray-600'}`}>
-                  {countUniquePartNumbers(detailModal.items ?? [])} / {MAX_ITEMS}
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Números de parte</span>
+                <span className={`text-xs font-bold ${countUniquePartNumbers(detailModal.items ?? []) >= PART_NUMBER_WARNING_THRESHOLD ? 'text-amber-600' : 'text-gray-600'}`}>
+                  {countUniquePartNumbers(detailModal.items ?? [])}
                 </span>
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2">
                 <div
                   className={`h-2 rounded-full transition-all ${
-                    countUniquePartNumbers(detailModal.items ?? []) >= MAX_ITEMS ? 'bg-red-500' :
-                    countUniquePartNumbers(detailModal.items ?? []) >= 6 ? 'bg-amber-500' : 'bg-emerald-500'
-                  }}`}
-                  style={{ width: `${(countUniquePartNumbers(detailModal.items ?? []) / MAX_ITEMS) * 100}%` }}
+                    countUniquePartNumbers(detailModal.items ?? []) >= PART_NUMBER_WARNING_THRESHOLD ? 'bg-amber-500' :
+                    countUniquePartNumbers(detailModal.items ?? []) >= 6 ? 'bg-amber-400' : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${Math.min((countUniquePartNumbers(detailModal.items ?? []) / PART_NUMBER_WARNING_THRESHOLD) * 100, 100)}%` }}
                 />
               </div>
-              {countUniquePartNumbers(detailModal.items ?? []) >= MAX_ITEMS && (
-                <div className="flex items-center gap-1.5 mt-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
-                  <p className="text-xs font-semibold text-red-600">Locación llena — máximo {MAX_ITEMS} números de parte distintos</p>
+              {countUniquePartNumbers(detailModal.items ?? []) >= PART_NUMBER_WARNING_THRESHOLD && (
+                <div className="flex items-center gap-1.5 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                  <p className="text-xs font-semibold text-amber-700">
+                    Esta locación ya tiene muchos números de parte ({countUniquePartNumbers(detailModal.items ?? [])}). Puedes continuar agregando.
+                  </p>
                 </div>
               )}
             </div>
@@ -1593,15 +1571,13 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                   </div>
                 </>
               )}
-              {countUniquePartNumbers(detailModal.items ?? []) < MAX_ITEMS && (
-                <button
-                  onClick={() => { setAssignModal(detailModal); setDetailModal(null); }}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-95"
-                  style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
-                  <Plus className="h-4 w-4" />
-                  Agregar número de parte ({countUniquePartNumbers(detailModal.items ?? [])}/{MAX_ITEMS})
-                </button>
-              )}
+              <button
+                onClick={() => { setAssignModal(detailModal); setDetailModal(null); }}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-95"
+                style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
+                <Plus className="h-4 w-4" />
+                Agregar número de parte ({countUniquePartNumbers(detailModal.items ?? [])})
+              </button>
               {(detailModal.items?.length ?? 0) > 0 && (
                 <button
                   onClick={() => handleReleaseAll(detailModal)}
@@ -1621,9 +1597,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       ══════════════════════════════════════════════ */}
       {assignModal && (() => {
         const currentItems = assignModal.items ?? [];
-        const currentPartNumbers = getUniquePartNumberSet(currentItems.map(item => item.part_number));
-        const currentPartNumberCount = currentPartNumbers.size;
-        const available = MAX_ITEMS - currentPartNumberCount;
+        const currentPartNumberCount = getUniquePartNumberSet(currentItems.map(item => item.part_number)).size;
+        const hasManyPartNumbers = currentPartNumberCount >= PART_NUMBER_WARNING_THRESHOLD;
         const visibleEntries = entries;
         const selectedList = selectedEntries;
         const selectedPartNumbers = getUniquePartNumberSet(selectedList.map(entry => entry.part_number));
@@ -1645,7 +1620,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                       {currentItems.length === 0 ? 'Asignar a' : 'Agregar a'} {assignModal.location_code}
                     </h2>
                     <p className="text-xs text-gray-400">
-                      {currentPartNumberCount}/{MAX_ITEMS} números de parte distintos · {available} espacio{available !== 1 ? 's' : ''} disponible{available !== 1 ? 's' : ''}
+                      {currentPartNumberCount} números de parte distintos
                     </p>
                   </div>
                 </div>
@@ -1656,45 +1631,23 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                 </button>
               </div>
 
-              {/* Advertencia si está llena */}
-              {available === 0 ? (
-                <div className="p-6">
-                  <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-4">
-                    <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-bold text-red-700">Locación llena</p>
-                      <p className="text-xs text-red-600 mt-1">
-                        Esta locación ya tiene el máximo de {MAX_ITEMS} números de parte distintos.
-                        Debes dar salida o liberar alguno antes de agregar otro número de parte diferente.
-                      </p>
-                    </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {hasManyPartNumbers && (
+                  <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs font-semibold text-amber-700">
+                      Esta locación ya tiene muchos números de parte ({currentPartNumberCount}). Puedes continuar agregando registros.
+                    </p>
                   </div>
-                  <button
-                    onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setSelectedEntries([]); setEntrySearch(''); setSaveError(null); }}
-                    className="mt-4 w-full px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
-                    Cerrar
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                    {/* Advertencia cerca del límite */}
-                    {available <= 2 && available > 0 && (
-                      <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                        <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                        <p className="text-xs font-semibold text-amber-700">
-                          Solo quedan {available} espacio{available !== 1 ? 's' : ''} disponible{available !== 1 ? 's' : ''} en esta locación
-                        </p>
-                      </div>
-                    )}
+                )}
 
-                    {/* Instrucción de selección múltiple */}
-                    <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2">
-                      <CheckSquare className="h-4 w-4 text-indigo-500 flex-shrink-0" />
-                      <p className="text-xs font-semibold text-indigo-700">
-                        Puedes seleccionar registros de hasta <strong>{available}</strong> número{available !== 1 ? 's' : ''} de parte diferentes
-                      </p>
-                    </div>
+                {/* Instrucción de selección múltiple */}
+                <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2">
+                  <CheckSquare className="h-4 w-4 text-indigo-500 flex-shrink-0" />
+                  <p className="text-xs font-semibold text-indigo-700">
+                    Puedes seleccionar varios registros de inventario y continuar agregándolos a esta locación
+                  </p>
+                </div>
 
                     {entriesLoadError && (
                       <div role="alert" className="flex items-start gap-2.5 bg-red-50 border border-red-200 rounded-xl px-3 py-3">
@@ -1736,12 +1689,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                       ) : visibleEntries.map(entry => {
                           const isSelected = selectedEntryIds.has(entry.selection_key);
                           const isAssigned = Boolean(entry.assigned_location);
-                          const projectedPartNumberCount = new Set([
-                            ...currentPartNumbers,
-                            ...selectedPartNumbers,
-                            normalizePartNumber(entry.part_number),
-                          ]).size;
-                          const isDisabled = isAssigned || (!isSelected && projectedPartNumberCount > MAX_ITEMS);
+                          const isDisabled = isAssigned;
                         return (
                           <button key={entry.id} type="button"
                             onClick={() => !isDisabled && toggleEntrySelection(entry.selection_key)}
@@ -1822,10 +1770,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                         </div>
                       </div>
                     )}
-                  </div>
+                </div>
 
-                  {/* Footer con botones */}
-                  <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 flex gap-3">
+                {/* Footer con botones */}
+                <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 flex gap-3">
                     <button type="button"
                       onClick={() => { setAssignModal(null); setSelectedEntryIds(new Set()); setSelectedEntries([]); setEntrySearch(''); setSaveError(null); }}
                       className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
@@ -1843,9 +1791,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                         : `${currentItems.length === 0 ? 'Asignar' : 'Agregar'} ${selectedList.length} registro${selectedList.length !== 1 ? 's' : ''}`
                       }
                     </button>
-                  </div>
-                </>
-              )}
+                </div>
             </div>
           </div>
         );
@@ -1869,32 +1815,32 @@ function LocationCell({
   const partGroups = groupLocationItems(items);
   const uniquePartCount = partGroups.length;
   const isOccupied = items.length > 0;
-  const isFull = uniquePartCount >= MAX_ITEMS;
+  const hasManyPartNumbers = uniquePartCount >= PART_NUMBER_WARNING_THRESHOLD;
   const totalQty = items.reduce((s, i) => s + i.qty, 0);
   const totalBoxes = items.reduce((s, i) => s + i.boxes, 0);
 
   return (
     <div
       className={`relative rounded-xl border-2 p-2 cursor-pointer transition-all hover:scale-[1.02] active:scale-95 select-none ${
-        isFull
-          ? 'bg-red-50 border-red-400 hover:bg-red-100'
+        hasManyPartNumbers
+          ? 'bg-amber-50 border-amber-300 hover:bg-amber-100'
           : isOccupied
           ? 'bg-orange-50 border-orange-300 hover:bg-orange-100'
           : 'bg-white border-gray-200 hover:border-indigo-300 hover:bg-indigo-50'
       }`}
       onClick={isOccupied ? onDetail : onAssign}
       title={isOccupied
-        ? `${loc.location_code} — ${uniquePartCount}/${MAX_ITEMS} números de parte distintos · QTY: ${totalQty} · Cajas: ${totalBoxes}`
+        ? `${loc.location_code} — ${uniquePartCount} números de parte distintos · QTY: ${totalQty} · Cajas: ${totalBoxes}`
         : `${loc.location_code} — Disponible · Clic para asignar`}
     >
       {/* Indicador de estado */}
       <div className={`absolute top-1 right-1 h-2 w-2 rounded-full ${
-        isFull ? 'bg-red-500' : isOccupied ? 'bg-orange-400' : 'bg-emerald-400'
+        hasManyPartNumbers ? 'bg-amber-500' : isOccupied ? 'bg-orange-400' : 'bg-emerald-400'
       }`} />
 
       {/* Código de locación */}
       <p className={`text-xs font-bold leading-tight ${
-        isFull ? 'text-red-700' : isOccupied ? 'text-orange-700' : 'text-gray-600'
+        hasManyPartNumbers ? 'text-amber-700' : isOccupied ? 'text-orange-700' : 'text-gray-600'
       }`}>
         {loc.location_code}
       </p>
@@ -1949,22 +1895,14 @@ function LocationCell({
           })}
 
           {/* Espacios vacíos restantes */}
-          {uniquePartCount < MAX_ITEMS && (
-            <div className="flex items-center gap-0.5 mt-0.5">
-              {Array.from({ length: MAX_ITEMS - uniquePartCount }).map((_, i) => (
-                <div key={i} className="h-1.5 flex-1 rounded-sm bg-gray-200 opacity-60" />
-              ))}
-            </div>
-          )}
-
           {/* Contador + totales */}
           <div className="flex items-center justify-between mt-1">
             <div className="flex items-center gap-0.5">
               <Layers className="h-2.5 w-2.5 text-gray-400" />
-              <span className="text-[8px] text-gray-500 font-semibold">{uniquePartCount}/{MAX_ITEMS}</span>
+              <span className="text-[8px] text-gray-500 font-semibold">{uniquePartCount} números</span>
             </div>
-            {isFull && (
-              <span className="text-[7px] font-bold text-red-500 uppercase">LLENO</span>
+            {hasManyPartNumbers && (
+              <span className="text-[7px] font-bold text-amber-600 uppercase">MUCHOS</span>
             )}
           </div>
           {/* Totales QTY y Cajas en la celda */}

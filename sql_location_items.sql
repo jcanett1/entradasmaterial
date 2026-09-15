@@ -1,6 +1,6 @@
 -- ============================================================
 --  TABLA: location_items
---  Permite hasta 8 números de parte distintos por locación.
+--  Permite varios números de parte distintos por locación.
 --  Cada fila = un grupo (part_number + PO) dentro de una
 --  locación, con su propia qty, fifo y fecha de entrada.
 -- ============================================================
