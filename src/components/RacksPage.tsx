@@ -615,20 +615,28 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       console.warn('No se pudieron consultar las asignaciones heredadas de locations:', legacyAssignments.error);
     }
 
+    // Inventario considera bloqueada toda la entrada cuando alguna de sus
+    // asignaciones aparece en una locación, sin importar el FIFO seleccionado.
+    // El modal debe aplicar el mismo criterio y no mostrar otros FIFO de esa entrada.
+    const blockedEntryIds = new Set<number>();
     const assignedSelectionLocations = new Map<string, string>();
     const assignedPartPoFifoLocations = new Map<string, string>();
     ((itemsAssignments.data ?? []) as { entry_id: unknown; fifo_number: unknown; part_number: string | null; po: string | null; location_code?: string | null }[]).forEach(row => {
       const location = row.location_code || 'otra locación';
-      if (toNumberOrNull(row.entry_id) !== null) {
-        assignedSelectionLocations.set(getEntrySelectionKey(row.entry_id, row.fifo_number), location);
+      const entryId = toNumberOrNull(row.entry_id);
+      if (entryId !== null) {
+        blockedEntryIds.add(entryId);
+        assignedSelectionLocations.set(getEntrySelectionKey(entryId, row.fifo_number), location);
       }
       if (row.part_number && row.fifo_number !== null && row.fifo_number !== undefined) {
         assignedPartPoFifoLocations.set(getPartPoFifoKey(row.part_number, row.po, row.fifo_number), location);
       }
     });
-    ((legacyAssignments.data ?? []) as { entry_id: unknown; location_code?: string | null }[]).forEach(row => {
-      if (toNumberOrNull(row.entry_id) !== null) {
-        assignedSelectionLocations.set(getEntrySelectionKey(row.entry_id, null), row.location_code || 'otra locación');
+    ((legacyAssignments.data ?? []) as { entry_id: unknown; location_code?: string | null; part_number?: string | null; po?: string | null }[]).forEach(row => {
+      const entryId = toNumberOrNull(row.entry_id);
+      if (entryId !== null) {
+        blockedEntryIds.add(entryId);
+        assignedSelectionLocations.set(getEntrySelectionKey(entryId, null), row.location_code || 'otra locación');
       }
     });
 
@@ -714,7 +722,9 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         || (entry.description ?? '').toLowerCase().includes(searchValue)
         || (entry.po ?? '').toLowerCase().includes(searchValue)
         || String(entry.fifo_number ?? '').includes(searchValue);
-      return matchesSearch && !entry.assigned_location;
+      // También cubre entradas asignadas con una fila heredada o con un FIFO
+      // distinto al que se está mostrando en esta opción.
+      return matchesSearch && !blockedEntryIds.has(entry.id) && !entry.assigned_location;
     });
     setEntries(availableEntries);
   }, []);
