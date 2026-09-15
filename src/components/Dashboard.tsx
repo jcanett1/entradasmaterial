@@ -15,6 +15,7 @@ import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
   MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle,
+  CheckCircle2, CalendarDays,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
@@ -57,6 +58,9 @@ export function Dashboard() {
   const [showForm, setShowForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<Entry | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [availableOnly, setAvailableOnly] = useState(false);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [stats, setStats] = useState({ total: 0, units: 0, boxes: 0 });
   const [refreshing, setRefreshing] = useState(false);
   const [labelRecord, setLabelRecord] = useState<Entry | null>(null);
@@ -223,19 +227,28 @@ export function Dashboard() {
   /* =======================
      FILTER + STATS
   ======================= */
-  useEffect(() => {
-    filterRecords();
-    calculateStats();
-  }, [records, searchTerm]);
-
   const normalizeSearchText = (value: string | null | undefined) =>
     (value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-  const filterRecords = () => {
-    const term = normalizeSearchText(searchTerm.trim());
-    if (!term) { setFilteredRecords(records); return; }
+  const getLocalDateKey = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
+  const filterRecords = useCallback(() => {
+    const term = normalizeSearchText(searchTerm.trim());
     setFilteredRecords(records.filter((r) => {
+      if (availableOnly && assignedEntryIds.has(r.id)) return false;
+
+      const recordDate = getLocalDateKey(r.registered_at);
+      if (dateFrom && (!recordDate || recordDate < dateFrom)) return false;
+      if (dateTo && (!recordDate || recordDate > dateTo)) return false;
+
+      if (!term) return true;
       const searchableFields = [
         r.part_number,
         r.description,
@@ -246,15 +259,20 @@ export function Dashboard() {
 
       return searchableFields.some(field => normalizeSearchText(field).includes(term));
     }));
-  };
+  }, [records, searchTerm, availableOnly, dateFrom, dateTo, assignedEntryIds]);
 
-  const calculateStats = () => {
+  const calculateStats = useCallback(() => {
     setStats({
       total: records.length,
       units: records.reduce((s, r) => s + r.total_units, 0),
       boxes: records.reduce((s, r) => s + r.total_boxes, 0),
     });
-  };
+  }, [records]);
+
+  useEffect(() => {
+    filterRecords();
+    calculateStats();
+  }, [filterRecords, calculateStats]);
 
   /* =======================
      CREATE / UPDATE
@@ -442,30 +460,84 @@ export function Dashboard() {
             </div>
 
             {/* Actions Bar */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-5 py-4 mb-6 flex flex-col sm:flex-row gap-4 justify-between items-center">
-              <div className="relative w-full sm:max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input type="text" placeholder="Buscar por Part Number, descripción, usuario o PO..." value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all bg-gray-50" />
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-5 py-4 mb-6 space-y-4">
+              <div className="flex flex-col lg:flex-row gap-4 justify-between items-stretch lg:items-center">
+                <div className="relative w-full lg:max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input type="text" placeholder="Buscar por Part Number, descripción, usuario o PO..." value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all bg-gray-50" />
+                </div>
+                <div className="flex gap-2.5 flex-wrap justify-start lg:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setAvailableOnly(prev => !prev)}
+                    aria-pressed={availableOnly}
+                    className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-all active:scale-95 border ${
+                      availableOnly
+                        ? 'border-emerald-300 bg-emerald-100 text-emerald-800'
+                        : 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
+                    }`}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Disponibles
+                  </button>
+                  <button type="button" onClick={() => { fetchRecords(); fetchAssignedEntries(); }}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 shadow-sm transition-all active:scale-95">
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    Actualizar
+                  </button>
+                  <button type="button" onClick={handleExportCSV} disabled={!filteredRecords.length}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 shadow-sm transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
+                    <Download className="h-4 w-4" />
+                    Descargar CSV
+                  </button>
+                  <button type="button" onClick={() => setShowForm(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
+                    style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', boxShadow: '0 4px 14px 0 rgba(79,70,229,0.35)' }}>
+                    <Plus className="h-4 w-4" />
+                    Agregar Nuevo
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2.5 flex-wrap justify-end">
-                <button onClick={() => { fetchRecords(); fetchAssignedEntries(); }}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 shadow-sm transition-all active:scale-95">
-                  <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                  Actualizar
-                </button>
-                <button onClick={handleExportCSV} disabled={!filteredRecords.length}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 shadow-sm transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                  <Download className="h-4 w-4" />
-                  Descargar CSV
-                </button>
-                <button onClick={() => setShowForm(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
-                  style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', boxShadow: '0 4px 14px 0 rgba(79,70,229,0.35)' }}>
-                  <Plus className="h-4 w-4" />
-                  Agregar Nuevo
-                </button>
+
+              <div className="flex flex-col md:flex-row md:items-end gap-3 pt-3 border-t border-gray-100">
+                <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide md:mr-1">
+                  <CalendarDays className="h-4 w-4 text-indigo-400" />
+                  Fecha de registro
+                </div>
+                <label className="flex items-center gap-2 text-sm text-gray-600">
+                  <span className="text-xs font-semibold text-gray-500">Desde</span>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    max={dateTo || undefined}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    aria-label="Fecha inicial de registro"
+                    className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-600">
+                  <span className="text-xs font-semibold text-gray-500">Hasta</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    min={dateFrom || undefined}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    aria-label="Fecha final de registro"
+                    className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
+                  />
+                </label>
+                {(searchTerm || availableOnly || dateFrom || dateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => { setSearchTerm(''); setAvailableOnly(false); setDateFrom(''); setDateTo(''); }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 bg-white hover:bg-gray-50 transition-all md:ml-auto"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Limpiar filtros
+                  </button>
+                )}
               </div>
             </div>
 
