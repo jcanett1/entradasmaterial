@@ -31,17 +31,49 @@ CREATE INDEX IF NOT EXISTS idx_kitteo_exits_exited_at    ON public.kitteo_exits 
 -- ── Políticas RLS (igual que las demás tablas del proyecto) ──
 ALTER TABLE public.kitteo_exits ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow select for authenticated users"
-ON public.kitteo_exits FOR SELECT TO authenticated USING (true);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'kitteo_exits'
+      AND policyname = 'Allow select for authenticated users'
+  ) THEN
+    CREATE POLICY "Allow select for authenticated users"
+      ON public.kitteo_exits FOR SELECT TO authenticated USING (true);
+  END IF;
 
-CREATE POLICY "Allow insert for authenticated users"
-ON public.kitteo_exits FOR INSERT TO authenticated WITH CHECK (true);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'kitteo_exits'
+      AND policyname = 'Allow insert for authenticated users'
+  ) THEN
+    CREATE POLICY "Allow insert for authenticated users"
+      ON public.kitteo_exits FOR INSERT TO authenticated WITH CHECK (true);
+  END IF;
 
-CREATE POLICY "Allow update for authenticated users"
-ON public.kitteo_exits FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'kitteo_exits'
+      AND policyname = 'Allow update for authenticated users'
+  ) THEN
+    CREATE POLICY "Allow update for authenticated users"
+      ON public.kitteo_exits FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+  END IF;
 
-CREATE POLICY "Allow delete for authenticated users"
-ON public.kitteo_exits FOR DELETE TO authenticated USING (true);
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'kitteo_exits'
+      AND policyname = 'Allow delete for authenticated users'
+  ) THEN
+    CREATE POLICY "Allow delete for authenticated users"
+      ON public.kitteo_exits FOR DELETE TO authenticated USING (true);
+  END IF;
+END
+$$;
 
 -- ── Verificar ──
 SELECT 'Tabla kitteo_exits creada correctamente' AS resultado;
