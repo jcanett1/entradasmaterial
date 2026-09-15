@@ -57,6 +57,7 @@ interface KitteoExit {
   rack: string;
   location_code: string;
   part_number: string;
+  entry_id: number | null;
   description: string | null;
   qty: number;
   boxes: number | null;
@@ -69,6 +70,17 @@ interface ExitTarget {
   location: KitteoLocation;
   item: KitteoLocationItem;
 }
+
+type NewKitteoExit = Omit<KitteoExit, 'id'>;
+
+const insertKitteoExits = async (rows: NewKitteoExit[]) => {
+  let { error } = await supabase.from('kitteo_exits').insert(rows);
+  if (error && /entry_id|column .* does not exist/i.test(error.message)) {
+    const legacyRows = rows.map(({ entry_id: _entryId, ...row }) => row);
+    ({ error } = await supabase.from('kitteo_exits').insert(legacyRows));
+  }
+  return error;
+};
 
 const toNumberOrNull = (value: unknown): number | null => {
   if (value === null || value === undefined || value === '') return null;
@@ -436,10 +448,11 @@ export function KitteoPage() {
     const { location, item } = exitTarget;
     setExitSaving(true);
 
-    const { error: exitError } = await supabase.from('kitteo_exits').insert([{
+    const exitError = await insertKitteoExits([{
       rack: location.rack,
       location_code: location.location_code,
       part_number: item.part_number,
+      entry_id: item.entry_id,
       description: item.description,
       qty: item.qty,
       boxes: item.boxes,
@@ -522,10 +535,10 @@ export function KitteoPage() {
 
     setBulkSaving(true);
     const now = new Date().toISOString();
-    const { error: insertError } = await supabase.from('kitteo_exits').insert(
+    const insertError = await insertKitteoExits(
       selectedItems.map(({ location, item }) => ({
         rack: location.rack, location_code: location.location_code,
-        part_number: item.part_number, description: item.description,
+        part_number: item.part_number, entry_id: item.entry_id, description: item.description,
         qty: item.qty, boxes: item.boxes, po: item.po,
         registered_by: userDisplayName || null, exited_at: now,
       }))

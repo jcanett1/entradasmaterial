@@ -44,6 +44,33 @@ const getInventoryAssignmentKey = (
   return `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}|${fifo ?? 'none'}`;
 };
 
+const getInventoryPartPoKey = (
+  partNumber: string | null | undefined,
+  po: string | null | undefined,
+) => `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}`;
+
+type HistoricalExitFingerprint = {
+  entry_id: number | null;
+  part_number: string | null;
+  po: string | null;
+  qty: number | null;
+  boxes: number | null;
+  exited_at: string | null;
+};
+
+const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) => {
+  if (exit.entry_id !== null) return entry.id === exit.entry_id;
+  if (getInventoryPartPoKey(entry.part_number, entry.po) !== getInventoryPartPoKey(exit.part_number, exit.po)) return false;
+
+  const entryTime = Date.parse(entry.registered_at);
+  const exitTime = exit.exited_at ? Date.parse(exit.exited_at) : Number.NaN;
+  if (Number.isNaN(entryTime) || Number.isNaN(exitTime) || entryTime > exitTime) return false;
+
+  const qtyMatches = exit.qty === null || entry.total_units === exit.qty;
+  const boxesMatches = exit.boxes === null || entry.total_boxes === exit.boxes;
+  return qtyMatches && boxesMatches;
+};
+
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
 
@@ -69,6 +96,11 @@ export function Dashboard() {
   const [assignedEntryIds, setAssignedEntryIds] = useState<Set<number>>(new Set());
   // Mapa de entry_id → location_code para mostrar la leyenda
   const [assignedEntryLocations, setAssignedEntryLocations] = useState<Record<number, string>>({});
+  // Entradas que ya salieron definitivamente o están fuera del inventario principal.
+  const [unavailableEntryIds, setUnavailableEntryIds] = useState<Set<number>>(new Set());
+  // Respaldo para salidas históricas creadas antes de guardar entry_id.
+  const [historicalExitFingerprints, setHistoricalExitFingerprints] = useState<HistoricalExitFingerprint[]>([]);
+  const [unavailableEntryLabels, setUnavailableEntryLabels] = useState<Record<number, string>>({});
   const [assignedEntriesError, setAssignedEntriesError] = useState<string | null>(null);
 
   // ── Selección múltiple ──
@@ -116,7 +148,7 @@ export function Dashboard() {
     setTimeout(() => setRefreshing(false), 600);
   };
 
-  /* Fetch de entries asignados a locaciones */
+  /* Fetch de entries asignados, transferidos o salidos definitivamente */
   const fetchAssignedEntries = useCallback(async () => {
     setAssignedEntriesError(null);
 
@@ -136,7 +168,7 @@ export function Dashboard() {
       return { data: rows, error };
     };
 
-    const [itemsResult, locationsResult, fifoResult] = await Promise.all([
+    const [itemsResult, locationsResult, fifoResult, shippingDirectResult, kitteoExitsResult, transferesResult, kitteoItemsResult, kitteoLocationsResult] = await Promise.all([
       loadAllPages(async (from, to) => supabase
         .from('location_items')
         .select('entry_id, location_code, part_number, po, fifo_number')
@@ -149,6 +181,40 @@ export function Dashboard() {
       loadAllPages(async (from, to) => supabase
         .from('fifo_labels')
         .select('entry_id, part_number, po, fifo_number')
+        .range(from, to)),
+      loadAllPages(async (from, to) => supabase
+        .from('shipping_direct')
+        .select('entry_id, part_number, po, qty, boxes, exited_at')
+        .range(from, to)),
+      (async () => {
+        const currentSchema = await loadAllPages(async (from, to) => supabase
+          .from('kitteo_exits')
+          .select('entry_id, part_number, po, qty, boxes, exited_at')
+          .range(from, to));
+        if (!currentSchema.error) return currentSchema;
+
+        const legacySchema = await loadAllPages(async (from, to) => supabase
+          .from('kitteo_exits')
+          .select('part_number, po, qty, boxes, exited_at')
+          .range(from, to));
+        return {
+          data: (legacySchema.data ?? []).map(row => ({ ...row as object, entry_id: null })),
+          error: legacySchema.error,
+        };
+      })(),
+      loadAllPages(async (from, to) => supabase
+        .from('transferes')
+        .select('entry_id, location_code')
+        .range(from, to)),
+      loadAllPages(async (from, to) => supabase
+        .from('kitteo_location_items')
+        .select('entry_id, location_code')
+        .range(from, to)),
+      loadAllPages(async (from, to) => supabase
+        .from('kitteo_locations')
+        .select('entry_id, location_code')
+        .eq('status', 'ocupado')
+        .not('entry_id', 'is', null)
         .range(from, to)),
     ]);
 
@@ -168,6 +234,21 @@ export function Dashboard() {
     if (fifoResult.error) {
       console.warn('No se pudo leer fifo_labels para resolver registros heredados:', fifoResult.error);
     }
+    if (shippingDirectResult.error) {
+      console.warn('No se pudo leer el historial de Shipping Direct:', shippingDirectResult.error);
+    }
+    if (kitteoExitsResult.error) {
+      console.warn('No se pudo leer el historial de salidas definitivas KITTEO:', kitteoExitsResult.error);
+    }
+    if (transferesResult.error) {
+      console.warn('No se pudieron leer las transferencias activas de KITTEO:', transferesResult.error);
+    }
+    if (kitteoItemsResult.error) {
+      console.warn('No se pudieron leer los artículos activos de KITTEO:', kitteoItemsResult.error);
+    }
+    if (kitteoLocationsResult.error) {
+      console.warn('No se pudieron leer las locaciones activas de KITTEO:', kitteoLocationsResult.error);
+    }
 
     const itemRows = (itemsResult.data ?? []) as {
       entry_id: unknown;
@@ -183,6 +264,13 @@ export function Dashboard() {
       po: string | null;
       fifo_number: unknown;
     }[];
+    const terminalExitRows = [
+      ...((shippingDirectResult.data ?? []) as HistoricalExitFingerprint[]),
+      ...((kitteoExitsResult.data ?? []) as HistoricalExitFingerprint[]),
+    ];
+    const activeTransferRows = (transferesResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+    const activeKitteoRows = (kitteoItemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+    const activeKitteoLocationRows = (kitteoLocationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
     const fifoToEntryId = new Map<string, number>();
     fifoRows.forEach(row => {
       const entryId = toEntryId(row.entry_id);
@@ -207,9 +295,25 @@ export function Dashboard() {
     });
     legacyRows.forEach(row => addAssignment(toEntryId(row.entry_id), row.location_code));
 
+    const unavailableIds = new Set<number>();
+    const unavailableLabels: Record<number, string> = {};
+    const addUnavailable = (entryId: unknown, label: string) => {
+      const normalizedId = toEntryId(entryId);
+      if (normalizedId === null) return;
+      unavailableIds.add(normalizedId);
+      unavailableLabels[normalizedId] = label;
+    };
+    activeTransferRows.forEach(row => addUnavailable(row.entry_id, 'Transferencia KITTEO'));
+    activeKitteoRows.forEach(row => addUnavailable(row.entry_id, 'KITTEO'));
+    activeKitteoLocationRows.forEach(row => addUnavailable(row.entry_id, 'KITTEO'));
+    terminalExitRows.forEach(row => addUnavailable(row.entry_id, 'Salida definitiva'));
+
     setAssignedEntryIds(ids);
     setAssignedEntryLocations(locMap);
-    setSelectedIds(prev => new Set([...prev].filter(id => !ids.has(id))));
+    setUnavailableEntryIds(unavailableIds);
+    setHistoricalExitFingerprints(terminalExitRows);
+    setUnavailableEntryLabels(unavailableLabels);
+    setSelectedIds(prev => new Set([...prev].filter(id => !ids.has(id) && !unavailableIds.has(id))));
   }, []);
 
   useEffect(() => {
@@ -241,8 +345,11 @@ export function Dashboard() {
 
   const filterRecords = useCallback(() => {
     const term = normalizeSearchText(searchTerm.trim());
+    const inventoryUnavailableIds = new Set([...assignedEntryIds, ...unavailableEntryIds]);
     setFilteredRecords(records.filter((r) => {
-      if (availableOnly && assignedEntryIds.has(r.id)) return false;
+      const hasHistoricalExit = historicalExitFingerprints.some(exit => matchesHistoricalExit(r, exit));
+      const isUnavailable = inventoryUnavailableIds.has(r.id) || hasHistoricalExit;
+      if (availableOnly && isUnavailable) return false;
 
       const recordDate = getLocalDateKey(r.registered_at);
       if (dateFrom && (!recordDate || recordDate < dateFrom)) return false;
@@ -259,7 +366,7 @@ export function Dashboard() {
 
       return searchableFields.some(field => normalizeSearchText(field).includes(term));
     }));
-  }, [records, searchTerm, availableOnly, dateFrom, dateTo, assignedEntryIds]);
+  }, [records, searchTerm, availableOnly, dateFrom, dateTo, assignedEntryIds, unavailableEntryIds, historicalExitFingerprints]);
 
   const calculateStats = useCallback(() => {
     setStats({
@@ -273,6 +380,20 @@ export function Dashboard() {
     filterRecords();
     calculateStats();
   }, [filterRecords, calculateStats]);
+
+  const historicalUnavailableIds = new Set(
+    records
+      .filter(record => historicalExitFingerprints.some(exit => matchesHistoricalExit(record, exit)))
+      .map(record => record.id),
+  );
+  const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...historicalUnavailableIds]);
+  const blockedInventoryLocations = {
+    ...assignedEntryLocations,
+    ...Object.fromEntries(
+      [...new Set([...unavailableEntryIds, ...historicalUnavailableIds])]
+        .map(id => [id, unavailableEntryLabels[id] ?? 'Salida definitiva']),
+    ),
+  };
 
   /* =======================
      CREATE / UPDATE
@@ -597,8 +718,8 @@ export function Dashboard() {
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
                 onToggleSelectAll={handleToggleSelectAll}
-                assignedEntryIds={assignedEntryIds}
-                assignedEntryLocations={assignedEntryLocations}
+                assignedEntryIds={blockedInventoryIds}
+                assignedEntryLocations={blockedInventoryLocations}
               />
             </div>
           </>
