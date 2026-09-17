@@ -7,6 +7,7 @@ import type { MultiEntry } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
 import { LabelModal } from './LabelModal';
 import { MultiLabelModal } from './MultiLabelModal';
+import { PartsCatalogModal } from './PartsCatalogModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
@@ -14,7 +15,7 @@ import { KitteoPage } from './KitteoPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
-  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle,
+  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle, Hash,
   CheckCircle2, CalendarDays,
 } from 'lucide-react';
 import Papa from 'papaparse';
@@ -73,6 +74,7 @@ const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) =>
 
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
+  const canManagePartsCatalog = userRol === 'admin' || userRol === 'supervisor';
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState<MainTab>('inventario');
@@ -91,6 +93,7 @@ export function Dashboard() {
   const [stats, setStats] = useState({ total: 0, units: 0, boxes: 0 });
   const [refreshing, setRefreshing] = useState(false);
   const [labelRecord, setLabelRecord] = useState<Entry | null>(null);
+  const [showPartsCatalog, setShowPartsCatalog] = useState(false);
 
   // ── IDs de entries ya asignados a una locación (para bloqueo en tabla) ──
   const [assignedEntryIds, setAssignedEntryIds] = useState<Set<number>>(new Set());
@@ -649,6 +652,16 @@ export function Dashboard() {
                     className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
                   />
                 </label>
+                {canManagePartsCatalog && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPartsCatalog(true)}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold uppercase tracking-wide text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 active:scale-95 md:ml-1"
+                  >
+                    <Hash className="h-4 w-4" />
+                    Nuevo número de parte
+                  </button>
+                )}
                 {(searchTerm || availableOnly || dateFrom || dateTo) && (
                   <button
                     type="button"
@@ -776,6 +789,11 @@ export function Dashboard() {
           records={selectedRecords}
           onClose={() => setShowMultiLabel(false)}
         />
+      )}
+
+      {/* Modal Nuevo número de parte — disponible para admin y supervisor */}
+      {showPartsCatalog && canManagePartsCatalog && (
+        <PartsCatalogModal onClose={() => setShowPartsCatalog(false)} />
       )}
 
       {/* Modal Nuevo/Editar Registro */}
