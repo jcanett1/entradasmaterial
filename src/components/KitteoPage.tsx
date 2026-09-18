@@ -104,8 +104,9 @@ const PAGE_SIZE = 30;
 const HIST_PAGE_SIZE = 25;
 
 export function KitteoPage() {
-  const { userProfile } = useAuth();
+  const { userProfile, userRol } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
+  const canManageKitteoLocationStatus = userRol === 'admin' || userRol === 'supervisor';
 
   /* ── Vista activa: locaciones | historial ── */
   const [activeView, setActiveView] = useState<'locaciones' | 'historial'>('locaciones');
@@ -115,6 +116,7 @@ export function KitteoPage() {
   const [loading, setLoading] = useState(true);
   const [locationsLoadError, setLocationsLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [statusSavingLocationId, setStatusSavingLocationId] = useState<number | null>(null);
   const [selectedRack, setSelectedRack] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<'ALL' | 'disponible' | 'ocupado'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -279,6 +281,37 @@ export function KitteoPage() {
     setTimeout(() => setRefreshing(false), 500);
   }, []);
 
+  /* ── Cambio manual de estado: solo admin y supervisor ── */
+  const handleLocationStatusChange = async (
+    location: KitteoLocation,
+    nextStatus: KitteoLocation['status'],
+  ) => {
+    if (!canManageKitteoLocationStatus || location.status === nextStatus) return;
+
+    setStatusSavingLocationId(location.id);
+    const { error } = await supabase
+      .from('kitteo_locations')
+      .update({ status: nextStatus })
+      .eq('id', location.id);
+
+    if (error) {
+      console.error('Error cambiando el estado de la locación KITTEO:', error);
+      alert(`No se pudo cambiar el estado de ${location.location_code}: ${error.message}`);
+    } else {
+      setLocations(current => current.map(currentLocation =>
+        currentLocation.id === location.id
+          ? { ...currentLocation, status: nextStatus }
+          : currentLocation
+      ));
+      setDetailModal(current => current?.id === location.id
+        ? { ...current, status: nextStatus }
+        : current
+      );
+    }
+
+    setStatusSavingLocationId(null);
+  };
+
   /* ── Fetch historial ── */
   const fetchHistorial = useCallback(async () => {
     setHistRefreshing(true);
@@ -326,6 +359,13 @@ export function KitteoPage() {
     setSelectedEntry(null);
     if (entryDebounce.current) clearTimeout(entryDebounce.current);
     entryDebounce.current = setTimeout(() => fetchEntries(val), 250);
+  };
+
+  const openAssignModal = (location: KitteoLocation) => {
+    setDetailModal(null);
+    setAssignModal(location);
+    resetAssignForm();
+    void fetchEntries('');
   };
 
   const handleSelectEntry = (e: EntryOption) => {
@@ -827,6 +867,7 @@ export function KitteoPage() {
                       {pageLocs.map((loc, idx) => {
                         const c = RACK_COLORS[loc.rack] ?? RACK_COLORS['1'];
                         const isOcupado = loc.status === 'ocupado';
+                        const hasAssignedItems = (loc.items?.length ?? 0) > 0 || Boolean(loc.part_number);
                         const primaryItem = loc.items?.[0];
                         return (
                           <tr key={loc.id} className="border-b border-gray-100 last:border-0 hover:bg-orange-50/30 transition-colors"
@@ -845,7 +886,25 @@ export function KitteoPage() {
                             </td>
                             {/* Estado */}
                             <td className="px-4 py-3 text-center">
-                              {isOcupado ? (
+                              {canManageKitteoLocationStatus ? (
+                                <label className="inline-flex items-center gap-1.5">
+                                  <select
+                                    value={loc.status}
+                                    onChange={event => void handleLocationStatusChange(loc, event.target.value as KitteoLocation['status'])}
+                                    disabled={statusSavingLocationId === loc.id}
+                                    aria-label={`Cambiar estado de ${loc.location_code}`}
+                                    className={`rounded-full border px-2.5 py-1 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:cursor-wait disabled:opacity-60 ${
+                                      isOcupado
+                                        ? 'border-orange-200 bg-orange-100 text-orange-700'
+                                        : 'border-emerald-200 bg-emerald-100 text-emerald-700'
+                                    }`}
+                                  >
+                                    <option value="disponible">Disponible</option>
+                                    <option value="ocupado">Ocupada</option>
+                                  </select>
+                                  {statusSavingLocationId === loc.id && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                                </label>
+                              ) : isOcupado ? (
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 text-xs font-bold border border-orange-200">
                                   <AlertCircle className="h-3 w-3" />Ocupada
                                 </span>
@@ -920,13 +979,13 @@ export function KitteoPage() {
                             </td>
                             {/* ── ACCIONES ── */}
                             <td className="px-4 py-3">
-                              {isOcupado ? (
+                              {isOcupado || hasAssignedItems ? (
                                 <button onClick={() => setDetailModal(loc)}
                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all whitespace-nowrap">
                                   <ClipboardList className="h-3 w-3" />Ver partes
                                 </button>
                               ) : (
-                                <button onClick={() => { setAssignModal(loc); fetchEntries(''); }}
+                                <button onClick={() => openAssignModal(loc)}
                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all">
                                   <Package className="h-3 w-3" />Asignar
                                 </button>
@@ -1362,9 +1421,61 @@ export function KitteoPage() {
                   <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Números de parte en la locación</p>
                   <p className="text-sm text-gray-400 mt-0.5">Selecciona una acción para un artículo específico.</p>
                 </div>
-                <span className="inline-flex items-center justify-center min-w-8 h-8 px-2 rounded-full bg-indigo-100 text-indigo-700 text-sm font-black">
-                  {detailModal.items?.length ?? 0}
-                </span>
+                <div className="flex items-center gap-2">
+                  {canManageKitteoLocationStatus ? (
+                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500">
+                      Estado
+                      <select
+                        value={detailModal.status}
+                        onChange={event => void handleLocationStatusChange(detailModal, event.target.value as KitteoLocation['status'])}
+                        disabled={statusSavingLocationId === detailModal.id}
+                        aria-label={`Cambiar estado de ${detailModal.location_code}`}
+                        className={`rounded-full border px-2.5 py-1 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:cursor-wait disabled:opacity-60 ${
+                          detailModal.status === 'ocupado'
+                            ? 'border-orange-200 bg-orange-100 text-orange-700'
+                            : 'border-emerald-200 bg-emerald-100 text-emerald-700'
+                        }`}
+                      >
+                        <option value="disponible">Disponible</option>
+                        <option value="ocupado">Ocupada</option>
+                      </select>
+                      {statusSavingLocationId === detailModal.id && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                    </label>
+                  ) : (
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
+                      detailModal.status === 'ocupado'
+                        ? 'bg-orange-100 text-orange-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      {detailModal.status === 'ocupado' ? <AlertCircle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                      {detailModal.status === 'ocupado' ? 'Ocupada' : 'Disponible'}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center justify-center min-w-8 h-8 px-2 rounded-full bg-indigo-100 text-indigo-700 text-sm font-black">
+                    {detailModal.items?.length ?? 0}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-dashed border-emerald-300 bg-emerald-50/70 px-4 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-emerald-800">Agregar números de parte</p>
+                    <p className="mt-0.5 text-xs text-emerald-700">
+                      Selecciona una transferencia disponible y asígnala a esta locación.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openAssignModal(detailModal)}
+                    disabled={detailModal.status !== 'disponible'}
+                    title={detailModal.status === 'disponible' ? 'Agregar un número de parte desde Transferencias KITTEO' : 'Cambia el estado a Disponible para agregar números de parte'}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-700 transition-all hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+                  >
+                    <Package className="h-3.5 w-3.5" />
+                    {detailModal.status === 'disponible' ? 'Agregar desde Transferencias' : 'Disponible requerido'}
+                  </button>
+                </div>
               </div>
 
               {detailModal.items && detailModal.items.length > 0 ? (
