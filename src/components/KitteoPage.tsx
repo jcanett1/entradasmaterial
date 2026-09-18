@@ -74,6 +74,7 @@ interface ExitTarget {
 }
 
 type KitteoPrecountStatus = 'borrador' | 'finalizado';
+type KitteoAdjustmentStatus = 'pendiente' | 'aplicado' | 'sin_diferencia' | 'rechazado';
 
 interface KitteoPrecountRow {
   id?: number;
@@ -86,6 +87,18 @@ interface KitteoPrecountRow {
   system_boxes: number | null;
   counted_qty: number | null;
   counted_boxes: number | null;
+}
+
+interface KitteoAdjustmentRecord {
+  id: number;
+  location_id: number;
+  location_code: string;
+  rack: string;
+  status: KitteoPrecountStatus;
+  adjustment_status: KitteoAdjustmentStatus;
+  completed_by: string | null;
+  completed_at: string | null;
+  notes: string | null;
 }
 
 interface KitteoPrecountRecord {
@@ -175,6 +188,14 @@ export function KitteoPage() {
   const [precountLoading, setPrecountLoading] = useState(false);
   const [precountSaving, setPrecountSaving] = useState(false);
   const [precountError, setPrecountError] = useState<string | null>(null);
+
+  /* Modal de revisión y ajuste autorizado */
+  const [adjustmentLocation, setAdjustmentLocation] = useState<KitteoLocation | null>(null);
+  const [adjustmentPrecount, setAdjustmentPrecount] = useState<KitteoAdjustmentRecord | null>(null);
+  const [adjustmentRows, setAdjustmentRows] = useState<KitteoPrecountRow[]>([]);
+  const [adjustmentLoading, setAdjustmentLoading] = useState(false);
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
+  const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
 
   /* Modal de salida definitiva para un artículo específico */
   const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null);
@@ -513,6 +534,83 @@ export function KitteoPage() {
     if (finalize) {
       setPrecountLocation(null);
     }
+  };
+
+  const openAdjustmentModal = async (location: KitteoLocation) => {
+    if (!canManageKitteoLocationStatus) return;
+    setAdjustmentLocation(location);
+    setAdjustmentPrecount(null);
+    setAdjustmentRows([]);
+    setAdjustmentError(null);
+    setAdjustmentLoading(true);
+
+    const { data: precount, error: precountError } = await supabase
+      .from('kitteo_precounts')
+      .select('id, location_id, location_code, rack, status, adjustment_status, completed_by, completed_at, notes')
+      .eq('location_id', location.id)
+      .eq('status', 'finalizado')
+      .eq('adjustment_status', 'pendiente')
+      .order('completed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (precountError) {
+      console.error('Error cargando preconteo pendiente:', precountError);
+      setAdjustmentError(`No se pudo cargar la revisión. Ejecuta el SQL de Etapa 2: ${precountError.message}`);
+      setAdjustmentLoading(false);
+      return;
+    }
+
+    if (!precount) {
+      setAdjustmentError('No hay un preconteo finalizado pendiente de aprobación para esta locación.');
+      setAdjustmentLoading(false);
+      return;
+    }
+
+    const { data: rows, error: rowsError } = await supabase
+      .from('kitteo_precount_items')
+      .select('*')
+      .eq('precount_id', precount.id)
+      .order('id', { ascending: true });
+
+    if (rowsError) {
+      console.error('Error cargando detalle del ajuste:', rowsError);
+      setAdjustmentError(`No se pudo cargar el detalle del ajuste: ${rowsError.message}`);
+    } else {
+      setAdjustmentPrecount(precount as KitteoAdjustmentRecord);
+      setAdjustmentRows((rows as KitteoPrecountRow[]) ?? []);
+    }
+    setAdjustmentLoading(false);
+  };
+
+  const reviewPrecountAdjustment = async (action: 'aplicar' | 'rechazar') => {
+    if (!canManageKitteoLocationStatus || !adjustmentPrecount || adjustmentSaving) return;
+    const actionText = action === 'aplicar'
+      ? '¿Aplicar las cantidades contadas al inventario de KITTEO? Esta acción quedará registrada y no se puede deshacer desde aquí.'
+      : '¿Rechazar este preconteo? No se cambiarán las cantidades de KITTEO.';
+    if (!confirm(actionText)) return;
+
+    setAdjustmentSaving(true);
+    setAdjustmentError(null);
+    const { error } = await supabase.rpc('review_kitteo_precount', {
+      p_precount_id: adjustmentPrecount.id,
+      p_action: action,
+      p_reviewer: userDisplayName || null,
+      p_notes: adjustmentPrecount.notes || null,
+    });
+
+    if (error) {
+      console.error('Error revisando ajuste de preconteo:', error);
+      setAdjustmentError(`No se pudo completar la revisión: ${error.message}`);
+      setAdjustmentSaving(false);
+      return;
+    }
+
+    setAdjustmentSaving(false);
+    setAdjustmentLocation(null);
+    setAdjustmentPrecount(null);
+    setAdjustmentRows([]);
+    await fetchLocations();
   };
 
   /* ── Cambio manual de estado: solo admin y supervisor ── */
@@ -1261,10 +1359,16 @@ export function KitteoPage() {
                                     <ClipboardList className="h-3 w-3" />Ver partes
                                   </button>
                                   {canManageKitteoLocationStatus && (
-                                    <button onClick={() => void openPrecountModal(loc)}
-                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all whitespace-nowrap">
-                                      <ClipboardCheck className="h-3 w-3" />Preconteo
-                                    </button>
+                                    <>
+                                      <button onClick={() => void openPrecountModal(loc)}
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all whitespace-nowrap">
+                                        <ClipboardCheck className="h-3 w-3" />Preconteo
+                                      </button>
+                                      <button onClick={() => void openAdjustmentModal(loc)}
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-all whitespace-nowrap">
+                                        <CheckCircle2 className="h-3 w-3" />Revisar ajuste
+                                      </button>
+                                    </>
                                   )}
                                 </div>
                               ) : (
@@ -1506,6 +1610,141 @@ export function KitteoPage() {
             </>
           )}
         </>
+      )}
+
+      {/* ══════════════════════════════════════════
+          MODAL: REVISIÓN Y AJUSTE AUTORIZADO — ETAPA 2
+      ══════════════════════════════════════════ */}
+      {adjustmentLocation && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden shadow-2xl border border-gray-100">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-purple-100">
+                  <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">Revisión y ajuste autorizado</h2>
+                  <p className="text-xs text-gray-400">
+                    Locación: <span className="font-bold text-purple-600">{adjustmentLocation.location_code}</span>
+                    {' · '}Rack <span className="font-bold">{adjustmentLocation.rack}</span>
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setAdjustmentLocation(null)} disabled={adjustmentSaving}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all disabled:opacity-40"
+                aria-label="Cerrar revisión de ajuste">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4 overflow-y-auto max-h-[calc(92vh-76px)]">
+              <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                <p className="text-sm font-bold text-purple-800">Aprobación requerida</p>
+                <p className="mt-0.5 text-xs text-purple-700">
+                  El botón Aplicar ajuste actualizará QTY y cajas de la tabla de artículos. Esta operación queda registrada con tu usuario.
+                </p>
+              </div>
+
+              {adjustmentError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {adjustmentError}
+                </div>
+              )}
+
+              {adjustmentLoading ? (
+                <div className="flex justify-center py-14"><Loader2 className="h-9 w-9 animate-spin text-purple-500" /></div>
+              ) : adjustmentRows.length === 0 ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center">
+                  <p className="text-sm font-semibold text-amber-800">No hay un preconteo pendiente para esta locación.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {adjustmentRows.map((row, rowIndex) => {
+                      const qtyDifference = (row.counted_qty ?? 0) - row.system_qty;
+                      const boxesDifference = row.counted_boxes === null
+                        ? null
+                        : row.counted_boxes - (row.system_boxes ?? 0);
+                      const hasDifference = qtyDifference !== 0 || (boxesDifference !== null && boxesDifference !== 0);
+                      return (
+                        <div key={`${row.location_item_id ?? row.part_number}-${rowIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="inline-flex max-w-full truncate rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">
+                                {row.part_number}
+                              </span>
+                              <div className="mt-1 flex flex-wrap gap-1.5">
+                                <span className="text-[11px] font-semibold text-orange-700">FIFO: {row.fifo_number !== null ? `#${row.fifo_number}` : '—'}</span>
+                                <span className="text-[11px] font-semibold text-amber-700">PO: {row.po || '—'}</span>
+                              </div>
+                            </div>
+                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${hasDifference ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                              {hasDifference ? 'Con diferencia' : 'Sin diferencia'}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-2 text-center">
+                            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                              <p className="text-[10px] font-bold uppercase text-gray-500">QTY sistema</p>
+                              <p className="text-lg font-black text-blue-700">{row.system_qty.toLocaleString()}</p>
+                            </div>
+                            <div className="rounded-lg border border-purple-100 bg-purple-50 px-3 py-2">
+                              <p className="text-[10px] font-bold uppercase text-gray-500">QTY contado</p>
+                              <p className="text-lg font-black text-purple-700">{(row.counted_qty ?? 0).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs">
+                            <span className="font-semibold text-gray-500">Diferencia QTY</span>
+                            <span className={`font-black ${qtyDifference === 0 ? 'text-emerald-700' : 'text-red-700'}`}>{qtyDifference > 0 ? '+' : ''}{qtyDifference.toLocaleString()}</span>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs">
+                            <span className="font-semibold text-gray-500">Cajas sistema / contadas</span>
+                            <span className="font-black text-gray-700">{row.system_boxes ?? '—'} / {row.counted_boxes ?? '—'}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase text-gray-500">QTY sistema</p>
+                      <p className="text-xl font-black text-blue-700">{adjustmentRows.reduce((sum, row) => sum + row.system_qty, 0).toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase text-gray-500">QTY contado</p>
+                      <p className="text-xl font-black text-purple-700">{adjustmentRows.reduce((sum, row) => sum + (row.counted_qty ?? 0), 0).toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase text-gray-500">Diferencia total</p>
+                      <p className="text-xl font-black text-red-700">{(() => { const difference = adjustmentRows.reduce((sum, row) => sum + ((row.counted_qty ?? 0) - row.system_qty), 0); return `${difference > 0 ? '+' : ''}${difference.toLocaleString()}`; })()}</p>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                <button onClick={() => setAdjustmentLocation(null)} disabled={adjustmentSaving}
+                  className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cerrar</button>
+                {!adjustmentLoading && adjustmentRows.length > 0 && adjustmentPrecount && (
+                  <>
+                    <button onClick={() => void reviewPrecountAdjustment('rechazar')} disabled={adjustmentSaving}
+                      className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
+                      {adjustmentSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                      Rechazar
+                    </button>
+                    <button onClick={() => void reviewPrecountAdjustment('aplicar')} disabled={adjustmentSaving}
+                      className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50">
+                      {adjustmentSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Aplicar ajuste
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ══════════════════════════════════════════
