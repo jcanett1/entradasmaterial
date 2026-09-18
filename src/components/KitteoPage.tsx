@@ -6,7 +6,7 @@ import {
   RefreshCw, LogOut, Hash, Boxes, ClipboardList, Calendar,
   User, Archive, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, CheckCircle2, AlertCircle,
-  History, ArrowRightFromLine, Trash2, ListChecks,
+  History, ArrowRightFromLine, Trash2, ListChecks, ClipboardCheck,
 } from 'lucide-react';
 
 /* ── Tipos ── */
@@ -73,6 +73,34 @@ interface ExitTarget {
   item: KitteoLocationItem;
 }
 
+type KitteoPrecountStatus = 'borrador' | 'finalizado';
+
+interface KitteoPrecountRow {
+  id?: number;
+  location_item_id: number | null;
+  part_number: string;
+  description: string | null;
+  po: string | null;
+  fifo_number: number | null;
+  system_qty: number;
+  system_boxes: number | null;
+  counted_qty: number | null;
+  counted_boxes: number | null;
+}
+
+interface KitteoPrecountRecord {
+  id: number;
+  location_id: number;
+  location_code: string;
+  rack: string;
+  status: KitteoPrecountStatus;
+  started_by: string | null;
+  started_at: string;
+  completed_by: string | null;
+  completed_at: string | null;
+  notes: string | null;
+}
+
 type NewKitteoExit = Omit<KitteoExit, 'id'>;
 
 const insertKitteoExits = async (rows: NewKitteoExit[]) => {
@@ -137,6 +165,16 @@ export function KitteoPage() {
   /* Modal detalle: lista de partes y acciones individuales */
   const [detailModal, setDetailModal] = useState<KitteoLocation | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
+
+  /* Modal preconteo: etapa 1, sin ajustes automáticos */
+  const [precountLocation, setPrecountLocation] = useState<KitteoLocation | null>(null);
+  const [precountId, setPrecountId] = useState<number | null>(null);
+  const [precountStatus, setPrecountStatus] = useState<KitteoPrecountStatus>('borrador');
+  const [precountRows, setPrecountRows] = useState<KitteoPrecountRow[]>([]);
+  const [precountNotes, setPrecountNotes] = useState('');
+  const [precountLoading, setPrecountLoading] = useState(false);
+  const [precountSaving, setPrecountSaving] = useState(false);
+  const [precountError, setPrecountError] = useState<string | null>(null);
 
   /* Modal de salida definitiva para un artículo específico */
   const [exitTarget, setExitTarget] = useState<ExitTarget | null>(null);
@@ -328,6 +366,152 @@ export function KitteoPage() {
         .eq('location_id', locationId),
     ]);
     return locationError ?? itemsError;
+  };
+
+  const openPrecountModal = async (location: KitteoLocation) => {
+    setPrecountLocation(location);
+    setPrecountId(null);
+    setPrecountStatus('borrador');
+    setPrecountRows([]);
+    setPrecountNotes('');
+    setPrecountError(null);
+    setPrecountLoading(true);
+
+    const { data: draft, error: draftError } = await supabase
+      .from('kitteo_precounts')
+      .select('id, status, notes')
+      .eq('location_id', location.id)
+      .eq('status', 'borrador')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (draftError) {
+      console.error('Error cargando el borrador de preconteo:', draftError);
+      setPrecountError(`No se pudo cargar el preconteo. Ejecuta primero el SQL de preconteos: ${draftError.message}`);
+      setPrecountLoading(false);
+      return;
+    }
+
+    if (draft) {
+      const draftId = Number(draft.id);
+      const { data: draftItems, error: draftItemsError } = await supabase
+        .from('kitteo_precount_items')
+        .select('*')
+        .eq('precount_id', draftId)
+        .order('id', { ascending: true });
+
+      if (draftItemsError) {
+        console.error('Error cargando artículos del preconteo:', draftItemsError);
+        setPrecountError(`No se pudieron cargar los artículos del borrador: ${draftItemsError.message}`);
+      } else {
+        setPrecountId(draftId);
+        setPrecountStatus('borrador');
+        setPrecountNotes(draft.notes ?? '');
+        setPrecountRows((draftItems as KitteoPrecountRow[]) ?? []);
+      }
+    } else {
+      setPrecountRows((location.items ?? []).map(item => ({
+        location_item_id: item.id > 0 ? item.id : null,
+        part_number: item.part_number,
+        description: item.description,
+        po: item.po,
+        fifo_number: item.fifo_number,
+        system_qty: item.qty ?? 0,
+        system_boxes: item.boxes,
+        counted_qty: null,
+        counted_boxes: null,
+      })));
+    }
+
+    setPrecountLoading(false);
+  };
+
+  const updatePrecountRow = (rowIndex: number, field: 'counted_qty' | 'counted_boxes', value: string) => {
+    const parsedValue = value === '' ? null : Math.max(0, Number(value));
+    setPrecountRows(current => current.map((row, index) => index === rowIndex
+      ? { ...row, [field]: Number.isFinite(parsedValue) ? parsedValue : null }
+      : row
+    ));
+  };
+
+  const savePrecount = async (finalize: boolean) => {
+    if (!precountLocation || precountRows.length === 0 || precountSaving) return;
+    if (finalize && precountRows.some(row => row.counted_qty === null)) {
+      setPrecountError('Para finalizar debes capturar la cantidad física de todos los números de parte.');
+      return;
+    }
+
+    setPrecountSaving(true);
+    setPrecountError(null);
+    const now = new Date().toISOString();
+    const modifier = userDisplayName || 'Usuario autenticado';
+    const header = {
+      location_id: precountLocation.id,
+      location_code: precountLocation.location_code,
+      rack: precountLocation.rack,
+      status: finalize ? 'finalizado' : 'borrador',
+      started_by: modifier,
+      completed_by: finalize ? modifier : null,
+      completed_at: finalize ? now : null,
+      notes: precountNotes.trim() || null,
+    };
+
+    let currentPrecountId = precountId;
+    let headerError: { message: string } | null = null;
+    if (currentPrecountId) {
+      const { error } = await supabase
+        .from('kitteo_precounts')
+        .update(header)
+        .eq('id', currentPrecountId);
+      headerError = error;
+      if (!headerError) {
+        const { error: deleteError } = await supabase
+          .from('kitteo_precount_items')
+          .delete()
+          .eq('precount_id', currentPrecountId);
+        headerError = deleteError;
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('kitteo_precounts')
+        .insert({ ...header, started_at: now })
+        .select('id')
+        .single();
+      headerError = error;
+      currentPrecountId = data ? Number(data.id) : null;
+    }
+
+    if (!headerError && currentPrecountId) {
+      const itemPayloads = precountRows.map(row => ({
+        precount_id: currentPrecountId,
+        location_item_id: row.location_item_id,
+        part_number: row.part_number,
+        description: row.description,
+        po: row.po,
+        fifo_number: row.fifo_number,
+        system_qty: row.system_qty,
+        system_boxes: row.system_boxes,
+        counted_qty: row.counted_qty,
+        counted_boxes: row.counted_boxes,
+      }));
+      const { error: itemsError } = await supabase.from('kitteo_precount_items').insert(itemPayloads);
+      headerError = itemsError;
+    }
+
+    if (headerError) {
+      console.error('Error guardando preconteo KITTEO:', headerError);
+      setPrecountError(`No se pudo guardar el preconteo: ${headerError.message}`);
+      setPrecountSaving(false);
+      return;
+    }
+
+    setPrecountId(currentPrecountId);
+    setPrecountStatus(finalize ? 'finalizado' : 'borrador');
+    setPrecountSaving(false);
+    if (finalize) {
+      setPrecountLocation(null);
+    }
   };
 
   /* ── Cambio manual de estado: solo admin y supervisor ── */
@@ -1070,10 +1254,16 @@ export function KitteoPage() {
                             {/* ── ACCIONES ── */}
                             <td className="px-4 py-3">
                               {isOcupado || hasAssignedItems ? (
-                                <button onClick={() => setDetailModal(loc)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all whitespace-nowrap">
-                                  <ClipboardList className="h-3 w-3" />Ver partes
-                                </button>
+                                <div className="flex flex-wrap items-center justify-center gap-1.5">
+                                  <button onClick={() => setDetailModal(loc)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all whitespace-nowrap">
+                                    <ClipboardList className="h-3 w-3" />Ver partes
+                                  </button>
+                                  <button onClick={() => void openPrecountModal(loc)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all whitespace-nowrap">
+                                    <ClipboardCheck className="h-3 w-3" />Preconteo
+                                  </button>
+                                </div>
                               ) : (
                                 <button onClick={() => openAssignModal(loc)}
                                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all">
@@ -1313,6 +1503,186 @@ export function KitteoPage() {
             </>
           )}
         </>
+      )}
+
+      {/* ══════════════════════════════════════════
+          MODAL: PRECONTEO DE MATERIAL — ETAPA 1
+      ══════════════════════════════════════════ */}
+      {precountLocation && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden shadow-2xl border border-gray-100">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-blue-100">
+                  <ClipboardCheck className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">Preconteo de material</h2>
+                  <p className="text-xs text-gray-400">
+                    Locación: <span className="font-bold text-blue-600">{precountLocation.location_code}</span>
+                    {' · '}Rack <span className="font-bold">{precountLocation.rack}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPrecountLocation(null)}
+                disabled={precountSaving}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all disabled:opacity-40"
+                aria-label="Cerrar preconteo"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4 overflow-y-auto max-h-[calc(92vh-76px)]">
+              <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                <div>
+                  <p className="text-sm font-bold text-blue-800">Verificación física — {precountStatus === 'borrador' ? 'Borrador' : 'Finalizado'}</p>
+                  <p className="mt-0.5 text-xs text-blue-700">Captura lo encontrado físicamente y compara contra el sistema.</p>
+                </div>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-blue-700 border border-blue-200">
+                  <AlertCircle className="h-3.5 w-3.5" />No modifica inventario
+                </span>
+              </div>
+
+              {precountError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {precountError}
+                </div>
+              )}
+
+              {precountLoading ? (
+                <div className="flex justify-center py-14"><Loader2 className="h-9 w-9 animate-spin text-blue-500" /></div>
+              ) : precountRows.length === 0 ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center">
+                  <p className="text-sm font-semibold text-amber-800">No hay artículos para contar en esta locación.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {precountRows.map((row, rowIndex) => {
+                      const difference = row.counted_qty === null ? null : row.counted_qty - row.system_qty;
+                      const differenceClass = difference === null
+                        ? 'bg-gray-50 border-gray-200 text-gray-500'
+                        : difference === 0
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : 'bg-red-50 border-red-200 text-red-700';
+                      return (
+                        <div key={`${row.location_item_id ?? row.part_number}-${rowIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="inline-flex max-w-full truncate rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">
+                                {row.part_number}
+                              </span>
+                              {row.description && <p className="mt-1 truncate text-xs text-gray-500">{row.description}</p>}
+                            </div>
+                            <span className="text-[10px] font-bold uppercase text-gray-400">Artículo {rowIndex + 1}</span>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            <span className="rounded-lg border border-orange-100 bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-700">FIFO: {row.fifo_number !== null ? `#${row.fifo_number}` : '—'}</span>
+                            <span className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700">PO: {row.po || '—'}</span>
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                            <div className="rounded-lg border border-blue-100 bg-blue-50 px-2 py-2">
+                              <p className="text-[10px] font-bold uppercase text-gray-500">Sistema</p>
+                              <p className="mt-0.5 text-lg font-black text-blue-700">{row.system_qty.toLocaleString()}</p>
+                            </div>
+                            <label className="rounded-lg border border-purple-100 bg-purple-50 px-2 py-2">
+                              <span className="block text-[10px] font-bold uppercase text-gray-500">Físico</span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={row.counted_qty ?? ''}
+                                onChange={event => updatePrecountRow(rowIndex, 'counted_qty', event.target.value)}
+                                placeholder="—"
+                                className="mt-0.5 w-full rounded-md border border-purple-200 bg-white px-1 py-0.5 text-center text-lg font-black text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                              />
+                            </label>
+                            <div className={`rounded-lg border px-2 py-2 ${differenceClass}`}>
+                              <p className="text-[10px] font-bold uppercase">Diferencia</p>
+                              <p className="mt-0.5 text-lg font-black">{difference === null ? '—' : `${difference > 0 ? '+' : ''}${difference.toLocaleString()}`}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                              <p className="text-[10px] font-bold uppercase text-gray-500">Cajas sistema</p>
+                              <p className="text-sm font-bold text-gray-700">{row.system_boxes ?? '—'}</p>
+                            </div>
+                            <label className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                              <span className="block text-[10px] font-bold uppercase text-gray-500">Cajas físicas</span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={row.counted_boxes ?? ''}
+                                onChange={event => updatePrecountRow(rowIndex, 'counted_boxes', event.target.value)}
+                                placeholder="Opcional"
+                                className="mt-0.5 w-full border-0 p-0 text-sm font-bold text-gray-700 focus:outline-none focus:ring-0"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase text-gray-500">QTY sistema</p>
+                      <p className="text-xl font-black text-blue-700">{precountRows.reduce((sum, row) => sum + row.system_qty, 0).toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase text-gray-500">QTY físico</p>
+                      <p className="text-xl font-black text-purple-700">{precountRows.reduce((sum, row) => sum + (row.counted_qty ?? 0), 0).toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase text-gray-500">Diferencia total</p>
+                      <p className={`text-xl font-black ${precountRows.every(row => row.counted_qty !== null) ? (precountRows.reduce((sum, row) => sum + ((row.counted_qty ?? 0) - row.system_qty), 0) === 0 ? 'text-emerald-700' : 'text-red-700') : 'text-gray-500'}`}>
+                        {precountRows.every(row => row.counted_qty !== null)
+                          ? `${precountRows.reduce((sum, row) => sum + ((row.counted_qty ?? 0) - row.system_qty), 0) > 0 ? '+' : ''}${precountRows.reduce((sum, row) => sum + ((row.counted_qty ?? 0) - row.system_qty), 0).toLocaleString()}`
+                          : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Observaciones</label>
+                    <textarea
+                      value={precountNotes}
+                      onChange={event => setPrecountNotes(event.target.value)}
+                      rows={2}
+                      placeholder="Opcional: daños, material pendiente o comentarios del conteo..."
+                      className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                <button onClick={() => setPrecountLocation(null)} disabled={precountSaving}
+                  className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  Cerrar
+                </button>
+                {!precountLoading && precountRows.length > 0 && (
+                  <>
+                    <button onClick={() => void savePrecount(false)} disabled={precountSaving}
+                      className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                      {precountSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Guardar borrador
+                    </button>
+                    <button onClick={() => void savePrecount(true)} disabled={precountSaving}
+                      className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+                      {precountSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />}
+                      Finalizar preconteo
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ══════════════════════════════════════════
