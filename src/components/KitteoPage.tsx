@@ -128,10 +128,8 @@ export function KitteoPage() {
   const [assignModal, setAssignModal] = useState<KitteoLocation | null>(null);
   const [entries, setEntries] = useState<EntryOption[]>([]);
   const [entrySearch, setEntrySearch] = useState('');
-  const [selectedEntry, setSelectedEntry] = useState<EntryOption | null>(null);
+  const [selectedEntries, setSelectedEntries] = useState<EntryOption[]>([]);
   const [showEntryDrop, setShowEntryDrop] = useState(false);
-  const [qty, setQty] = useState<number>(0);
-  const [po, setPo] = useState('');
   const [saving, setSaving] = useState(false);
   const entryDropRef = useRef<HTMLDivElement>(null);
   const entryDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -424,7 +422,6 @@ export function KitteoPage() {
 
   const handleEntrySearch = (val: string) => {
     setEntrySearch(val);
-    setSelectedEntry(null);
     if (entryDebounce.current) clearTimeout(entryDebounce.current);
     entryDebounce.current = setTimeout(() => fetchEntries(val), 250);
   };
@@ -437,36 +434,37 @@ export function KitteoPage() {
   };
 
   const handleSelectEntry = (e: EntryOption) => {
-    setSelectedEntry(e);
-    setEntrySearch(e.part_number);
-    setQty(e.qty);
-    setPo(e.po ?? '');
-    setShowEntryDrop(false);
+    setSelectedEntries(current => current.some(entry => entry.id === e.id)
+      ? current.filter(entry => entry.id !== e.id)
+      : [...current, e]);
+    setEntrySearch('');
+    setShowEntryDrop(true);
   };
 
   /* ── Asignar material a una locación ── */
   const handleAssign = async () => {
-    if (!assignModal || !selectedEntry) return;
+    if (!assignModal || selectedEntries.length === 0) return;
     setSaving(true);
 
-    const itemPayload = {
+    const assignedAt = new Date().toISOString();
+    const itemPayloads = selectedEntries.map(entry => ({
       location_id: assignModal.id,
       location_code: assignModal.location_code,
-      source_transfer_id: selectedEntry.id,
-      part_number: selectedEntry.part_number,
-      description: selectedEntry.description,
-      qty,
-      boxes: selectedEntry.boxes,
-      po: po || null,
-      fifo_number: selectedEntry.fifo_number ?? null,
-      entry_id: selectedEntry.entry_id ?? null,
+      source_transfer_id: entry.id,
+      part_number: entry.part_number,
+      description: entry.description,
+      qty: entry.qty,
+      boxes: entry.boxes,
+      po: entry.po,
+      fifo_number: entry.fifo_number ?? null,
+      entry_id: entry.entry_id ?? null,
       registered_by: userDisplayName || null,
-      assigned_at: new Date().toISOString(),
-    };
-    let { error: itemError } = await supabase.from('kitteo_location_items').insert([itemPayload]);
+      assigned_at: assignedAt,
+    }));
+    let { error: itemError } = await supabase.from('kitteo_location_items').insert(itemPayloads);
     if (itemError && /fifo_number|column .* does not exist/i.test(itemError.message)) {
-      const { fifo_number: _fifoNumber, ...legacyPayload } = itemPayload;
-      ({ error: itemError } = await supabase.from('kitteo_location_items').insert([legacyPayload]));
+      const legacyPayloads = itemPayloads.map(({ fifo_number: _fifoNumber, ...item }) => item);
+      ({ error: itemError } = await supabase.from('kitteo_location_items').insert(legacyPayloads));
     }
 
     if (itemError) {
@@ -489,11 +487,11 @@ export function KitteoPage() {
     const { error: transferError } = await supabase
       .from('transferes')
       .delete()
-      .eq('id', selectedEntry.id);
+      .in('id', selectedEntries.map(entry => entry.id));
 
     if (transferError) {
       console.error('Error retirando transferencia después de asignar a KITTEO:', transferError);
-      alert(`El artículo se asignó a KITTEO, pero no se pudo retirar de Transferencia KITTEO: ${transferError.message}`);
+      alert(`Los artículos se asignaron a KITTEO, pero no se pudieron retirar de Transferencias KITTEO: ${transferError.message}`);
     }
 
     setSaving(false);
@@ -503,10 +501,8 @@ export function KitteoPage() {
   };
 
   const resetAssignForm = () => {
-    setSelectedEntry(null);
+    setSelectedEntries([]);
     setEntrySearch('');
-    setQty(0);
-    setPo('');
     setEntries([]);
   };
 
@@ -898,7 +894,7 @@ export function KitteoPage() {
             <div className="relative ml-auto">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
               <input type="text" value={searchTerm} onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-                placeholder="Buscar locación, part number, PO..."
+                placeholder="Buscar locación o part number..."
                 className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white w-64" />
             </div>
           </div>
@@ -924,7 +920,6 @@ export function KitteoPage() {
                           { icon: <Package className="h-3.5 w-3.5" />, label: 'Part Number' },
                           { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
                           { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
-                          { icon: <ClipboardList className="h-3.5 w-3.5" />, label: 'PO' },
                           { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado Por' },
                           { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Asignado' },
                           { icon: null, label: 'Acciones', center: true },
@@ -1007,24 +1002,24 @@ export function KitteoPage() {
                             </td>
                             {/* QTY */}
                             <td className="px-4 py-3 text-center">
-                              {primaryItem?.qty != null || loc.qty != null ? (
+                              {(loc.items?.length ?? 0) > 0 || loc.qty != null ? (
                                 <span className="inline-flex items-center justify-center min-w-[48px] px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-bold text-sm border border-blue-100">
-                                  {(primaryItem?.qty ?? loc.qty ?? 0).toLocaleString()}
+                                  {(loc.items && loc.items.length > 0
+                                    ? loc.items.reduce((sum, item) => sum + (item.qty ?? 0), 0)
+                                    : (loc.qty ?? 0)).toLocaleString()}
                                 </span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* Cajas */}
                             <td className="px-4 py-3 text-center">
-                              {((primaryItem?.boxes ?? loc.boxes) ?? 0) > 0 ? (
+                              {((loc.items && loc.items.length > 0
+                                ? loc.items.reduce((sum, item) => sum + (item.boxes ?? 0), 0)
+                                : (loc.boxes ?? 0)) > 0) ? (
                                 <span className="inline-flex items-center justify-center min-w-[44px] px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 font-bold text-sm border border-purple-100">
-                                  {primaryItem?.boxes ?? loc.boxes}
+                                  {loc.items && loc.items.length > 0
+                                    ? loc.items.reduce((sum, item) => sum + (item.boxes ?? 0), 0)
+                                    : loc.boxes}
                                 </span>
-                              ) : <span className="text-gray-400 italic text-sm">—</span>}
-                            </td>
-                            {/* PO */}
-                            <td className="px-4 py-3">
-                              {(primaryItem?.po ?? loc.po) ? (
-                                <span className="inline-flex px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 font-mono text-xs font-semibold border border-purple-100">{primaryItem?.po ?? loc.po}</span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* Registrado Por */}
@@ -1118,7 +1113,7 @@ export function KitteoPage() {
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
             <input type="text" value={histSearch} onChange={e => { setHistSearch(e.target.value); setHistPage(1); }}
-              placeholder="Buscar part number, locación, PO..."
+              placeholder="Buscar part number o locación..."
               className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white w-full" />
           </div>
 
@@ -1144,7 +1139,6 @@ export function KitteoPage() {
                           { icon: <Hash className="h-3.5 w-3.5" />, label: 'Rack', center: true },
                           { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
                           { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
-                          { icon: <ClipboardList className="h-3.5 w-3.5" />, label: 'PO' },
                           { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado Por' },
                           { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Fecha Salida' },
                         ].map(h => (
@@ -1195,12 +1189,6 @@ export function KitteoPage() {
                                 </span>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
-                            {/* PO */}
-                            <td className="px-4 py-3">
-                              {h.po ? (
-                                <span className="inline-flex px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 font-mono text-xs font-semibold border border-purple-100">{h.po}</span>
-                              ) : <span className="text-gray-400 italic text-sm">—</span>}
-                            </td>
                             {/* Registrado Por */}
                             <td className="px-4 py-3">
                               {h.registered_by ? (
@@ -1244,7 +1232,7 @@ export function KitteoPage() {
                               {pageHist.reduce((s, h) => s + (h.boxes ?? 0), 0).toLocaleString()}
                             </span>
                           </td>
-                          <td colSpan={3} />
+                          <td colSpan={2} />
                         </tr>
                       </tfoot>
                     )}
@@ -1399,26 +1387,31 @@ export function KitteoPage() {
             <div className="px-6 py-5 space-y-4">
               <div ref={entryDropRef} className="relative">
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                  <Package className="h-3.5 w-3.5 inline mr-1 text-indigo-400" />Buscar en Transferencias <span className="text-red-400">*</span>
+                  <Package className="h-3.5 w-3.5 inline mr-1 text-indigo-400" />Buscar en Transferencias (puedes elegir varias) <span className="text-red-400">*</span>
                 </label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
                   <input type="text" value={entrySearch} onChange={e => handleEntrySearch(e.target.value)}
                     onFocus={() => { if (entries.length > 0) setShowEntryDrop(true); else fetchEntries(entrySearch); }}
                     placeholder="Buscar por part number o descripción..."
-                    className={`w-full pl-9 pr-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-gray-50 ${selectedEntry ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`} />
+                    className={`w-full pl-9 pr-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-gray-50 ${selectedEntries.length > 0 ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`} />
                 </div>
                 {showEntryDrop && entries.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
                     {entries.map(e => (
                       <button key={e.id} type="button"
                         onMouseDown={(ev) => { ev.preventDefault(); handleSelectEntry(e); }}
-                        className="w-full text-left px-4 py-2.5 hover:bg-orange-50 transition-colors border-b border-gray-50 last:border-0">
+                        className={`w-full text-left px-4 py-2.5 transition-colors border-b border-gray-50 last:border-0 ${selectedEntries.some(entry => entry.id === e.id) ? 'bg-orange-50 ring-1 ring-inset ring-orange-200' : 'hover:bg-orange-50'}`}>
+                        <div className="flex items-start gap-2">
+                          <span className={`mt-0.5 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border text-[10px] font-black ${selectedEntries.some(entry => entry.id === e.id) ? 'border-orange-500 bg-orange-500 text-white' : 'border-gray-300 text-transparent'}`}>✓</span>
+                          <div className="min-w-0 flex-1">
                         <p className="text-sm font-bold text-indigo-700">{e.part_number}</p>
                         <p className="text-xs text-gray-400">{e.description ?? 'Sin descripción'} · QTY: {e.qty} · {new Date(e.exited_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
                         <div className="mt-1 flex flex-wrap gap-2">
                           <span className="text-xs font-semibold text-amber-600">PO: {e.po || '—'}</span>
                           <span className="text-xs font-semibold text-orange-600">FIFO: {e.fifo_number !== null ? `#${e.fifo_number}` : '—'}</span>
+                        </div>
+                          </div>
                         </div>
                       </button>
                     ))}
@@ -1426,41 +1419,38 @@ export function KitteoPage() {
                 )}
               </div>
 
-              {selectedEntry && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
-                    <p className="text-[10px] font-semibold text-gray-500 uppercase">QTY</p>
-                    <p className="text-xl font-black text-blue-700">{selectedEntry.qty.toLocaleString()}</p>
-                  </div>
-                  <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
-                    <p className="text-[10px] font-semibold text-gray-500 uppercase">Cajas</p>
-                    <p className="text-xl font-black text-purple-700">{selectedEntry.boxes.toLocaleString()}</p>
+              {selectedEntries.length > 0 && (
+                <>
+                <div className="rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-orange-700">{selectedEntries.length} número(s) seleccionado(s)</p>
+                  <div className="mt-1.5 flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
+                    {selectedEntries.map(entry => (
+                      <button key={entry.id} type="button" onClick={() => handleSelectEntry(entry)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-orange-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-orange-100">
+                        {entry.part_number}<span className="text-orange-500">×</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+                    <p className="text-[10px] font-semibold text-gray-500 uppercase">QTY total</p>
+                    <p className="text-xl font-black text-blue-700">{selectedEntries.reduce((sum, entry) => sum + (entry.qty ?? 0), 0).toLocaleString()}</p>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5">
+                    <p className="text-[10px] font-semibold text-gray-500 uppercase">Cajas totales</p>
+                    <p className="text-xl font-black text-purple-700">{selectedEntries.reduce((sum, entry) => sum + (entry.boxes ?? 0), 0).toLocaleString()}</p>
+                  </div>
+                </div>
+                </>
               )}
-
-              <div>
-                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                  <Boxes className="h-3.5 w-3.5 inline mr-1 text-blue-400" />QTY a asignar <span className="text-red-400">*</span>
-                </label>
-                <input type="number" value={qty} min={1} onChange={e => setQty(Number(e.target.value))}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-gray-50" />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
-                  <ClipboardList className="h-3.5 w-3.5 inline mr-1 text-purple-400" />PO
-                </label>
-                <input type="text" value={po} onChange={e => setPo(e.target.value)} placeholder="Opcional"
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-gray-50" />
-              </div>
 
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setAssignModal(null); resetAssignForm(); }}
                   className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                   <X className="h-4 w-4 inline mr-1" />Cancelar
                 </button>
-                <button type="button" onClick={handleAssign} disabled={!selectedEntry || qty < 1 || saving}
+                <button type="button" onClick={handleAssign} disabled={selectedEntries.length === 0 || saving}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg, #ea580c, #f97316)' }}>
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
