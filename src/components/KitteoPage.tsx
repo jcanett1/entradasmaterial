@@ -315,6 +315,21 @@ export function KitteoPage() {
     setTimeout(() => setRefreshing(false), 500);
   }, []);
 
+  const touchKitteoLocation = async (locationId: number, updates: Record<string, unknown> = {}) => {
+    const modifier = userDisplayName || 'Usuario autenticado';
+    const [{ error: locationError }, { error: itemsError }] = await Promise.all([
+      supabase
+        .from('kitteo_locations')
+        .update({ ...updates, registered_by: modifier })
+        .eq('id', locationId),
+      supabase
+        .from('kitteo_location_items')
+        .update({ registered_by: modifier })
+        .eq('location_id', locationId),
+    ]);
+    return locationError ?? itemsError;
+  };
+
   /* ── Cambio manual de estado: solo admin y supervisor ── */
   const handleLocationStatusChange = async (
     location: KitteoLocation,
@@ -323,10 +338,7 @@ export function KitteoPage() {
     if (!canManageKitteoLocationStatus || location.status === nextStatus) return;
 
     setStatusSavingLocationId(location.id);
-    const { error } = await supabase
-      .from('kitteo_locations')
-      .update({ status: nextStatus })
-      .eq('id', location.id);
+    const error = await touchKitteoLocation(location.id, { status: nextStatus });
 
     if (error) {
       console.error('Error cambiando el estado de la locación KITTEO:', error);
@@ -476,10 +488,7 @@ export function KitteoPage() {
       return;
     }
 
-    const { error: locationError } = await supabase
-      .from('kitteo_locations')
-      .update({ status: 'ocupado' })
-      .eq('id', assignModal.id);
+    const locationError = await touchKitteoLocation(assignModal.id, { status: 'ocupado' });
 
     if (locationError) {
       console.error('Error actualizando estado de locación KITTEO:', locationError);
@@ -533,8 +542,8 @@ export function KitteoPage() {
       .select('id', { count: 'exact', head: true })
       .eq('location_id', loc.id);
 
-    if (!countError && remainingCount === 0) {
-      await supabase.from('kitteo_locations').update({
+    if (!countError) {
+      const locationError = await touchKitteoLocation(loc.id, remainingCount === 0 ? {
         status: 'disponible',
         part_number: null,
         description: null,
@@ -542,9 +551,11 @@ export function KitteoPage() {
         boxes: null,
         po: null,
         entry_id: null,
-        registered_by: null,
         assigned_at: null,
-      }).eq('id', loc.id);
+      } : {});
+      if (locationError) {
+        console.error('Error registrando el usuario que liberó el artículo:', locationError);
+      }
     }
 
     setActionSaving(false);
@@ -600,8 +611,8 @@ export function KitteoPage() {
       .select('id', { count: 'exact', head: true })
       .eq('location_id', location.id);
 
-    if (!countError && remainingCount === 0) {
-      await supabase.from('kitteo_locations').update({
+    if (!countError) {
+      const locationError = await touchKitteoLocation(location.id, remainingCount === 0 ? {
         status: 'disponible',
         part_number: null,
         description: null,
@@ -609,9 +620,11 @@ export function KitteoPage() {
         boxes: null,
         po: null,
         entry_id: null,
-        registered_by: null,
         assigned_at: null,
-      }).eq('id', location.id);
+      } : {});
+      if (locationError) {
+        console.error('Error registrando el usuario que realizó la salida:', locationError);
+      }
     }
 
     setExitSaving(false);
@@ -681,12 +694,10 @@ export function KitteoPage() {
     await Promise.all(affectedLocationIds.map(async locationId => {
       const { count } = await supabase.from('kitteo_location_items')
         .select('id', { count: 'exact', head: true }).eq('location_id', locationId);
-      if (count === 0) {
-        await supabase.from('kitteo_locations').update({
-          status: 'disponible', part_number: null, description: null, qty: null,
-          boxes: null, po: null, entry_id: null, registered_by: null, assigned_at: null,
-        }).eq('id', locationId);
-      }
+      await touchKitteoLocation(locationId, count === 0 ? {
+        status: 'disponible', part_number: null, description: null, qty: null,
+        boxes: null, po: null, entry_id: null, assigned_at: null,
+      } : {});
     }));
 
     setBulkSaving(false);
@@ -1034,12 +1045,12 @@ export function KitteoPage() {
                             </td>
                             {/* Registrado Por */}
                             <td className="px-4 py-3">
-                              {(primaryItem?.registered_by ?? loc.registered_by) ? (
+                              {(loc.registered_by ?? primaryItem?.registered_by) ? (
                                 <div className="flex items-center gap-1.5">
                                   <div className="h-6 w-6 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
-                                    <span className="text-orange-600 text-xs font-bold uppercase">{(primaryItem?.registered_by ?? loc.registered_by)?.[0]}</span>
+                                    <span className="text-orange-600 text-xs font-bold uppercase">{(loc.registered_by ?? primaryItem?.registered_by)?.[0]}</span>
                                   </div>
-                                  <span className="text-xs text-gray-600 truncate max-w-[100px]">{primaryItem?.registered_by ?? loc.registered_by}</span>
+                                  <span className="text-xs text-gray-600 truncate max-w-[100px]">{loc.registered_by ?? primaryItem?.registered_by}</span>
                                 </div>
                               ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
