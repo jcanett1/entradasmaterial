@@ -369,6 +369,7 @@ export function KitteoPage() {
   };
 
   const openPrecountModal = async (location: KitteoLocation) => {
+    if (!canManageKitteoLocationStatus) return;
     setPrecountLocation(location);
     setPrecountId(null);
     setPrecountStatus('borrador');
@@ -436,7 +437,7 @@ export function KitteoPage() {
   };
 
   const savePrecount = async (finalize: boolean) => {
-    if (!precountLocation || precountRows.length === 0 || precountSaving) return;
+    if (!canManageKitteoLocationStatus || !precountLocation || precountRows.length === 0 || precountSaving) return;
     if (finalize && precountRows.some(row => row.counted_qty === null)) {
       setPrecountError('Para finalizar debes capturar la cantidad física de todos los números de parte.');
       return;
@@ -1259,10 +1260,12 @@ export function KitteoPage() {
                                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100 transition-all whitespace-nowrap">
                                     <ClipboardList className="h-3 w-3" />Ver partes
                                   </button>
-                                  <button onClick={() => void openPrecountModal(loc)}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all whitespace-nowrap">
-                                    <ClipboardCheck className="h-3 w-3" />Preconteo
-                                  </button>
+                                  {canManageKitteoLocationStatus && (
+                                    <button onClick={() => void openPrecountModal(loc)}
+                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all whitespace-nowrap">
+                                      <ClipboardCheck className="h-3 w-3" />Preconteo
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
                                 <button onClick={() => openAssignModal(loc)}
