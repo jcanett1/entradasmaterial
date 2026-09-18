@@ -154,6 +154,8 @@ export function KitteoPage() {
   const [histLoading, setHistLoading] = useState(false);
   const [histRefreshing, setHistRefreshing] = useState(false);
   const [histSearch, setHistSearch] = useState('');
+  const [histFromDate, setHistFromDate] = useState('');
+  const [histToDate, setHistToDate] = useState('');
   const [histPage, setHistPage] = useState(1);
 
   const racks = ['ALL', '1', '2', '3', '4', '5', '6'];
@@ -713,14 +715,22 @@ export function KitteoPage() {
   });
 
   /* ── Filtrar historial ── */
+  const histDateRangeValid = !histFromDate || !histToDate || histFromDate <= histToDate;
+  const histFromTimestamp = histFromDate ? new Date(`${histFromDate}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY;
+  const histToTimestamp = histToDate ? new Date(`${histToDate}T23:59:59.999`).getTime() : Number.POSITIVE_INFINITY;
   const filteredHist = historial.filter(h => {
     const term = histSearch.toLowerCase();
-    return !term ||
+    const exitedTimestamp = new Date(h.exited_at).getTime();
+    const matchDate = histDateRangeValid
+      && exitedTimestamp >= histFromTimestamp
+      && exitedTimestamp <= histToTimestamp;
+    const matchText = !term ||
       h.part_number.toLowerCase().includes(term) ||
       h.location_code.toLowerCase().includes(term) ||
       (h.po ?? '').toLowerCase().includes(term) ||
       (h.description ?? '').toLowerCase().includes(term) ||
       h.rack.toLowerCase().includes(term);
+    return matchDate && matchText;
   });
 
   /* ── Paginación locaciones ── */
@@ -1097,25 +1107,59 @@ export function KitteoPage() {
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Salidas</p>
-              <p className="text-3xl font-black text-red-600">{historial.length}</p>
+              <p className="text-3xl font-black text-red-600">{filteredHist.length}</p>
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY Total</p>
-              <p className="text-3xl font-black text-blue-700">{historial.reduce((s, h) => s + (h.qty ?? 0), 0).toLocaleString()}</p>
+              <p className="text-3xl font-black text-blue-700">{filteredHist.reduce((s, h) => s + (h.qty ?? 0), 0).toLocaleString()}</p>
             </div>
             <div className="bg-purple-50 border border-purple-200 rounded-2xl px-5 py-4">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas Total</p>
-              <p className="text-3xl font-black text-purple-700">{historial.reduce((s, h) => s + (h.boxes ?? 0), 0).toLocaleString()}</p>
+              <p className="text-3xl font-black text-purple-700">{filteredHist.reduce((s, h) => s + (h.boxes ?? 0), 0).toLocaleString()}</p>
             </div>
           </div>
 
-          {/* Buscador historial */}
-          <div className="relative w-full max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-            <input type="text" value={histSearch} onChange={e => { setHistSearch(e.target.value); setHistPage(1); }}
-              placeholder="Buscar part number o locación..."
-              className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white w-full" />
+          {/* Buscador y rango de fechas del historial */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+              <input type="text" value={histSearch} onChange={e => { setHistSearch(e.target.value); setHistPage(1); }}
+                placeholder="Buscar part number o locación..."
+                className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white w-full" />
+            </div>
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+              Fecha inicial
+              <input
+                type="date"
+                value={histFromDate}
+                max={histToDate || undefined}
+                onChange={event => { setHistFromDate(event.target.value); setHistPage(1); }}
+                className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+              Fecha final
+              <input
+                type="date"
+                value={histToDate}
+                min={histFromDate || undefined}
+                onChange={event => { setHistToDate(event.target.value); setHistPage(1); }}
+                className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-400"
+              />
+            </label>
+            {(histFromDate || histToDate) && (
+              <button
+                type="button"
+                onClick={() => { setHistFromDate(''); setHistToDate(''); setHistPage(1); }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+              >
+                <X className="h-3.5 w-3.5" />Limpiar fechas
+              </button>
+            )}
           </div>
+          {!histDateRangeValid && (
+            <p className="text-xs font-semibold text-red-600">La fecha inicial no puede ser posterior a la fecha final.</p>
+          )}
 
           {/* Tabla historial */}
           {histLoading ? (
@@ -1123,8 +1167,8 @@ export function KitteoPage() {
           ) : filteredHist.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16">
               <div className="p-5 bg-red-50 rounded-3xl mb-4"><History className="h-12 w-12 text-red-300" /></div>
-              <p className="text-gray-600 font-semibold">Sin salidas definitivas registradas</p>
-              <p className="text-gray-400 text-sm mt-1">Las salidas definitivas aparecerán aquí</p>
+              <p className="text-gray-600 font-semibold">{historial.length > 0 ? 'No hay salidas con estos filtros' : 'Sin salidas definitivas registradas'}</p>
+              <p className="text-gray-400 text-sm mt-1">{historial.length > 0 ? 'Prueba con otro rango de fechas o término de búsqueda' : 'Las salidas definitivas aparecerán aquí'}</p>
             </div>
           ) : (
             <>
