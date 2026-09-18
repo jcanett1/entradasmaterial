@@ -15,6 +15,7 @@ interface Exit {
   qty: number;
   boxes: number;
   po: string | null;
+  fifo_number: number | null;
   location_code: string | null;
   location_id: number | null;
   entry_id: number | null;
@@ -46,6 +47,7 @@ interface EntryOption {
   total_units: number;
   total_boxes: number;
   po: string | null;
+  fifo_number: number | null;
 }
 
 interface LocationOption {
@@ -73,6 +75,28 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
 };
 
 const PAGE_SIZE = 25;
+
+const fetchFifoByEntryIds = async (entryIds: number[]) => {
+  const fifoByEntryId = new Map<number, number | null>();
+  if (entryIds.length === 0) return fifoByEntryId;
+
+  const { data, error } = await supabase
+    .from('fifo_labels')
+    .select('entry_id, fifo_number')
+    .in('entry_id', entryIds);
+  if (error) {
+    console.warn('No se pudieron cargar los FIFO de inventario:', error);
+    return fifoByEntryId;
+  }
+
+  ((data ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+    const entryId = Number(row.entry_id);
+    if (!Number.isFinite(entryId) || fifoByEntryId.has(entryId)) return;
+    const fifoNumber = Number(row.fifo_number);
+    fifoByEntryId.set(entryId, Number.isFinite(fifoNumber) ? fifoNumber : null);
+  });
+  return fifoByEntryId;
+};
 
 export function ExitsPage() {
   const { userProfile } = useAuth();
@@ -192,7 +216,12 @@ export function ExitsPage() {
       .or(`part_number.ilike.%${term}%,description.ilike.%${term}%`)
       .order('registered_at', { ascending: false })
       .limit(15);
-    setEntrySuggestions((data as EntryOption[]) ?? []);
+    const entries = (data as Omit<EntryOption, 'fifo_number'>[] | null) ?? [];
+    const fifoByEntryId = await fetchFifoByEntryIds(entries.map(entry => entry.id));
+    setEntrySuggestions(entries.map(entry => ({
+      ...entry,
+      fifo_number: fifoByEntryId.get(entry.id) ?? null,
+    })));
     setShowEntryDrop(true);
   }, []);
 
@@ -239,18 +268,30 @@ export function ExitsPage() {
   const handleSave = async () => {
     if (!selectedEntry) return;
     setSaving(true);
-    await supabase.from('transferes').insert([{
+    const transferPayload = {
       part_number: selectedEntry.part_number,
       description: selectedEntry.description,
       qty,
       boxes: selectedEntry.total_boxes,
       po: po || null,
+      fifo_number: selectedEntry.fifo_number ?? null,
       location_code: selectedLocation?.location_code ?? null,
       location_id: selectedLocation?.id ?? null,
       entry_id: selectedEntry.id,
       destination: 'KITTEO',
       registered_by: userDisplayName,
-    }]);
+    };
+    let { error: transferError } = await supabase.from('transferes').insert([transferPayload]);
+    if (transferError && /fifo_number|column .* does not exist/i.test(transferError.message)) {
+      const { fifo_number: _fifoNumber, ...legacyPayload } = transferPayload;
+      ({ error: transferError } = await supabase.from('transferes').insert([legacyPayload]));
+    }
+    if (transferError) {
+      console.error('Error registrando transferencia:', transferError);
+      alert(`No se pudo registrar la transferencia: ${transferError.message}`);
+      setSaving(false);
+      return;
+    }
 
     if (selectedLocation) {
       await supabase.from('locations').update({
@@ -340,7 +381,7 @@ export function ExitsPage() {
   };
 
   const moveTransferToKitteo = async (exit: Exit, location: KitteoLocation, assignedAt: string) => {
-    const { error: itemError } = await supabase.from('kitteo_location_items').insert([{
+    const itemPayload = {
       location_id: location.id,
       location_code: location.location_code,
       source_transfer_id: exit.id,
@@ -349,10 +390,16 @@ export function ExitsPage() {
       qty: exit.qty,
       boxes: exit.boxes,
       po: exit.po,
+      fifo_number: exit.fifo_number ?? null,
       entry_id: exit.entry_id ?? null,
       registered_by: userDisplayName || null,
       assigned_at: assignedAt,
-    }]);
+    };
+    let { error: itemError } = await supabase.from('kitteo_location_items').insert([itemPayload]);
+    if (itemError && /fifo_number|column .* does not exist/i.test(itemError.message)) {
+      const { fifo_number: _fifoNumber, ...legacyPayload } = itemPayload;
+      ({ error: itemError } = await supabase.from('kitteo_location_items').insert([legacyPayload]));
+    }
 
     if (itemError) return itemError;
 
@@ -1372,6 +1419,8 @@ export function ExitsPage() {
                         <div className="flex gap-3 mt-0.5">
                           <span className="text-xs text-blue-600 font-semibold">QTY: {e.total_units}</span>
                           <span className="text-xs text-purple-600 font-semibold">Cajas: {e.total_boxes}</span>
+                          <span className="text-xs text-amber-600 font-semibold">PO: {e.po || '—'}</span>
+                          <span className="text-xs text-orange-600 font-semibold">FIFO: {e.fifo_number !== null ? `#${e.fifo_number}` : '—'}</span>
                         </div>
                       </button>
                     ))}

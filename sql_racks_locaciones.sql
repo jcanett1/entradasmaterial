@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS public.transferes (
   description   text          NULL,
   qty           integer       NOT NULL,
   po            varchar(100)  NULL,
+  fifo_number   integer       NULL,
   location_code varchar(20)   NULL,
   destination   varchar(100)  NOT NULL DEFAULT 'KITTEO',
   entry_id      integer       NULL REFERENCES public.entries(id) ON DELETE SET NULL,

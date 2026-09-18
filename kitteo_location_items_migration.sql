@@ -9,10 +9,14 @@
 -- 1) Columna que necesita la versión nueva de la aplicación para
 -- relacionar cada artículo con la transferencia que lo originó.
 ALTER TABLE public.kitteo_location_items
-  ADD COLUMN IF NOT EXISTS source_transfer_id integer NULL;
+  ADD COLUMN IF NOT EXISTS source_transfer_id integer NULL,
+  ADD COLUMN IF NOT EXISTS fifo_number integer NULL;
 
 CREATE INDEX IF NOT EXISTS idx_kitteo_location_items_source_transfer_id
   ON public.kitteo_location_items USING btree (source_transfer_id);
+
+CREATE INDEX IF NOT EXISTS idx_kitteo_location_items_fifo_number
+  ON public.kitteo_location_items USING btree (fifo_number);
 
 -- 2) Seguridad para que la aplicación autenticada pueda consultar,
 -- insertar, actualizar y eliminar los artículos KITTEO.

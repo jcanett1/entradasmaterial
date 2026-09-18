@@ -19,6 +19,7 @@ interface KitteoLocationItem {
   qty: number;
   boxes: number | null;
   po: string | null;
+  fifo_number: number | null;
   entry_id: number | null;
   description: string | null;
   registered_by: string | null;
@@ -49,6 +50,7 @@ interface EntryOption {
   qty: number;
   boxes: number;
   po: string | null;
+  fifo_number: number | null;
   exited_at: string;
 }
 
@@ -223,11 +225,40 @@ export function KitteoPage() {
           entry_id: toNumberOrNull(item.entry_id),
           qty: toNumberOrNull(item.qty) ?? 0,
           boxes: toNumberOrNull(item.boxes),
+          fifo_number: toNumberOrNull(item.fifo_number),
         }));
+
+    // Compatibilidad con asignaciones anteriores a la columna fifo_number.
+    // El FIFO original se conserva en fifo_labels usando entry_id.
+    const fifoEntryIds = [...new Set([
+      ...normalizedItems.map(item => item.entry_id),
+      ...((locationsData as KitteoLocation[]) ?? []).map(location => toNumberOrNull(location.entry_id)),
+    ].filter((id): id is number => id !== null))];
+    const fifoByEntryId = new Map<number, number | null>();
+    if (fifoEntryIds.length > 0) {
+      const { data: fifoData, error: fifoError } = await supabase
+        .from('fifo_labels')
+        .select('entry_id, fifo_number')
+        .in('entry_id', fifoEntryIds);
+      if (fifoError) {
+        console.warn('No se pudieron cargar los FIFO de KITTEO:', fifoError);
+      } else {
+        ((fifoData ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+          const entryId = toNumberOrNull(row.entry_id);
+          if (entryId !== null && !fifoByEntryId.has(entryId)) {
+            fifoByEntryId.set(entryId, toNumberOrNull(row.fifo_number));
+          }
+        });
+      }
+    }
+    const hydratedItems = normalizedItems.map(item => ({
+      ...item,
+      fifo_number: item.fifo_number ?? (item.entry_id !== null ? (fifoByEntryId.get(item.entry_id) ?? null) : null),
+    }));
 
     const itemsByLocationId = new Map<number, KitteoLocationItem[]>();
     const itemsByLocationCode = new Map<string, KitteoLocationItem[]>();
-    normalizedItems.forEach(item => {
+    hydratedItems.forEach(item => {
       const normalizedLocationId = toNumberOrNull(item.location_id);
       if (normalizedLocationId !== null) {
         const current = itemsByLocationId.get(normalizedLocationId) ?? [];
@@ -269,6 +300,9 @@ export function KitteoPage() {
           qty: location.qty ?? 0,
           boxes: location.boxes,
           po: location.po,
+          fifo_number: toNumberOrNull(location.entry_id) !== null
+            ? (fifoByEntryId.get(toNumberOrNull(location.entry_id)!) ?? null)
+            : null,
           entry_id: toNumberOrNull(location.entry_id),
           registered_by: location.registered_by,
           assigned_at: location.assigned_at ?? new Date(0).toISOString(),
@@ -342,15 +376,49 @@ export function KitteoPage() {
 
   /* ── Fetch transferencias para el modal ── */
   const fetchEntries = useCallback(async (term: string) => {
-    let query = supabase
-      .from('transferes')
-      .select('id, entry_id, part_number, description, qty, boxes, po, exited_at')
-      .order('exited_at', { ascending: false });
-    if (term.trim()) {
-      query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
+    const selectTransfers = () => {
+      let query = supabase
+        .from('transferes')
+        .select('*')
+        .order('exited_at', { ascending: false });
+      if (term.trim()) {
+        query = query.or(`part_number.ilike.%${term}%,description.ilike.%${term}%`);
+      }
+      return query.limit(20);
+    };
+
+    const { data, error } = await selectTransfers();
+    if (error) {
+      console.warn('No se pudieron cargar las transferencias KITTEO:', error);
+      setEntries([]);
+      setShowEntryDrop(true);
+      return;
     }
-    const { data } = await query.limit(20);
-    setEntries((data as EntryOption[]) ?? []);
+
+    const transfers = ((data ?? []) as unknown as (Omit<EntryOption, 'fifo_number'> & { fifo_number?: number | null })[]);
+    const missingFifoEntryIds = [...new Set(
+      transfers
+        .filter(transfer => transfer.fifo_number == null && transfer.entry_id !== null)
+        .map(transfer => transfer.entry_id as number)
+    )];
+    const fifoByEntryId = new Map<number, number | null>();
+    if (missingFifoEntryIds.length > 0) {
+      const { data: fifoData } = await supabase
+        .from('fifo_labels')
+        .select('entry_id, fifo_number')
+        .in('entry_id', missingFifoEntryIds);
+      ((fifoData ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+        const entryId = Number(row.entry_id);
+        if (Number.isFinite(entryId) && !fifoByEntryId.has(entryId)) {
+          const fifoNumber = Number(row.fifo_number);
+          fifoByEntryId.set(entryId, Number.isFinite(fifoNumber) ? fifoNumber : null);
+        }
+      });
+    }
+    setEntries(transfers.map(transfer => ({
+      ...transfer,
+      fifo_number: transfer.fifo_number ?? (transfer.entry_id !== null ? (fifoByEntryId.get(transfer.entry_id) ?? null) : null),
+    })));
     setShowEntryDrop(true);
   }, []);
 
@@ -381,7 +449,7 @@ export function KitteoPage() {
     if (!assignModal || !selectedEntry) return;
     setSaving(true);
 
-    const { error: itemError } = await supabase.from('kitteo_location_items').insert([{
+    const itemPayload = {
       location_id: assignModal.id,
       location_code: assignModal.location_code,
       source_transfer_id: selectedEntry.id,
@@ -390,10 +458,16 @@ export function KitteoPage() {
       qty,
       boxes: selectedEntry.boxes,
       po: po || null,
+      fifo_number: selectedEntry.fifo_number ?? null,
       entry_id: selectedEntry.entry_id ?? null,
       registered_by: userDisplayName || null,
       assigned_at: new Date().toISOString(),
-    }]);
+    };
+    let { error: itemError } = await supabase.from('kitteo_location_items').insert([itemPayload]);
+    if (itemError && /fifo_number|column .* does not exist/i.test(itemError.message)) {
+      const { fifo_number: _fifoNumber, ...legacyPayload } = itemPayload;
+      ({ error: itemError } = await supabase.from('kitteo_location_items').insert([legacyPayload]));
+    }
 
     if (itemError) {
       console.error('Error asignando artículo KITTEO:', itemError);
@@ -1342,6 +1416,10 @@ export function KitteoPage() {
                         className="w-full text-left px-4 py-2.5 hover:bg-orange-50 transition-colors border-b border-gray-50 last:border-0">
                         <p className="text-sm font-bold text-indigo-700">{e.part_number}</p>
                         <p className="text-xs text-gray-400">{e.description ?? 'Sin descripción'} · QTY: {e.qty} · {new Date(e.exited_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          <span className="text-xs font-semibold text-amber-600">PO: {e.po || '—'}</span>
+                          <span className="text-xs font-semibold text-orange-600">FIFO: {e.fifo_number !== null ? `#${e.fifo_number}` : '—'}</span>
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -1501,11 +1579,12 @@ export function KitteoPage() {
                             Cajas: {item.boxes}
                           </span>
                         )}
-                        {item.po && (
-                          <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-bold border border-amber-100">
-                            PO: {item.po}
-                          </span>
-                        )}
+                        <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-bold border border-amber-100">
+                          PO: {item.po || '—'}
+                        </span>
+                        <span className="px-2 py-1 rounded-lg bg-orange-50 text-orange-700 text-xs font-bold border border-orange-100">
+                          FIFO: {item.fifo_number !== null ? `#${item.fifo_number}` : '—'}
+                        </span>
                       </div>
 
                       <div className="flex gap-2 mt-3">
