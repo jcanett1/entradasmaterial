@@ -193,11 +193,12 @@ export const getDefaultDateRange = () => {
 };
 
 export async function fetchDashboardData(from: string, to: string): Promise<DashboardData> {
-  const [overviewResult, movementsResult, racksResult, locationsResult, activityResult, settingsResult] = await Promise.all([
+  const [overviewResult, movementsResult, racksResult, principalLocationsResult, kitteoLocationsResult, activityResult, settingsResult] = await Promise.all([
     supabase.rpc('dashboard_overview', { p_from: from, p_to: to }),
     supabase.rpc('dashboard_movements', { p_from: from, p_to: to }),
     supabase.rpc('dashboard_rack_occupancy'),
     supabase.rpc('dashboard_location_map', { p_storage_type: 'principal', p_rack: null }),
+    supabase.rpc('dashboard_location_map', { p_storage_type: 'kitteo', p_rack: null }),
     supabase.rpc('dashboard_recent_activity', { p_limit: 20 }),
     supabase
       .from('dashboard_settings')
@@ -210,7 +211,8 @@ export async function fetchDashboardData(from: string, to: string): Promise<Dash
     overviewResult.error,
     movementsResult.error,
     racksResult.error,
-    locationsResult.error,
+    principalLocationsResult.error,
+    kitteoLocationsResult.error,
     activityResult.error,
     settingsResult.error,
   ].find(Boolean);
@@ -239,7 +241,10 @@ export async function fetchDashboardData(from: string, to: string): Promise<Dash
     overview: normalizeOverview(overviewRow as Record<string, unknown>),
     movements: ((movementsResult.data ?? []) as Record<string, unknown>[]).map(normalizeMovement),
     racks: ((racksResult.data ?? []) as Record<string, unknown>[]).map(normalizeRack),
-    locations: ((locationsResult.data ?? []) as Record<string, unknown>[]).map(normalizeLocation),
+    locations: [
+      ...((principalLocationsResult.data ?? []) as Record<string, unknown>[]),
+      ...((kitteoLocationsResult.data ?? []) as Record<string, unknown>[]),
+    ].map(normalizeLocation),
     recentActivity: ((activityResult.data ?? []) as Record<string, unknown>[]).map(normalizeActivity),
     settings,
   };
