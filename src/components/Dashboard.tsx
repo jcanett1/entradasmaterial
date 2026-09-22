@@ -9,6 +9,7 @@ import { LabelModal } from './LabelModal';
 import { MultiLabelModal } from './MultiLabelModal';
 import { PartsCatalogModal } from './PartsCatalogModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
+import { OperationsDashboard } from './dashboard/OperationsDashboard';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
 import { KitteoPage } from './KitteoPage';
@@ -21,7 +22,7 @@ import {
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
-type MainTab = 'inventario' | 'racks' | 'kitteo';
+type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo';
 type RackSubTab = 'locaciones' | 'salidas';
 
 const toEntryId = (value: unknown): number | null => {
@@ -539,6 +540,13 @@ export function Dashboard() {
         {/* ── Pestañas principales ── */}
         <div className="flex gap-2 mb-6 bg-white rounded-2xl p-1.5 shadow-sm border border-gray-100 w-fit">
           <TabBtn
+            active={mainTab === 'dashboard'}
+            onClick={() => setMainTab('dashboard')}
+            icon={<LayoutDashboard className="h-4 w-4" />}
+            label="Dashboard"
+            color="indigo"
+          />
+          <TabBtn
             active={mainTab === 'inventario'}
             onClick={() => setMainTab('inventario')}
             icon={<ClipboardList className="h-4 w-4" />}
@@ -560,6 +568,11 @@ export function Dashboard() {
             color="orange"
           />
         </div>
+
+        {/* ══════════════════════════════
+            PESTAÑA: DASHBOARD
+        ══════════════════════════════ */}
+        {mainTab === 'dashboard' && <OperationsDashboard />}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO
