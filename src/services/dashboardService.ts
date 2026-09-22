@@ -249,3 +249,18 @@ export async function fetchDashboardData(from: string, to: string): Promise<Dash
     settings,
   };
 }
+
+export async function fetchDashboardLocations(): Promise<DashboardLocation[]> {
+  const [principalResult, kitteoResult] = await Promise.all([
+    supabase.rpc('dashboard_location_map', { p_storage_type: 'principal', p_rack: null }),
+    supabase.rpc('dashboard_location_map', { p_storage_type: 'kitteo', p_rack: null }),
+  ]);
+
+  const firstError = [principalResult.error, kitteoResult.error].find(Boolean);
+  if (firstError) throw new Error(firstError.message);
+
+  return [
+    ...((principalResult.data ?? []) as Record<string, unknown>[]),
+    ...((kitteoResult.data ?? []) as Record<string, unknown>[]),
+  ].map(normalizeLocation);
+}

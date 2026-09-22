@@ -10,6 +10,7 @@ import { MultiLabelModal } from './MultiLabelModal';
 import { PartsCatalogModal } from './PartsCatalogModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
 import { OperationsDashboard } from './dashboard/OperationsDashboard';
+import { LocationReports } from './dashboard/LocationReports';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
 import { KitteoPage } from './KitteoPage';
@@ -17,12 +18,12 @@ import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
   MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle, Hash,
-  CheckCircle2, CalendarDays,
+  CheckCircle2, CalendarDays, FileText,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
-type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo';
+type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes';
 type RackSubTab = 'locaciones' | 'salidas';
 
 const toEntryId = (value: unknown): number | null => {
@@ -567,12 +568,24 @@ export function Dashboard() {
             label="Salidas KITTEO"
             color="orange"
           />
+          <TabBtn
+            active={mainTab === 'reportes'}
+            onClick={() => setMainTab('reportes')}
+            icon={<FileText className="h-4 w-4" />}
+            label="Reportes"
+            color="violet"
+          />
         </div>
 
         {/* ══════════════════════════════
             PESTAÑA: DASHBOARD
         ══════════════════════════════ */}
         {mainTab === 'dashboard' && <OperationsDashboard />}
+
+        {/* ══════════════════════════════
+            PESTAÑA: REPORTES
+        ══════════════════════════════ */}
+        {mainTab === 'reportes' && <LocationReports />}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO
@@ -839,6 +852,7 @@ function TabBtn({ active, onClick, icon, label, color }: { active: boolean; onCl
     indigo: 'bg-indigo-600 text-white shadow-sm',
     emerald: 'bg-emerald-600 text-white shadow-sm',
     orange: 'bg-orange-600 text-white shadow-sm',
+    violet: 'bg-violet-600 text-white shadow-sm',
   };
   return (
     <button
