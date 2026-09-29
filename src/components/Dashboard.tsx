@@ -14,16 +14,17 @@ import { LocationReports } from './dashboard/LocationReports';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
 import { KitteoPage } from './KitteoPage';
+import { PhysicalAuditPage } from './PhysicalAuditPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
   MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle, Hash,
-  CheckCircle2, CalendarDays, FileText,
+  CheckCircle2, CalendarDays, FileText, ClipboardCheck,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
-type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes';
+type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes' | 'auditoria';
 type RackSubTab = 'locaciones' | 'salidas';
 
 const toEntryId = (value: unknown): number | null => {
@@ -75,7 +76,7 @@ const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) =>
 };
 
 export function Dashboard() {
-  const { userProfile, signOut, isAdmin, userRol } = useAuth();
+  const { userProfile, signOut, isAdmin, isManager, userRol } = useAuth();
   const canManagePartsCatalog = userRol === 'admin' || userRol === 'supervisor';
 
   // ── Tabs ──
@@ -575,6 +576,15 @@ export function Dashboard() {
             label="Reportes"
             color="violet"
           />
+          {isManager && (
+            <TabBtn
+              active={mainTab === 'auditoria'}
+              onClick={() => setMainTab('auditoria')}
+              icon={<ClipboardCheck className="h-4 w-4" />}
+              label="Auditoría Física"
+              color="indigo"
+            />
+          )}
         </div>
 
         {/* ══════════════════════════════
@@ -586,6 +596,8 @@ export function Dashboard() {
             PESTAÑA: REPORTES
         ══════════════════════════════ */}
         {mainTab === 'reportes' && <LocationReports />}
+
+        {mainTab === 'auditoria' && isManager && <PhysicalAuditPage />}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { UsuarioAlmacen } from '@/lib/supabase';
+import type { UserRole, UsuarioAlmacen } from '@/lib/supabase';
 
 /* =============================================
    TIPOS
@@ -8,8 +8,10 @@ import type { UsuarioAlmacen } from '@/lib/supabase';
 interface AuthContextType {
   userProfile: UsuarioAlmacen | null;
   loading: boolean;
-  userRol: 'admin' | 'supervisor' | 'operador' | null;
+  userRol: UserRole | null;
   isAdmin: boolean;
+  isManager: boolean;
+  isCounter: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
@@ -108,6 +110,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         userRol: userProfile?.rol ?? null,
         isAdmin: userProfile?.rol === 'admin',
+        isManager: userProfile?.rol === 'admin' || userProfile?.rol === 'supervisor',
+        isCounter: userProfile?.rol === 'contador',
         signIn,
         signOut,
       }}

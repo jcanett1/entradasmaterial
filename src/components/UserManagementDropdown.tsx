@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { UsuarioAlmacen } from '@/lib/supabase';
+import type { UserRole, UsuarioAlmacen } from '@/lib/supabase';
 import {
   Users,
   UserPlus,
@@ -27,7 +27,7 @@ import {
 interface UserManagementDropdownProps {
   currentUserEmail: string;
   isAdmin: boolean;
-  userRol: 'admin' | 'supervisor' | 'operador' | null;
+  userRol: UserRole | null;
   onSignOut: () => void;
 }
 
@@ -38,7 +38,7 @@ interface UserFormData {
   password: string;
   nombre_completo: string;
   departamento: string;
-  rol: 'admin' | 'supervisor' | 'operador';
+  rol: UserRole;
   activo: boolean;
 }
 
@@ -55,6 +55,7 @@ const ROL_LABEL: Record<string, string> = {
   admin: 'Admin',
   supervisor: 'Supervisor',
   operador: 'Operador',
+  contador: 'Contador',
 };
 
 /* =============================================
@@ -320,6 +321,7 @@ export function UserManagementDropdown({
       admin:      { label: 'Admin',      cls: 'bg-purple-100 text-purple-700 border-purple-200' },
       supervisor: { label: 'Supervisor', cls: 'bg-blue-100 text-blue-700 border-blue-200' },
       operador:   { label: 'Operador',   cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+      contador:   { label: 'Contador',   cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
     };
     const r = map[rol] ?? map['operador'];
     return (
@@ -369,6 +371,7 @@ export function UserManagementDropdown({
             <span className={`hidden sm:inline text-xs px-1.5 py-0.5 rounded-md font-semibold ${
               userRol === 'admin'      ? 'bg-yellow-400/30 text-yellow-200' :
               userRol === 'supervisor' ? 'bg-blue-400/30 text-blue-200' :
+              userRol === 'contador'   ? 'bg-emerald-400/30 text-emerald-200' :
                                          'bg-white/20 text-white/70'
             }`}>
               {ROL_LABEL[userRol]}
@@ -498,6 +501,7 @@ export function UserManagementDropdown({
                               <div className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm mt-0.5 ${
                                 u.rol === 'admin'      ? 'bg-purple-100 text-purple-700' :
                                 u.rol === 'supervisor' ? 'bg-blue-100 text-blue-700' :
+                                u.rol === 'contador'   ? 'bg-emerald-100 text-emerald-700' :
                                                          'bg-gray-100 text-gray-600'
                               }`}>
                                 {(u.nombre_completo ?? u.email ?? 'U')[0]?.toUpperCase()}
@@ -662,6 +666,7 @@ export function UserManagementDropdown({
                         className={inputCls('rol') + ' cursor-pointer'}
                       >
                         <option value="operador">Operador</option>
+                        <option value="contador">Contador</option>
                         <option value="supervisor">Supervisor</option>
                         <option value="admin">Admin</option>
                       </select>

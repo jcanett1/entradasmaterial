@@ -1,6 +1,7 @@
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
+import { PhysicalAuditPage } from '@/components/PhysicalAuditPage';
 import { Loader2 } from 'lucide-react';
 
 function AppContent() {
@@ -17,7 +18,9 @@ function AppContent() {
     );
   }
 
-  return userProfile ? <Dashboard /> : <Login />;
+  if (!userProfile) return <Login />;
+  if (userProfile.rol === 'contador') return <PhysicalAuditPage counterOnly />;
+  return <Dashboard />;
 }
 
 function App() {
