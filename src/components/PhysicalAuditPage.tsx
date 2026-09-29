@@ -180,6 +180,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       setCounterItems([]);
       setSupervisorItems([]);
       setFindings([]);
+      setLoading(false);
       return;
     }
 
