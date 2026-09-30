@@ -4,10 +4,12 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Clock3,
   Eye,
   Loader2,
+  LogOut,
   MapPin,
   Package,
   Plus,
@@ -77,6 +79,7 @@ type AuditSummary = {
 
 const PAGE_SIZE = 1000;
 const CHUNK_SIZE = 500;
+const COUNTER_PAGE_SIZE = 50;
 const CHART_COLORS = ['#059669', '#d97706', '#ef4444', '#cbd5e1'];
 
 const formatDate = (value: string | null | undefined) => {
@@ -131,7 +134,7 @@ async function insertInChunks(table: string, rows: unknown[]) {
 }
 
 export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boolean }) {
-  const { userProfile, isManager, isCounter } = useAuth();
+  const { userProfile, isManager, isCounter, signOut } = useAuth();
   const isCounterView = counterOnly || isCounter;
 
   const [audits, setAudits] = useState<PhysicalAudit[]>([]);
@@ -157,9 +160,23 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const [createForm, setCreateForm] = useState({ name: '', description: '', selectedRacks: [] as string[], assignees: {} as Record<string, string> });
   const [saving, setSaving] = useState(false);
   const [countInputs, setCountInputs] = useState<Record<number, string>>({});
+  const [counterPage, setCounterPage] = useState(1);
   const [findingForm, setFindingForm] = useState({ itemId: '', foundLocation: '', foundRack: '', foundQty: '', notes: '' });
 
   const activeAudit = useMemo(() => audits.find(audit => audit.id === activeAuditId) ?? null, [audits, activeAuditId]);
+  const counterTotalPages = Math.max(1, Math.ceil(counterItems.length / COUNTER_PAGE_SIZE));
+  const counterPageItems = useMemo(() => {
+    const start = (counterPage - 1) * COUNTER_PAGE_SIZE;
+    return counterItems.slice(start, start + COUNTER_PAGE_SIZE);
+  }, [counterItems, counterPage]);
+
+  useEffect(() => {
+    setCounterPage(1);
+  }, [activeAuditId]);
+
+  useEffect(() => {
+    setCounterPage(current => Math.min(current, counterTotalPages));
+  }, [counterTotalPages]);
 
   const loadAudits = useCallback(async () => {
     const { data, error: auditError } = await supabase
@@ -557,6 +574,12 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       error={error}
       refresh={refreshAll}
       refreshing={refreshing}
+      userName={userProfile?.nombre_completo || userProfile?.email || 'Contador'}
+      signOut={signOut}
+      page={counterPage}
+      totalPages={counterTotalPages}
+      setPage={setCounterPage}
+      pageItems={counterPageItems}
     />;
   }
 
@@ -626,7 +649,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
 }
 
 function CounterAuditView({
-  audits, activeAudit, activeAuditId, setActiveAuditId, auditLocations, items, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing,
+  audits, activeAudit, activeAuditId, setActiveAuditId, auditLocations, items, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, totalPages, setPage, pageItems,
 }: {
   audits: PhysicalAudit[];
   activeAudit: PhysicalAudit | null;
@@ -647,24 +670,44 @@ function CounterAuditView({
   error: string | null;
   refresh: () => Promise<void>;
   refreshing: boolean;
+  userName: string;
+  signOut: () => Promise<void>;
+  page: number;
+  totalPages: number;
+  setPage: (page: number) => void;
+  pageItems: PhysicalAuditCounterItem[];
 }) {
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const completedLocations = auditLocations.filter(location => location.status === 'completada').length;
-  const grouped = auditLocations.map(location => ({ location, items: items.filter(item => item.audit_location_id === location.id) }));
+  const grouped = auditLocations
+    .map(location => ({
+      location,
+      items: pageItems.filter(item => item.audit_location_id === location.id),
+      allItems: items.filter(item => item.audit_location_id === location.id),
+    }))
+    .filter(group => group.items.length > 0 || (page === 1 && group.allItems.length === 0));
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-indigo-700 to-indigo-500 p-6 text-white shadow-lg"><div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="mb-1 text-xs font-black uppercase tracking-[0.16em] text-indigo-200">Vista del contador</p><h2 className="text-3xl font-black tracking-tight">Mis conteos</h2><p className="mt-2 max-w-xl text-sm text-indigo-100">Registra únicamente la cantidad física que encuentres en cada etiqueta. La cantidad esperada no se muestra en esta vista.</p></div><div className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-bold">● Sesión activa</div></div></div>
+      <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-indigo-700 to-indigo-500 p-6 text-white shadow-lg"><div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="mb-1 text-xs font-black uppercase tracking-[0.16em] text-indigo-200">Vista del contador</p><h2 className="text-3xl font-black tracking-tight">Mis conteos</h2><p className="mt-2 max-w-xl text-sm text-indigo-100">Registra únicamente la cantidad física que encuentres en cada etiqueta. La cantidad esperada no se muestra en esta vista.</p></div><div className="relative"><button type="button" onClick={() => setSessionMenuOpen(open => !open)} className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-bold transition hover:bg-white/20"><span className="h-2 w-2 rounded-full bg-emerald-300" />Sesión activa<ChevronDown className={`h-4 w-4 transition-transform ${sessionMenuOpen ? 'rotate-180' : ''}`} /></button>{sessionMenuOpen && <div className="absolute right-0 top-full z-30 mt-2 w-60 overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-xl"><div className="border-b border-gray-100 px-4 py-3"><p className="truncate text-sm font-bold text-gray-800">{userName}</p><p className="mt-0.5 text-xs text-gray-500">Sesión activa</p></div><button type="button" onClick={() => void signOut()} className="flex w-full items-center gap-2 px-4 py-3 text-sm font-bold text-red-600 transition hover:bg-red-50"><LogOut className="h-4 w-4" />Cerrar sesión</button></div>}</div></div></div>
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><strong>No se pudo cargar la auditoría:</strong> {error}</div>}
       {audits.length === 0 ? <div className="rounded-2xl border border-dashed border-indigo-200 bg-white p-12 text-center shadow-sm"><ClipboardCheck className="mx-auto h-12 w-12 text-indigo-300" /><h3 className="mt-4 text-lg font-bold text-gray-800">No tienes auditorías asignadas</h3><p className="mt-2 text-sm text-gray-500">El supervisor debe asignarte un rack para comenzar.</p></div> : <>
         <div className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm md:flex-row md:items-center"><div className="flex items-center gap-3"><ClipboardCheck className="h-5 w-5 text-indigo-600" /><span className="text-xs font-bold uppercase tracking-wide text-gray-500">Auditoría</span></div><select value={activeAuditId ?? ''} onChange={event => setActiveAuditId(Number(event.target.value))} className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-bold text-gray-800"><option value="">Seleccionar auditoría</option>{audits.map(audit => <option key={audit.id} value={audit.id}>{audit.name}</option>)}</select><button type="button" onClick={() => void refresh()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Actualizar</button></div>
-        {activeAudit && <><div className="grid grid-cols-1 gap-4 sm:grid-cols-3"><MetricCard icon={<MapPin className="h-5 w-5" />} label="Locaciones terminadas" value={`${completedLocations} / ${auditLocations.length}`} note="De mis asignaciones" tone="indigo" /><MetricCard icon={<Package className="h-5 w-5" />} label="Números asignados" value={items.length.toLocaleString()} note={`${items.filter(item => item.counted).length} registrados`} tone="emerald" /><MetricCard icon={<Clock3 className="h-5 w-5" />} label="Estado" value={formatStatus(activeAudit.status)} note="Auditoría activa" tone="violet" /></div><div className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-gray-100 bg-white p-1.5 shadow-sm"><AuditTabButton active={tab === 'conteo'} onClick={() => setTab('conteo')} icon={<ClipboardCheck className="h-4 w-4" />} label="Mis asignaciones" /><AuditTabButton active={tab === 'hallazgo'} onClick={() => setTab('hallazgo')} icon={<AlertTriangle className="h-4 w-4" />} label="Material encontrado" /></div>{tab === 'conteo' ? <div className="space-y-4">{grouped.map(({ location, items: locationItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div> : <CounterFindingForm items={items} locations={auditLocations} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}</>}
+        {activeAudit && <><div className="grid grid-cols-1 gap-4 sm:grid-cols-3"><MetricCard icon={<MapPin className="h-5 w-5" />} label="Locaciones terminadas" value={`${completedLocations} / ${auditLocations.length}`} note="De mis asignaciones" tone="indigo" /><MetricCard icon={<Package className="h-5 w-5" />} label="Números asignados" value={items.length.toLocaleString()} note={`${items.filter(item => item.counted).length} registrados`} tone="emerald" /><MetricCard icon={<Clock3 className="h-5 w-5" />} label="Estado" value={formatStatus(activeAudit.status)} note="Auditoría activa" tone="violet" /></div><div className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-gray-100 bg-white p-1.5 shadow-sm"><AuditTabButton active={tab === 'conteo'} onClick={() => setTab('conteo')} icon={<ClipboardCheck className="h-4 w-4" />} label="Mis asignaciones" /><AuditTabButton active={tab === 'hallazgo'} onClick={() => setTab('hallazgo')} icon={<AlertTriangle className="h-4 w-4" />} label="Material encontrado" /></div>{tab === 'conteo' ? <><div className="space-y-4">{grouped.map(({ location, items: locationItems, allItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={allItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} itemCount={items.length} setPage={setPage} /></> : <CounterFindingForm items={items} locations={auditLocations} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}</>}
       </>}
     </div>
   );
 }
 
-function CounterLocationCard({ location, items, countInputs, setCountInputs, submitCount, completeLocation, saving }: { location: PhysicalAuditLocation; items: PhysicalAuditCounterItem[]; countInputs: Record<number, string>; setCountInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>; submitCount: (item: PhysicalAuditCounterItem) => Promise<void>; completeLocation: (location: PhysicalAuditLocation) => Promise<void>; saving: boolean }) {
-  const allCounted = items.every(item => item.counted);
+function CounterLocationCard({ location, items, allItems, countInputs, setCountInputs, submitCount, completeLocation, saving }: { location: PhysicalAuditLocation; items: PhysicalAuditCounterItem[]; allItems: PhysicalAuditCounterItem[]; countInputs: Record<number, string>; setCountInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>; submitCount: (item: PhysicalAuditCounterItem) => Promise<void>; completeLocation: (location: PhysicalAuditLocation) => Promise<void>; saving: boolean }) {
+  const allCounted = allItems.every(item => item.counted);
   return <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="flex flex-col justify-between gap-3 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-white px-5 py-4 md:flex-row md:items-center"><div className="flex items-center gap-3"><div className="rounded-xl bg-indigo-100 p-2.5 text-indigo-700"><MapPin className="h-5 w-5" /></div><div><h3 className="font-black text-gray-900">{location.location_code} <span className="font-medium text-gray-500">· Rack {location.rack}</span></h3><p className="mt-1 text-xs text-gray-500">{items.length ? `${items.length} número${items.length === 1 ? '' : 's'} de parte asignado${items.length === 1 ? '' : 's'}` : 'Locación sin materiales registrados'}</p></div></div><div className="flex items-center gap-2"><StatusBadge status={location.status} />{location.status !== 'completada' && <button type="button" disabled={saving || !allCounted} onClick={() => void completeLocation(location)} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Terminar locación</button>}</div></div>{items.length > 0 ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-5 py-3">Número de parte</th><th className="px-5 py-3">Descripción</th><th className="px-5 py-3">PO / FIFO</th><th className="px-5 py-3">Cantidad encontrada</th><th className="px-5 py-3">Acción</th><th className="px-5 py-3">Estado</th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-t border-gray-100"><td className="px-5 py-4 font-mono text-xs font-bold text-indigo-700">{item.part_number}</td><td className="px-5 py-4 text-gray-700">{item.description || 'Sin descripción'}</td><td className="px-5 py-4 text-xs text-gray-500">{item.po || '—'}{item.fifo_number !== null ? ` · FIFO ${item.fifo_number}` : ''}</td><td className="px-5 py-4"><input type="number" min="0" placeholder="Cantidad" value={countInputs[item.id] ?? (item.found_qty === null ? '' : String(item.found_qty))} onChange={event => setCountInputs(current => ({ ...current, [item.id]: event.target.value }))} disabled={item.counted || saving} className="w-32 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center font-bold focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" /></td><td className="px-5 py-4"><button type="button" disabled={item.counted || saving} onClick={() => void submitCount(item)} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500">{item.counted ? 'Guardado' : 'Registrar'}</button></td><td className="px-5 py-4">{item.counted ? <StatusBadge status="correcto" /> : <StatusBadge status="pendiente" />}</td></tr>)}</tbody></table></div> : <div className="px-5 py-5 text-sm text-gray-500">Confirma esta locación como revisada; no hay números de parte que capturar.</div>}<div className="border-t border-indigo-50 bg-indigo-50/50 px-5 py-3 text-xs text-indigo-700"><strong>Conteo ciego:</strong> no se muestra la cantidad esperada del sistema.</div></div>;
+}
+
+function CounterPagination({ page, totalPages, itemCount, setPage }: { page: number; totalPages: number; itemCount: number; setPage: (page: number) => void }) {
+  if (itemCount <= COUNTER_PAGE_SIZE) return null;
+  const firstItem = (page - 1) * COUNTER_PAGE_SIZE + 1;
+  const lastItem = Math.min(page * COUNTER_PAGE_SIZE, itemCount);
+  return <div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-sm sm:flex-row sm:items-center"><p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{firstItem}–{lastItem}</strong> de <strong className="text-gray-800">{itemCount}</strong> números de parte</p><div className="flex items-center gap-2"><button type="button" disabled={page === 1} onClick={() => setPage(Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button><span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {page} de {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage(Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button></div></div>;
 }
 
 function CounterFindingForm({ items, locations, form, setForm, onSubmit, saving }: { items: PhysicalAuditCounterItem[]; locations: PhysicalAuditLocation[]; form: { itemId: string; foundLocation: string; foundRack: string; foundQty: string; notes: string }; setForm: React.Dispatch<React.SetStateAction<{ itemId: string; foundLocation: string; foundRack: string; foundQty: string; notes: string }>>; onSubmit: () => Promise<void>; saving: boolean }) {
