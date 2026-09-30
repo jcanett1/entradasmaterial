@@ -29,6 +29,7 @@ export type PhysicalAuditAssignmentStatus = 'asignado' | 'en_progreso' | 'comple
 export type PhysicalAuditLocationStatus = 'pendiente' | 'en_progreso' | 'completada' | 'omitida';
 export type PhysicalAuditItemStatus = 'pendiente' | 'correcto' | 'faltante' | 'sobrante';
 export type PhysicalAuditFindingStatus = 'pendiente_revision' | 'validado' | 'rechazado' | 'aplicado';
+export type PhysicalAuditLocationSource = 'normal' | 'kitto';
 
 export type PhysicalAudit = {
   id: number;
@@ -48,6 +49,7 @@ export type PhysicalAudit = {
 export type PhysicalAuditRackAssignment = {
   id: number;
   audit_id: number;
+  source: PhysicalAuditLocationSource;
   rack: string;
   contador_user_id: string;
   assigned_by: string | null;
@@ -61,9 +63,11 @@ export type PhysicalAuditRackAssignment = {
 export type PhysicalAuditLocation = {
   id: number;
   audit_id: number;
+  assignment_id: number | null;
   location_id: number | null;
   location_code: string;
   rack: string;
+  source: PhysicalAuditLocationSource;
   contador_user_id: string;
   status: PhysicalAuditLocationStatus;
   assigned_at: string;

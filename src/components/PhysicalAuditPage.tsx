@@ -45,9 +45,11 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type AuditTab = 'avance' | 'resumen' | 'asignacion' | 'monitoreo' | 'resultados' | 'hallazgos';
 type CounterTab = 'conteo' | 'hallazgo';
+type AuditLocationSource = 'normal' | 'kitto';
 
 type ReferenceLocation = {
   id: number;
+  source: AuditLocationSource;
   rack: string;
   location_code: string;
   status: string;
@@ -55,13 +57,28 @@ type ReferenceLocation = {
 
 type ReferenceItem = {
   id: number;
+  source: AuditLocationSource;
   location_id: number;
   location_code: string;
   entry_id: number | null;
   part_number: string;
+  description: string | null;
   po: string | null;
   qty: number;
   fifo_number: number | null;
+};
+
+type AuditAssignmentDraft = {
+  source: AuditLocationSource;
+  rack: string;
+  contador_user_id: string;
+  locationIds: number[];
+};
+
+type CreateAuditForm = {
+  name: string;
+  description: string;
+  assignments: AuditAssignmentDraft[];
 };
 
 type EntryDescription = { id: number; description: string | null };
@@ -157,7 +174,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const [referenceLocations, setReferenceLocations] = useState<ReferenceLocation[]>([]);
   const [referenceItems, setReferenceItems] = useState<ReferenceItem[]>([]);
   const [entryDescriptions, setEntryDescriptions] = useState<Record<number, string | null>>({});
-  const [createForm, setCreateForm] = useState({ name: '', description: '', selectedRacks: [] as string[], assignees: {} as Record<string, string> });
+  const [createForm, setCreateForm] = useState<CreateAuditForm>({ name: '', description: '', assignments: [] });
   const [saving, setSaving] = useState(false);
   const [countInputs, setCountInputs] = useState<Record<number, string>>({});
   const [counterPage, setCounterPage] = useState(1);
@@ -309,11 +326,21 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const loadReferenceData = useCallback(async () => {
     setCreateLoading(true);
     try {
-      const [locations, items] = await Promise.all([
-        fetchAllRows<ReferenceLocation>('locations', 'id, rack, location_code, status'),
-        fetchAllRows<ReferenceItem>('location_items', 'id, location_id, location_code, entry_id, part_number, po, qty, fifo_number'),
+      const [normalLocations, normalItems, kittoLocations, kittoItems] = await Promise.all([
+        fetchAllRows<Omit<ReferenceLocation, 'source'>>('locations', 'id, rack, location_code, status'),
+        fetchAllRows<Omit<ReferenceItem, 'source' | 'description'>>('location_items', 'id, location_id, location_code, entry_id, part_number, po, qty, fifo_number'),
+        fetchAllRows<Omit<ReferenceLocation, 'source'>>('kitteo_locations', 'id, rack, location_code, status'),
+        fetchAllRows<Omit<ReferenceItem, 'source'>>('kitteo_location_items', 'id, location_id, location_code, entry_id, part_number, description, po, qty, fifo_number'),
         loadCounterProfiles(),
       ]);
+      const locations: ReferenceLocation[] = [
+        ...normalLocations.map(location => ({ ...location, source: 'normal' as const })),
+        ...kittoLocations.map(location => ({ ...location, source: 'kitto' as const })),
+      ];
+      const items: ReferenceItem[] = [
+        ...normalItems.map(item => ({ ...item, source: 'normal' as const, description: null })),
+        ...kittoItems.map(item => ({ ...item, source: 'kitto' as const })),
+      ];
       setReferenceLocations(locations);
       setReferenceItems(items);
       const entryIds = [...new Set(items.map(item => item.entry_id).filter((id): id is number => id !== null))];
@@ -338,8 +365,6 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   useEffect(() => {
     if (showCreate && isManager) void loadReferenceData();
   }, [showCreate, isManager, loadReferenceData]);
-
-  const rackOptions = useMemo(() => [...new Set(referenceLocations.map(location => location.rack).filter(Boolean))].sort(), [referenceLocations]);
 
   const rackSummary = useMemo<AuditSummary[]>(() => {
     const byRack = new Map<string, AuditSummary>();
@@ -448,19 +473,36 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
     else await loadAuditData(activeAuditId);
   };
 
-  const toggleDraftRack = (rack: string) => {
+  const addAssignment = (assignment: AuditAssignmentDraft) => {
     setCreateForm(current => {
-      const selected = current.selectedRacks.includes(rack);
+      const existingIndex = current.assignments.findIndex(existing => existing.source === assignment.source && existing.rack === assignment.rack && existing.contador_user_id === assignment.contador_user_id);
+      if (existingIndex === -1) return { ...current, assignments: [...current.assignments, assignment] };
       return {
         ...current,
-        selectedRacks: selected ? current.selectedRacks.filter(item => item !== rack) : [...current.selectedRacks, rack],
+        assignments: current.assignments.map((existing, index) => index === existingIndex ? { ...existing, locationIds: [...new Set([...existing.locationIds, ...assignment.locationIds])] } : existing),
       };
     });
   };
 
+  const removeAssignment = (index: number) => {
+    setCreateForm(current => ({ ...current, assignments: current.assignments.filter((_, assignmentIndex) => assignmentIndex !== index) }));
+  };
+
+  const removeExistingAssignment = async (assignment: PhysicalAuditRackAssignment) => {
+    if (!window.confirm(`¿Desasignar Rack ${assignment.rack} de este contador? Sus locaciones volverán a estar disponibles para una nueva asignación.`)) return;
+    setSaving(true);
+    const { error: removeError } = await supabase
+      .from('physical_audit_rack_assignments')
+      .delete()
+      .eq('id', assignment.id);
+    if (removeError) window.alert(`No se pudo desasignar el bloque: ${removeError.message}`);
+    else await loadAuditData(activeAuditId);
+    setSaving(false);
+  };
+
   const createAudit = async () => {
-    if (!createForm.name.trim() || createForm.selectedRacks.length === 0 || createForm.selectedRacks.some(rack => !createForm.assignees[rack])) {
-      window.alert('Escribe el nombre, selecciona al menos un rack y asigna un contador a cada rack.');
+    if (!createForm.name.trim() || createForm.assignments.length === 0 || createForm.assignments.some(assignment => !assignment.contador_user_id || assignment.locationIds.length === 0)) {
+      window.alert('Escribe el nombre, agrega al menos un bloque de locaciones y asigna un contador a cada bloque.');
       return;
     }
     setSaving(true);
@@ -474,38 +516,46 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       if (auditError || !auditData) throw auditError ?? new Error('No se pudo crear la auditoría');
       createdAuditId = Number(auditData.id);
 
-      const selectedLocations = referenceLocations.filter(location => createForm.selectedRacks.includes(location.rack));
-      const assignmentsToInsert = createForm.selectedRacks.map(rack => ({ audit_id: createdAuditId, rack, contador_user_id: createForm.assignees[rack], assigned_by: userProfile?.user_id ?? null, status: 'asignado' }));
+      const selectedLocations = referenceLocations.filter(location => createForm.assignments.some(assignment => assignment.source === location.source && assignment.locationIds.includes(location.id)));
+      const assignmentsToInsert = createForm.assignments.map(assignment => ({ audit_id: createdAuditId, source: assignment.source, rack: assignment.rack, contador_user_id: assignment.contador_user_id, assigned_by: userProfile?.user_id ?? null, status: 'asignado' }));
       await insertInChunks('physical_audit_rack_assignments', assignmentsToInsert);
+      const { data: insertedAssignments, error: insertedAssignmentsError } = await supabase
+        .from('physical_audit_rack_assignments')
+        .select('id, source, rack, contador_user_id')
+        .eq('audit_id', createdAuditId);
+      if (insertedAssignmentsError) throw insertedAssignmentsError;
+      const assignmentIdByKey = new Map((insertedAssignments ?? []).map(row => [`${row.source}:${row.rack}:${row.contador_user_id}`, row.id]));
 
       const locationRows = selectedLocations.map(location => ({
         audit_id: createdAuditId,
+        assignment_id: assignmentIdByKey.get(`${location.source}:${location.rack}:${createForm.assignments.find(assignment => assignment.source === location.source && assignment.rack === location.rack && assignment.locationIds.includes(location.id))?.contador_user_id}`),
         location_id: location.id,
         location_code: location.location_code,
         rack: location.rack,
-        contador_user_id: createForm.assignees[location.rack],
+        source: location.source,
+        contador_user_id: createForm.assignments.find(assignment => assignment.source === location.source && assignment.locationIds.includes(location.id))?.contador_user_id,
         status: 'pendiente',
-      }));
+      })).filter(location => location.contador_user_id);
       await insertInChunks('physical_audit_locations', locationRows);
 
-      const selectedReferenceItems = referenceItems.filter(item => selectedLocations.some(location => location.id === item.location_id));
+      const selectedReferenceItems = referenceItems.filter(item => selectedLocations.some(location => location.source === item.source && location.id === item.location_id));
 
       if (selectedReferenceItems.length > 0) {
         // Reemplazar audit_location_id usando el código de locación recién insertado.
         const { data: insertedLocations, error: insertedLocationsError } = await supabase
           .from('physical_audit_locations')
-          .select('id, location_code')
+          .select('id, source, location_code')
           .eq('audit_id', createdAuditId);
         if (insertedLocationsError) throw insertedLocationsError;
-        const locationIdByCode = new Map((insertedLocations ?? []).map(row => [row.location_code, row.id]));
+        const locationIdByKey = new Map((insertedLocations ?? []).map(row => [`${row.source}:${row.location_code}`, row.id]));
         const finalItems = referenceItems
-          .filter(item => selectedLocations.some(location => location.id === item.location_id))
+          .filter(item => selectedLocations.some(location => location.source === item.source && location.id === item.location_id))
           .map(item => ({
-            audit_location_id: locationIdByCode.get(item.location_code),
-            location_item_id: item.id,
+            audit_location_id: locationIdByKey.get(`${item.source}:${item.location_code}`),
+            location_item_id: item.source === 'normal' ? item.id : null,
             entry_id: item.entry_id,
             part_number: item.part_number,
-            description: item.entry_id ? (entryDescriptions[item.entry_id] ?? null) : null,
+            description: item.description ?? (item.entry_id ? (entryDescriptions[item.entry_id] ?? null) : null),
             po: item.po,
             fifo_number: item.fifo_number,
             expected_qty: item.qty ?? 0,
@@ -521,7 +571,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       if (startError) throw startError;
 
       setShowCreate(false);
-      setCreateForm({ name: '', description: '', selectedRacks: [], assignees: {} });
+      setCreateForm({ name: '', description: '', assignments: [] });
       const nextAudits = await loadAudits();
       const created = nextAudits.find(audit => audit.id === createdAuditId);
       if (created) setActiveAuditId(created.id);
@@ -636,14 +686,14 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
 
           {auditTab === 'avance' && <AdvanceView rackSummary={rackSummary} auditLocations={auditLocations} items={supervisorItems} filteredItems={filteredSupervisorItems} selectedPart={selectedPart} selectedPartId={selectedPartId} setSelectedPartId={setSelectedPartId} partSearch={partSearch} setPartSearch={setPartSearch} />}
           {auditTab === 'resumen' && <SummaryView rackSummary={rackSummary} totalLocations={totalLocations} completedLocations={completedLocations} totalItems={totalItems} countedItems={countedItems} expectedUnits={expectedUnits} foundUnits={foundUnits} differenceUnits={differenceUnits} correctItems={correctItems} differenceItems={differenceItems} pendingItems={pendingItems} donutData={donutData} />}
-          {auditTab === 'asignacion' && <AssignmentView assignments={assignments} auditLocations={auditLocations} counters={counterProfiles} onCreate={() => setShowCreate(true)} />}
+          {auditTab === 'asignacion' && <AssignmentView assignments={assignments} auditLocations={auditLocations} counters={counterProfiles} onCreate={() => setShowCreate(true)} onRemove={removeExistingAssignment} />}
           {auditTab === 'monitoreo' && <LiveView assignments={assignments} auditLocations={auditLocations} items={supervisorItems} />}
           {auditTab === 'resultados' && <ResultsView items={filteredSupervisorItems} search={partSearch} setSearch={setPartSearch} onSelect={setSelectedPartId} />}
           {auditTab === 'hallazgos' && <FindingsView findings={findings} onReview={reviewFinding} />}
         </>
       )}
 
-      {showCreate && <CreateAuditModal form={createForm} setForm={setCreateForm} racks={rackOptions} counters={counterProfiles} loading={createLoading} saving={saving} onClose={() => setShowCreate(false)} onToggleRack={toggleDraftRack} onCreate={createAudit} />}
+      {showCreate && <CreateAuditModal form={createForm} setForm={setCreateForm} counters={counterProfiles} locations={referenceLocations} loading={createLoading} saving={saving} onClose={() => setShowCreate(false)} onAddAssignment={addAssignment} onRemoveAssignment={removeAssignment} onCreate={createAudit} />}
     </div>
   );
 }
@@ -728,9 +778,9 @@ function SummaryView({ rackSummary, totalLocations, completedLocations, totalIte
   return <div className="space-y-5"><div className="grid grid-cols-1 gap-4 md:grid-cols-3"><SimpleSummary label="Locaciones" value={`${completedLocations} / ${totalLocations}`} note="Revisadas / totales" /><SimpleSummary label="Números de parte" value={`${countedItems} / ${totalItems}`} note="Con cantidad física" /><SimpleSummary label="Unidades" value={`${foundUnits.toLocaleString()} / ${expectedUnits.toLocaleString()}`} note={`Diferencia ${differenceUnits > 0 ? '+' : ''}${differenceUnits}`} /></div><div className="grid grid-cols-1 gap-5 xl:grid-cols-2"><div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"><h3 className="font-black text-gray-900">Resumen por rack</h3><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[570px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Rack</th><th className="px-4 py-3">Locaciones</th><th className="px-4 py-3">Revisadas</th><th className="px-4 py-3">Part numbers</th><th className="px-4 py-3">Diferencias</th><th className="px-4 py-3">Avance</th></tr></thead><tbody>{rackSummary.map(row => <tr key={row.rack} className="border-t border-gray-100"><td className="px-4 py-3 font-mono font-bold text-indigo-700">{row.rack}</td><td className="px-4 py-3">{row.total}</td><td className="px-4 py-3 font-bold">{row.completed}</td><td className="px-4 py-3">{row.items}</td><td className="px-4 py-3"><span className="rounded-full bg-amber-100 px-2 py-1 font-bold text-amber-700">{row.differences}</span></td><td className="px-4 py-3 font-black text-indigo-700">{row.progress}%</td></tr>)}</tbody></table></div></div><div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"><h3 className="font-black text-gray-900">Estado del conteo</h3><div className="mt-2 h-64"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={donutData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={3}>{donutData.map((_, index) => <Cell key={index} fill={CHART_COLORS[index]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div><div className="grid grid-cols-3 gap-2 text-center text-xs"><div><strong className="block text-lg text-emerald-700">{correctItems}</strong><span className="text-gray-500">Correctos</span></div><div><strong className="block text-lg text-amber-700">{differenceItems}</strong><span className="text-gray-500">Diferencias</span></div><div><strong className="block text-lg text-gray-500">{pendingItems}</strong><span className="text-gray-500">Pendientes</span></div></div></div></div></div>;
 }
 
-function AssignmentView({ assignments, auditLocations, counters, onCreate }: { assignments: PhysicalAuditRackAssignment[]; auditLocations: PhysicalAuditLocation[]; counters: CounterProfile[]; onCreate: () => void }) {
+function AssignmentView({ assignments, auditLocations, counters, onCreate, onRemove }: { assignments: PhysicalAuditRackAssignment[]; auditLocations: PhysicalAuditLocation[]; counters: CounterProfile[]; onCreate: () => void; onRemove: (assignment: PhysicalAuditRackAssignment) => Promise<void> }) {
   const nameFor = (userId: string) => counters.find(counter => counter.user_id === userId)?.nombre_completo || counters.find(counter => counter.user_id === userId)?.email || userId.slice(0, 8);
-  return <div className="space-y-5"><div className="flex flex-col justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 p-5 md:flex-row md:items-center"><div><h3 className="font-black text-indigo-900">Asignación de contadores</h3><p className="mt-1 text-sm text-indigo-700">Cada rack tiene una persona responsable del conteo físico.</p></div><button type="button" onClick={onCreate} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" />Nueva auditoría / asignación</button></div><div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-5 py-3">Rack</th><th className="px-5 py-3">Contador</th><th className="px-5 py-3">Locaciones</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3">Asignado</th></tr></thead><tbody>{assignments.map(assignment => { const total = auditLocations.filter(location => location.rack === assignment.rack).length; const done = auditLocations.filter(location => location.rack === assignment.rack && location.status === 'completada').length; return <tr key={assignment.id} className="border-t border-gray-100"><td className="px-5 py-4 font-mono font-bold text-indigo-700">Rack {assignment.rack}</td><td className="px-5 py-4"><div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-100 text-xs font-black text-indigo-700">{nameFor(assignment.contador_user_id).slice(0, 2).toUpperCase()}</span><span className="font-bold text-gray-800">{nameFor(assignment.contador_user_id)}</span></div></td><td className="px-5 py-4 font-bold">{done} / {total}</td><td className="px-5 py-4"><StatusBadge status={assignment.status} /></td><td className="px-5 py-4 text-gray-500">{formatDate(assignment.assigned_at)}</td></tr>; })}</tbody></table></div></div></div>;
+  return <div className="space-y-5"><div className="flex flex-col justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50 p-5 md:flex-row md:items-center"><div><h3 className="font-black text-indigo-900">Asignación de contadores</h3><p className="mt-1 text-sm text-indigo-700">Un rack puede estar dividido en varios bloques de locaciones y contadores.</p></div><button type="button" onClick={onCreate} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white"><Plus className="h-4 w-4" />Nueva auditoría / asignación</button></div><div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-5 py-3">Origen</th><th className="px-5 py-3">Rack / bloque</th><th className="px-5 py-3">Contador</th><th className="px-5 py-3">Locaciones</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3">Asignado</th><th className="px-5 py-3">Acción</th></tr></thead><tbody>{assignments.map(assignment => { const assignedLocations = auditLocations.filter(location => location.assignment_id === assignment.id || (location.assignment_id === null && location.source === assignment.source && location.rack === assignment.rack)); const done = assignedLocations.filter(location => location.status === 'completada').length; return <tr key={assignment.id} className="border-t border-gray-100"><td className="px-5 py-4"><span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${assignment.source === 'kitto' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-700'}`}>{assignment.source === 'kitto' ? 'Kitto' : 'Normal'}</span></td><td className="px-5 py-4 font-mono font-bold text-indigo-700">Rack {assignment.rack}</td><td className="px-5 py-4"><div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-100 text-xs font-black text-indigo-700">{nameFor(assignment.contador_user_id).slice(0, 2).toUpperCase()}</span><span className="font-bold text-gray-800">{nameFor(assignment.contador_user_id)}</span></div></td><td className="px-5 py-4 font-bold">{done} / {assignedLocations.length}</td><td className="px-5 py-4"><StatusBadge status={assignment.status} /></td><td className="px-5 py-4 text-gray-500">{formatDate(assignment.assigned_at)}</td><td className="px-5 py-4"><button type="button" onClick={() => void onRemove(assignment)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100">Desasignar</button></td></tr>; })}</tbody></table></div>{assignments.length === 0 && <div className="p-10 text-center text-sm text-gray-500">No hay bloques asignados en esta auditoría.</div>}</div></div>;
 }
 
 function LiveView({ assignments, auditLocations, items }: { assignments: PhysicalAuditRackAssignment[]; auditLocations: PhysicalAuditLocation[]; items: PhysicalAuditSupervisorItem[] }) {
@@ -745,12 +795,44 @@ function FindingsView({ findings, onReview }: { findings: PhysicalAuditFinding[]
   return <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="flex flex-col justify-between gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center"><div><h3 className="font-black text-gray-900">Material encontrado</h3><p className="mt-1 text-xs text-gray-500">Revisa piezas reportadas en una locación diferente a la esperada.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">{findings.filter(finding => finding.status === 'pendiente_revision').length} pendientes</span></div><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Número de parte</th><th className="px-4 py-3">Esperada</th><th className="px-4 py-3">Encontrada en</th><th className="px-4 py-3">Cantidad</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Acción</th></tr></thead><tbody>{findings.map(finding => <tr key={finding.id} className="border-t border-gray-100"><td className="px-4 py-4 text-gray-500">{formatDate(finding.created_at)}</td><td className="px-4 py-4 font-mono font-bold text-indigo-700">{finding.part_number}</td><td className="px-4 py-4 font-mono">{finding.expected_location_code || '—'}</td><td className="px-4 py-4 font-mono font-bold">{finding.found_location_code}{finding.found_rack ? ` · Rack ${finding.found_rack}` : ''}</td><td className="px-4 py-4 font-bold">{finding.found_qty}</td><td className="px-4 py-4"><StatusBadge status={finding.status} /></td><td className="px-4 py-4">{finding.status === 'pendiente_revision' ? <div className="flex gap-2"><button type="button" onClick={() => void onReview(finding, 'validado')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 font-bold text-white">Validar</button><button type="button" onClick={() => void onReview(finding, 'rechazado')} className="rounded-lg bg-red-50 px-2.5 py-1.5 font-bold text-red-700">Rechazar</button></div> : <span className="text-gray-400">Revisado</span>}</td></tr>)}</tbody></table></div>{findings.length === 0 && <div className="p-10 text-center text-sm text-gray-500">No hay material encontrado reportado en esta auditoría.</div>}</div>;
 }
 
-function CreateAuditModal({ form, setForm, racks, counters, loading, saving, onClose, onToggleRack, onCreate }: { form: { name: string; description: string; selectedRacks: string[]; assignees: Record<string, string> }; setForm: React.Dispatch<React.SetStateAction<{ name: string; description: string; selectedRacks: string[]; assignees: Record<string, string> }>>; racks: string[]; counters: CounterProfile[]; loading: boolean; saving: boolean; onClose: () => void; onToggleRack: (rack: string) => void; onCreate: () => Promise<void> }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-gray-100 px-6 py-5"><div><p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Nueva auditoría</p><h3 className="mt-1 text-xl font-black text-gray-900">Crear fotografía de conteo</h3></div><button type="button" onClick={onClose} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"><X className="h-5 w-5" /></button></div><div className="space-y-5 p-6"><Field label="Nombre de auditoría"><input value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} className="field-input" placeholder="Ej. Conteo mensual octubre 2026" /></Field><Field label="Descripción"><textarea value={form.description} onChange={event => setForm(current => ({ ...current, description: event.target.value }))} className="field-input min-h-20 py-3" placeholder="Periodo, turno o notas generales..." /></Field><div><div className="mb-2 flex items-center justify-between"><label className="field-label">Selecciona racks y contador responsable</label><span className="text-xs text-gray-500">{form.selectedRacks.length} seleccionados</span></div>{loading ? <div className="flex items-center gap-2 rounded-xl bg-gray-50 p-4 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />Cargando locaciones y contadores...</div> : racks.length === 0 ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">No se encontraron racks en `locations`.</div> : <div className="space-y-2">{racks.map(rack => { const selected = form.selectedRacks.includes(rack); return <div key={rack} className={`rounded-xl border p-3 transition ${selected ? 'border-indigo-200 bg-indigo-50/60' : 'border-gray-200 bg-white'}`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center"><label className="flex flex-1 items-center gap-3 text-sm font-bold text-gray-800"><input type="checkbox" checked={selected} onChange={() => onToggleRack(rack)} className="h-4 w-4 rounded border-gray-300 text-indigo-600" />Rack {rack}<span className="text-xs font-normal text-gray-500">{referenceLocationCount(rack, racks, form)}</span></label>{selected && <select value={form.assignees[rack] ?? ''} onChange={event => setForm(current => ({ ...current, assignees: { ...current.assignees, [rack]: event.target.value } }))} className="field-input sm:max-w-[260px]"><option value="">Seleccionar contador</option>{counters.map(counter => <option key={counter.user_id} value={counter.user_id}>{counter.nombre_completo || counter.email || counter.user_id}</option>)}</select>}</div></div>; })}</div>}</div><div className="flex justify-end gap-3 border-t border-gray-100 pt-5"><button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700">Cancelar</button><button type="button" disabled={saving || loading} onClick={() => void onCreate()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />}Crear y asignar racks</button></div></div></div></div>;
+function CreateAuditModal({ form, setForm, counters, locations, loading, saving, onClose, onAddAssignment, onRemoveAssignment, onCreate }: { form: CreateAuditForm; setForm: React.Dispatch<React.SetStateAction<CreateAuditForm>>; counters: CounterProfile[]; locations: ReferenceLocation[]; loading: boolean; saving: boolean; onClose: () => void; onAddAssignment: (assignment: AuditAssignmentDraft) => void; onRemoveAssignment: (index: number) => void; onCreate: () => Promise<void> }) {
+  const [source, setSource] = useState<AuditLocationSource>('normal');
+  const [selectedRack, setSelectedRack] = useState('');
+  const [selectedCounter, setSelectedCounter] = useState('');
+  const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([]);
+  const sourceLocations = locations.filter(location => location.source === source);
+  const assignedLocationKeys = new Set(form.assignments.flatMap(assignment => assignment.locationIds.map(locationId => `${assignment.source}:${locationId}`)));
+  const availableLocations = sourceLocations.filter(location => !assignedLocationKeys.has(`${source}:${location.id}`));
+  const rackOptions = [...new Set(availableLocations.map(location => location.rack))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const rackLocations = availableLocations.filter(location => location.rack === selectedRack);
+  const selectedCounterName = counters.find(counter => counter.user_id === selectedCounter)?.nombre_completo || counters.find(counter => counter.user_id === selectedCounter)?.email || selectedCounter;
+
+  const changeSource = (nextSource: AuditLocationSource) => {
+    setSource(nextSource);
+    setSelectedRack('');
+    setSelectedLocationIds([]);
+  };
+
+  const toggleLocation = (locationId: number) => {
+    setSelectedLocationIds(current => current.includes(locationId) ? current.filter(id => id !== locationId) : [...current, locationId]);
+  };
+
+  const addBlock = () => {
+    if (!selectedRack || !selectedCounter || selectedLocationIds.length === 0) {
+      window.alert('Selecciona un rack, al menos una locación y un contador.');
+      return;
+    }
+    onAddAssignment({ source, rack: selectedRack, contador_user_id: selectedCounter, locationIds: selectedLocationIds });
+    setSelectedRack('');
+    setSelectedCounter('');
+    setSelectedLocationIds([]);
+  };
+
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"><div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-gray-100 px-6 py-5"><div><p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Nueva auditoría</p><h3 className="mt-1 text-xl font-black text-gray-900">Crear fotografía de conteo</h3></div><button type="button" onClick={onClose} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700"><X className="h-5 w-5" /></button></div><div className="space-y-5 p-6"><div className="grid grid-cols-1 gap-4 md:grid-cols-2"><Field label="Nombre de auditoría"><input value={form.name} onChange={event => setCreateAuditFormField(setForm, 'name', event.target.value)} className="field-input" placeholder="Ej. Conteo mensual octubre 2026" /></Field><Field label="Descripción"><textarea value={form.description} onChange={event => setCreateAuditFormField(setForm, 'description', event.target.value)} className="field-input min-h-20 py-3" placeholder="Periodo, turno o notas generales..." /></Field></div><div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4"><div className="flex flex-col justify-between gap-3 md:flex-row md:items-center"><div><h4 className="font-black text-indigo-900">Agrega bloques de conteo</h4><p className="mt-1 text-xs text-indigo-700">Puedes dividir el mismo rack entre varios contadores seleccionando locaciones específicas.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-indigo-700">{form.assignments.length} bloques</span></div><div className="mt-4 flex gap-2 rounded-xl bg-white p-1"><button type="button" onClick={() => changeSource('normal')} className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold transition ${source === 'normal' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>Locaciones normales</button><button type="button" onClick={() => changeSource('kitto')} className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold transition ${source === 'kitto' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>Kitto</button></div>{loading ? <div className="mt-4 flex items-center gap-2 rounded-xl bg-white p-4 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />Cargando locaciones normales y Kitto...</div> : <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[.7fr_1fr]"><div><Field label={`Rack de ${source === 'kitto' ? 'Kitto' : 'locaciones normales'}`}><select value={selectedRack} onChange={event => { setSelectedRack(event.target.value); setSelectedLocationIds([]); }} className="field-input"><option value="">Seleccionar rack</option>{rackOptions.map(rack => <option key={rack} value={rack}>Rack {rack}</option>)}</select></Field><div className="mt-4"><Field label="Contador responsable"><select value={selectedCounter} onChange={event => setSelectedCounter(event.target.value)} className="field-input"><option value="">Seleccionar contador</option>{counters.map(counter => <option key={counter.user_id} value={counter.user_id}>{counter.nombre_completo || counter.email || counter.user_id}</option>)}</select></Field></div></div><div><div className="mb-2 flex items-center justify-between"><label className="field-label">Locaciones a asignar</label>{selectedRack && <div className="flex gap-2"><button type="button" onClick={() => setSelectedLocationIds(rackLocations.map(location => location.id))} className="text-xs font-bold text-indigo-700 hover:underline">Seleccionar todas</button><button type="button" onClick={() => setSelectedLocationIds([])} className="text-xs font-bold text-gray-500 hover:underline">Limpiar</button></div>}</div><div className="max-h-56 overflow-y-auto rounded-xl border border-gray-200 bg-white p-2">{!selectedRack ? <p className="p-4 text-sm text-gray-500">Selecciona un rack para ver sus locaciones.</p> : rackLocations.length === 0 ? <p className="p-4 text-sm text-amber-700">Todas las locaciones de este rack ya están asignadas en esta auditoría.</p> : <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{rackLocations.map(location => <label key={location.id} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs transition ${selectedLocationIds.includes(location.id) ? 'border-indigo-200 bg-indigo-50 font-bold text-indigo-700' : 'border-gray-100 hover:bg-gray-50'}`}><input type="checkbox" checked={selectedLocationIds.includes(location.id)} onChange={() => toggleLocation(location.id)} className="h-4 w-4 rounded border-gray-300 text-indigo-600" />{location.location_code}</label>)}</div>}</div><p className="mt-2 text-xs text-gray-500">{selectedLocationIds.length} locaciones seleccionadas{selectedCounterName ? ` · ${selectedCounterName}` : ''}</p></div></div>}<div className="mt-4 flex justify-end"><button type="button" disabled={loading || !selectedRack || !selectedCounter || selectedLocationIds.length === 0} onClick={addBlock} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Plus className="h-4 w-4" />Agregar bloque</button></div></div><div className="rounded-2xl border border-gray-100 bg-white"><div className="border-b border-gray-100 px-5 py-4"><h4 className="font-black text-gray-900">Bloques asignados</h4><p className="mt-1 text-xs text-gray-500">Una vez agregada una locación, deja de aparecer disponible para otro contador.</p></div>{form.assignments.length === 0 ? <p className="p-5 text-sm text-gray-500">Todavía no hay bloques. Puedes asignar un rack completo o dividirlo entre varios contadores.</p> : <div className="divide-y divide-gray-100">{form.assignments.map((assignment, index) => <div key={`${assignment.source}-${assignment.rack}-${index}`} className="flex flex-col justify-between gap-3 px-5 py-4 sm:flex-row sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${assignment.source === 'kitto' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-700'}`}>{assignment.source === 'kitto' ? 'Kitto' : 'Normal'}</span><span className="font-mono font-bold text-gray-800">Rack {assignment.rack}</span><span className="text-xs text-gray-500">· {assignment.locationIds.length} locaciones</span></div><p className="mt-1 text-xs text-gray-500">{counters.find(counter => counter.user_id === assignment.contador_user_id)?.nombre_completo || counters.find(counter => counter.user_id === assignment.contador_user_id)?.email || assignment.contador_user_id}</p></div><button type="button" onClick={() => onRemoveAssignment(index)} className="self-start rounded-lg px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 sm:self-auto">Quitar</button></div>)}</div>}</div></div><div className="flex justify-end gap-3 border-t border-gray-100 pt-5"><button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700">Cancelar</button><button type="button" disabled={saving || loading || form.assignments.length === 0} onClick={() => void onCreate()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">{saving && <Loader2 className="h-4 w-4 animate-spin" />}Crear y asignar</button></div></div></div>;
 }
 
-function referenceLocationCount(rack: string, _racks: string[], _form: { name: string; description: string; selectedRacks: string[]; assignees: Record<string, string> }) {
-  return `Rack ${rack}`;
+function setCreateAuditFormField(setForm: React.Dispatch<React.SetStateAction<CreateAuditForm>>, field: 'name' | 'description', value: string) {
+  setForm(current => ({ ...current, [field]: value }));
 }
 
 function MetricCard({ icon, label, value, note, tone }: { icon: React.ReactNode; label: string; value: string; note: string; tone: 'indigo' | 'emerald' | 'violet' | 'amber' }) {
