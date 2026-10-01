@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
-  ChevronDown,
   ClipboardCheck,
   Clock3,
   Eye,
@@ -607,8 +606,6 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
     return <CounterAuditView
       audits={audits}
       activeAudit={activeAudit}
-      activeAuditId={activeAuditId}
-      setActiveAuditId={setActiveAuditId}
       auditLocations={auditLocations}
       items={counterItems}
       tab={counterTab}
@@ -699,12 +696,10 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
 }
 
 function CounterAuditView({
-  audits, activeAudit, activeAuditId, setActiveAuditId, auditLocations, items, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, totalPages, setPage, pageItems,
+  audits, activeAudit, auditLocations, items, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, totalPages, setPage, pageItems,
 }: {
   audits: PhysicalAudit[];
   activeAudit: PhysicalAudit | null;
-  activeAuditId: number | null;
-  setActiveAuditId: (id: number) => void;
   auditLocations: PhysicalAuditLocation[];
   items: PhysicalAuditCounterItem[];
   tab: CounterTab;
@@ -727,7 +722,6 @@ function CounterAuditView({
   setPage: (page: number) => void;
   pageItems: PhysicalAuditCounterItem[];
 }) {
-  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const completedLocations = auditLocations.filter(location => location.status === 'completada').length;
   const grouped = auditLocations
     .map(location => ({
@@ -738,10 +732,10 @@ function CounterAuditView({
     .filter(group => group.items.length > 0 || (page === 1 && group.allItems.length === 0));
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-indigo-700 to-indigo-500 p-6 text-white shadow-lg"><div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="mb-1 text-xs font-black uppercase tracking-[0.16em] text-indigo-200">Vista del contador</p><h2 className="text-3xl font-black tracking-tight">Mis conteos</h2><p className="mt-2 max-w-xl text-sm text-indigo-100">Registra únicamente la cantidad física que encuentres en cada etiqueta. La cantidad esperada no se muestra en esta vista.</p></div><div className="relative"><button type="button" onClick={() => setSessionMenuOpen(open => !open)} className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-bold transition hover:bg-white/20"><span className="h-2 w-2 rounded-full bg-emerald-300" />Sesión activa<ChevronDown className={`h-4 w-4 transition-transform ${sessionMenuOpen ? 'rotate-180' : ''}`} /></button>{sessionMenuOpen && <div className="absolute right-0 top-full z-30 mt-2 w-60 overflow-hidden rounded-xl border border-gray-200 bg-white text-left shadow-xl"><div className="border-b border-gray-100 px-4 py-3"><p className="truncate text-sm font-bold text-gray-800">{userName}</p><p className="mt-0.5 text-xs text-gray-500">Sesión activa</p></div><button type="button" onClick={() => void signOut()} className="flex w-full items-center gap-2 px-4 py-3 text-sm font-bold text-red-600 transition hover:bg-red-50"><LogOut className="h-4 w-4" />Cerrar sesión</button></div>}</div></div></div>
+      <div className="rounded-2xl bg-gradient-to-br from-indigo-900 via-indigo-700 to-indigo-500 p-6 text-white shadow-lg"><div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><p className="mb-1 text-xs font-black uppercase tracking-[0.16em] text-indigo-200">Vista del contador</p><h2 className="text-3xl font-black tracking-tight">Mis conteos</h2><p className="mt-2 max-w-xl text-sm text-indigo-100">Registra únicamente la cantidad física que encuentres en cada etiqueta. La cantidad esperada no se muestra en esta vista.</p></div><div className="flex flex-wrap items-center justify-end gap-3 rounded-xl border border-white/20 bg-white/10 px-4 py-3"><div className="flex items-center gap-2 text-sm font-bold"><span className="h-2 w-2 rounded-full bg-emerald-300" />Sesión activa</div><span className="max-w-48 truncate text-sm font-semibold text-indigo-50">{userName}</span><button type="button" onClick={() => void signOut()} className="inline-flex items-center gap-2 rounded-lg border border-white/20 px-3 py-2 text-sm font-bold transition hover:bg-white/10"><LogOut className="h-4 w-4" />Cerrar sesión</button></div></div></div>
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><strong>No se pudo cargar la auditoría:</strong> {error}</div>}
       {audits.length === 0 ? <div className="rounded-2xl border border-dashed border-indigo-200 bg-white p-12 text-center shadow-sm"><ClipboardCheck className="mx-auto h-12 w-12 text-indigo-300" /><h3 className="mt-4 text-lg font-bold text-gray-800">No tienes auditorías asignadas</h3><p className="mt-2 text-sm text-gray-500">El supervisor debe asignarte un rack para comenzar.</p></div> : <>
-        <div className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm md:flex-row md:items-center"><div className="flex items-center gap-3"><ClipboardCheck className="h-5 w-5 text-indigo-600" /><span className="text-xs font-bold uppercase tracking-wide text-gray-500">Auditoría</span></div><select value={activeAuditId ?? ''} onChange={event => setActiveAuditId(Number(event.target.value))} className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-bold text-gray-800"><option value="">Seleccionar auditoría</option>{audits.map(audit => <option key={audit.id} value={audit.id}>{audit.name}</option>)}</select><button type="button" onClick={() => void refresh()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Actualizar</button></div>
+        <div className="flex justify-end"><button type="button" onClick={() => void refresh()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 shadow-sm transition hover:bg-gray-50"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Actualizar</button></div>
         {activeAudit && <><div className="grid grid-cols-1 gap-4 sm:grid-cols-3"><MetricCard icon={<MapPin className="h-5 w-5" />} label="Locaciones terminadas" value={`${completedLocations} / ${auditLocations.length}`} note="De mis asignaciones" tone="indigo" /><MetricCard icon={<Package className="h-5 w-5" />} label="Números asignados" value={items.length.toLocaleString()} note={`${items.filter(item => item.counted).length} registrados`} tone="emerald" /><MetricCard icon={<Clock3 className="h-5 w-5" />} label="Estado" value={formatStatus(activeAudit.status)} note="Auditoría activa" tone="violet" /></div><div className="flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-gray-100 bg-white p-1.5 shadow-sm"><AuditTabButton active={tab === 'conteo'} onClick={() => setTab('conteo')} icon={<ClipboardCheck className="h-4 w-4" />} label="Mis asignaciones" /><AuditTabButton active={tab === 'hallazgo'} onClick={() => setTab('hallazgo')} icon={<AlertTriangle className="h-4 w-4" />} label="Material encontrado" /></div>{tab === 'conteo' ? <><div className="space-y-4">{grouped.map(({ location, items: locationItems, allItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={allItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} itemCount={items.length} setPage={setPage} /></> : <CounterFindingForm items={items} locations={auditLocations} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}</>}
       </>}
     </div>
