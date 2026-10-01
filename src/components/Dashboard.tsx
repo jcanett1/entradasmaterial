@@ -463,6 +463,7 @@ export function Dashboard() {
      SELECCIÓN MÚLTIPLE
   ======================= */
   const handleToggleSelect = (id: number) => {
+    if (blockedInventoryIds.has(id)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -472,13 +473,15 @@ export function Dashboard() {
   };
 
   const handleToggleSelectAll = (pageIds: number[]) => {
-    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    const selectablePageIds = pageIds.filter((id) => !blockedInventoryIds.has(id));
+    if (selectablePageIds.length === 0) return;
+    const allSelected = selectablePageIds.every((id) => selectedIds.has(id));
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (allSelected) {
-        pageIds.forEach((id) => next.delete(id));
+        selectablePageIds.forEach((id) => next.delete(id));
       } else {
-        pageIds.forEach((id) => next.add(id));
+        selectablePageIds.forEach((id) => next.add(id));
       }
       return next;
     });
@@ -486,7 +489,7 @@ export function Dashboard() {
 
   const clearSelection = () => setSelectedIds(new Set());
 
-  const selectedRecords = filteredRecords.filter((r) => selectedIds.has(r.id));
+  const selectedRecords = filteredRecords.filter((r) => selectedIds.has(r.id) && !blockedInventoryIds.has(r.id));
 
   /* =======================
      EXPORT CSV

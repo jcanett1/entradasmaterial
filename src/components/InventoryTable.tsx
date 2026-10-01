@@ -75,9 +75,10 @@ export function InventoryTable({
   const startIdx = (safePage - 1) * PAGE_SIZE;
   const pageRecords = records.slice(startIdx, startIdx + PAGE_SIZE);
   const pageIds = pageRecords.map((r) => r.id);
+  const selectablePageIds = pageIds.filter((id) => !assignedEntryIds.has(id));
 
-  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
-  const somePageSelected = pageIds.some((id) => selectedIds.has(id));
+  const allPageSelected = selectablePageIds.length > 0 && selectablePageIds.every((id) => selectedIds.has(id));
+  const somePageSelected = selectablePageIds.some((id) => selectedIds.has(id));
 
   const goTo = (page: number) => setCurrentPage(Math.max(1, Math.min(page, totalPages)));
 
@@ -109,9 +110,10 @@ export function InventoryTable({
                     ref={(el) => {
                       if (el) el.indeterminate = !allPageSelected && somePageSelected;
                     }}
-                    onChange={() => onToggleSelectAll(pageIds)}
-                    title="Seleccionar todos en esta página"
-                    className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
+                    disabled={selectablePageIds.length === 0}
+                    onChange={() => onToggleSelectAll(selectablePageIds)}
+                    title="Seleccionar todos los registros disponibles de esta página"
+                    className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
                   />
                 </div>
               </th>
