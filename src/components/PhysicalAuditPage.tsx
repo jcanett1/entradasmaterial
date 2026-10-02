@@ -815,7 +815,7 @@ function CounterAuditView({
     }))
     .filter(group => group.items.length > 0 || (page === 1 && group.allItems.length === 0));
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-4 sm:space-y-6">
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><strong>No se pudo cargar la auditoría:</strong> {error}</div>}
       {audits.length === 0 ? <>
         <div className="flex justify-end"><CounterSessionMenu userName={userName} signOut={signOut} /></div>
@@ -852,9 +852,46 @@ function CounterSessionMenu({ userName, signOut }: { userName: string; signOut: 
 
 function CounterLocationCard({ location, items, allItems, countInputs, setCountInputs, submitCount, completeLocation, saving }: { location: PhysicalAuditLocation; items: PhysicalAuditCounterItem[]; allItems: PhysicalAuditCounterItem[]; countInputs: Record<number, string>; setCountInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>; submitCount: (item: PhysicalAuditCounterItem) => Promise<void>; completeLocation: (location: PhysicalAuditLocation) => Promise<void>; saving: boolean }) {
   const allCounted = allItems.every(item => item.counted);
-  return <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="flex flex-col justify-between gap-3 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-white px-5 py-4 md:flex-row md:items-center"><div className="flex items-center gap-3"><div className="rounded-xl bg-indigo-100 p-2.5 text-indigo-700"><MapPin className="h-5 w-5" /></div><div><h3 className="font-black text-gray-900">{location.location_code} <span className="font-medium text-gray-500">· Rack {location.rack}</span></h3><p className="mt-1 text-xs text-gray-500">{items.length ? `${items.length} número${items.length === 1 ? '' : 's'} de parte asignado${items.length === 1 ? '' : 's'}` : 'Locación sin materiales registrados'}</p></div></div><div className="flex items-center gap-2"><StatusBadge status={locationDisplayStatus(location)} />{location.status !== 'completada' && <button type="button" disabled={saving || !allCounted} onClick={() => void completeLocation(location)} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Terminar locación</button>}</div></div>{items.length > 0 ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-5 py-3">Número de parte</th><th className="px-5 py-3">Descripción</th><th className="px-5 py-3">PO / FIFO</th><th className="px-5 py-3">Cantidad encontrada</th><th className="px-5 py-3">Acción</th><th className="px-5 py-3">Estado</th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-t border-gray-100"><td className="px-5 py-4 font-mono text-xs font-bold text-indigo-700">{item.part_number}</td><td className="px-5 py-4 text-gray-700">{item.description || 'Sin descripción'}</td><td className="px-5 py-4 text-xs text-gray-500">{item.po || '—'}{item.fifo_number !== null ? ` · FIFO ${item.fifo_number}` : ''}</td><td className="px-5 py-4"><input type="number" min="0" placeholder="Cantidad" value={countInputs[item.id] ?? (item.found_qty === null ? '' : String(item.found_qty))} onChange={event => setCountInputs(current => ({ ...current, [item.id]: event.target.value }))} disabled={item.counted || saving} className="w-32 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-center font-bold focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" /></td><td className="px-5 py-4"><button type="button" disabled={item.counted || saving} onClick={() => void submitCount(item)} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500">{item.counted ? 'Guardado' : item.recount_requested ? 'Registrar recuento' : 'Registrar'}</button></td><td className="px-5 py-4"><StatusBadge status={itemDisplayStatus(item)} /></td></tr>)}</tbody></table></div> : <div className="px-5 py-5 text-sm text-gray-500">Confirma esta locación como revisada; no hay números de parte que capturar.</div>}<div className="border-t border-indigo-50 bg-indigo-50/50 px-5 py-3 text-xs text-indigo-700"><strong>Conteo ciego:</strong> no se muestra la cantidad esperada del sistema.</div></div>;
-}
+  const formatPoFifo = (item: PhysicalAuditCounterItem) => `${item.po || '—'}${item.fifo_number !== null ? ` · FIFO ${item.fifo_number}` : ''}`;
+  const countInput = (item: PhysicalAuditCounterItem) => <input type="number" min="0" placeholder="Cantidad" value={countInputs[item.id] ?? (item.found_qty === null ? '' : String(item.found_qty))} onChange={event => setCountInputs(current => ({ ...current, [item.id]: event.target.value }))} disabled={item.counted || saving} className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-center font-bold focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" />;
+  const registerButton = (item: PhysicalAuditCounterItem, compact = false) => <button type="button" disabled={item.counted || saving} onClick={() => void submitCount(item)} className={`shrink-0 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${compact ? 'min-w-[7.5rem]' : ''}`}>{item.counted ? 'Guardado' : item.recount_requested ? 'Registrar recuento' : 'Registrar'}</button>;
 
+  return (
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+      <div className="flex flex-col justify-between gap-3 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-white px-4 py-4 sm:px-5 lg:flex-row lg:items-center">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="shrink-0 rounded-xl bg-indigo-100 p-2.5 text-indigo-700"><MapPin className="h-5 w-5" /></div>
+          <div className="min-w-0"><h3 className="truncate font-black text-gray-900">{location.location_code} <span className="font-medium text-gray-500">· Rack {location.rack}</span></h3><p className="mt-1 text-xs text-gray-500">{items.length ? `${items.length} número${items.length === 1 ? '' : 's'} de parte asignado${items.length === 1 ? '' : 's'}` : 'Locación sin materiales registrados'}</p></div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pl-12 sm:pl-0"><StatusBadge status={locationDisplayStatus(location)} />{location.status !== 'completada' && <button type="button" disabled={saving || !allCounted} onClick={() => void completeLocation(location)} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Terminar locación</button>}</div>
+      </div>
+
+      {items.length > 0 ? <>
+        <div className="space-y-3 p-3 lg:hidden">
+          {items.map(item => <div key={item.id} className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1"><p className="break-words font-mono text-xs font-black text-indigo-700">{item.part_number}</p><p className="mt-1 break-words text-xs leading-5 text-gray-600">{item.description || 'Sin descripción'}</p></div>
+              <StatusBadge status={itemDisplayStatus(item)} />
+            </div>
+            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 border-t border-gray-200 pt-3">
+              <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-wide text-gray-400">PO / FIFO</p><p className="mt-1 break-words text-xs font-bold text-gray-700">{formatPoFifo(item)}</p></div>
+              <div className="text-right"><p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Actual</p><p className="mt-1 font-black text-gray-800">{item.found_qty ?? 'Pendiente'}</p></div>
+            </div>
+            <div className="mt-3 flex items-end gap-2"><label className="min-w-0 flex-1"><span className="text-[10px] font-black uppercase tracking-wide text-gray-500">Cantidad encontrada</span>{countInput(item)}</label>{registerButton(item, true)}</div>
+          </div>)}
+        </div>
+
+        <div className="hidden overflow-x-auto lg:block">
+          <table className="w-full table-fixed text-left text-sm">
+            <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="w-[18%] px-3 py-3 xl:px-5">Número de parte</th><th className="w-[25%] px-3 py-3 xl:px-5">Descripción</th><th className="w-[17%] px-3 py-3 xl:px-5">PO / FIFO</th><th className="w-[16%] px-3 py-3 xl:px-5">Cantidad encontrada</th><th className="w-[14%] px-3 py-3 xl:px-5">Acción</th><th className="w-[10%] px-3 py-3 xl:px-5">Estado</th></tr></thead>
+            <tbody>{items.map(item => <tr key={item.id} className="border-t border-gray-100"><td className="break-words px-3 py-3 font-mono text-xs font-bold text-indigo-700 xl:px-5 xl:py-4">{item.part_number}</td><td className="break-words px-3 py-3 text-gray-700 xl:px-5 xl:py-4">{item.description || 'Sin descripción'}</td><td className="break-words px-3 py-3 text-xs text-gray-500 xl:px-5 xl:py-4">{formatPoFifo(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4">{countInput(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4">{registerButton(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4"><StatusBadge status={itemDisplayStatus(item)} /></td></tr>)}</tbody>
+          </table>
+        </div>
+      </> : <div className="px-4 py-5 text-sm text-gray-500 sm:px-5">Confirma esta locación como revisada; no hay números de parte que capturar.</div>}
+      <div className="border-t border-indigo-50 bg-indigo-50/50 px-4 py-3 text-xs text-indigo-700 sm:px-5"><strong>Conteo ciego:</strong> no se muestra la cantidad esperada del sistema.</div>
+    </div>
+  );
+}
 function CounterPagination({ page, totalPages, itemCount, setPage }: { page: number; totalPages: number; itemCount: number; setPage: (page: number) => void }) {
   if (itemCount <= COUNTER_PAGE_SIZE) return null;
   const firstItem = (page - 1) * COUNTER_PAGE_SIZE + 1;
