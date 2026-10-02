@@ -95,6 +95,11 @@ export type PhysicalAuditCounterItem = {
   counted: boolean;
   counted_at: string | null;
   notes: string | null;
+  recount_requested: boolean;
+  recount_requested_by: string | null;
+  recount_requested_at: string | null;
+  last_counted_by: string | null;
+  last_counted_at: string | null;
 };
 
 export type PhysicalAuditSupervisorItem = PhysicalAuditCounterItem & {
