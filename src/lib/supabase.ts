@@ -74,6 +74,11 @@ export type PhysicalAuditLocation = {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+  recount_requested: boolean;
+  recount_requested_by: string | null;
+  recount_requested_at: string | null;
+  last_counted_by: string | null;
+  last_counted_at: string | null;
 };
 
 export type PhysicalAuditCounterItem = {
