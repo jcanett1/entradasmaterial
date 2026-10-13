@@ -5,7 +5,7 @@ import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Archive, ArrowRightFromLine, CheckCircle2, ListChecks,
-  History,
+  History, Tag,
 } from 'lucide-react';
 
 interface Exit {
@@ -32,6 +32,8 @@ interface ShippingDirectRecord {
   qty: number;
   boxes: number | null;
   po: string | null;
+  entry_id: number | null;
+  fifo_number: number | null;
   location_code: string | null;
   destination: string;
   registered_by: string | null;
@@ -188,7 +190,7 @@ export function ExitsPage() {
     setShippingDirectHistoryError(null);
     const { data, error } = await supabase
       .from('shipping_direct')
-      .select('id, source_transfer_id, part_number, description, qty, boxes, po, location_code, destination, registered_by, exited_at, reviewed_at, reviewed_by')
+      .select('id, source_transfer_id, entry_id, part_number, description, qty, boxes, po, location_code, destination, registered_by, exited_at, reviewed_at, reviewed_by')
       .order('exited_at', { ascending: false });
 
     if (error) {
@@ -196,7 +198,13 @@ export function ExitsPage() {
       setShippingDirectHistoryError(`No se pudo cargar el historial: ${error.message}`);
       setShippingDirectHistory([]);
     } else {
-      setShippingDirectHistory((data as ShippingDirectRecord[]) ?? []);
+      const historyRows = (data as Omit<ShippingDirectRecord, 'fifo_number'>[]) ?? [];
+      const entryIds = Array.from(new Set(historyRows.flatMap(record => record.entry_id === null ? [] : [record.entry_id])));
+      const fifoByEntryId = await fetchFifoByEntryIds(entryIds);
+      setShippingDirectHistory(historyRows.map(record => ({
+        ...record,
+        fifo_number: record.entry_id === null ? null : (fifoByEntryId.get(record.entry_id) ?? null),
+      })));
     }
 
     setShippingDirectHistoryLoading(false);
@@ -546,6 +554,7 @@ export function ExitsPage() {
       record.part_number,
       record.description ?? '',
       record.po ?? '',
+      record.fifo_number?.toString() ?? '',
       record.location_code ?? '',
       record.registered_by ?? '',
       record.destination,
@@ -1115,7 +1124,7 @@ export function ExitsPage() {
                   type="text"
                   value={shippingDirectHistorySearch}
                   onChange={event => setShippingDirectHistorySearch(event.target.value)}
-                  placeholder="Buscar número de parte, PO, locación o usuario..."
+                  placeholder="Buscar número de parte, FIFO, PO, locación o usuario..."
                   className="w-full rounded-xl border border-gray-200 py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
                 />
               </div>
@@ -1134,7 +1143,7 @@ export function ExitsPage() {
                 </div>
               ) : (
                 <div className="max-h-[48vh] overflow-auto rounded-xl border border-gray-200">
-                  <table className="w-full min-w-[980px] border-collapse">
+                  <table className="w-full min-w-[1080px] border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
                         {[
@@ -1142,6 +1151,7 @@ export function ExitsPage() {
                           { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
                           { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
                           { icon: <ClipboardList className="h-3.5 w-3.5" />, label: 'PO' },
+                          { icon: <Tag className="h-3.5 w-3.5" />, label: 'FIFO', center: true },
                           { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Locación' },
                           { icon: <LogOut className="h-3.5 w-3.5" />, label: 'Destino', center: true },
                           { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado por' },
@@ -1166,6 +1176,18 @@ export function ExitsPage() {
                           <td className="px-4 py-3 text-center"><span className="font-bold text-blue-700">{(record.qty ?? 0).toLocaleString()}</span></td>
                           <td className="px-4 py-3 text-center"><span className="font-bold text-purple-700">{(record.boxes ?? 0).toLocaleString()}</span></td>
                           <td className="px-4 py-3"><span className="font-mono text-sm text-purple-700">{record.po || '—'}</span></td>
+                          <td className="px-4 py-3 text-center">
+                            {record.fifo_number !== null ? (
+                              <span className="inline-flex rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-1 font-mono text-xs font-bold text-violet-700">#{record.fifo_number}</span>
+                            ) : (
+                              <span
+                                className="text-sm italic text-gray-400"
+                                title={record.entry_id === null ? 'Este registro no tiene entry_id para consultar el FIFO' : 'No se encontró una etiqueta FIFO vinculada a esta entrada'}
+                              >
+                                —
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3"><span className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700">{record.location_code ? <><MapPin className="h-3 w-3" />{record.location_code}</> : '—'}</span></td>
                           <td className="px-4 py-3 text-center"><span className="rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{record.destination}</span></td>
                           <td className="px-4 py-3 text-sm text-gray-600">{record.registered_by || 'Sin registro'}</td>
