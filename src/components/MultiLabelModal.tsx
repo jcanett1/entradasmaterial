@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '@/lib/supabase';
 import type { Entry } from '@/lib/supabase';
@@ -17,13 +17,12 @@ interface MultiLabelModalProps {
 export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
   const [fifoMap, setFifoMap] = useState<Record<number, number | null>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const recordsMissingFifo = records.filter((record) => fifoMap[record.id] == null);
 
-  useEffect(() => {
-    loadFifoLabels();
-  }, []);
-
-  const loadFifoLabels = async () => {
+  const loadFifoLabels = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const ids = records.map((r) => r.id);
       const { data, error } = await supabase
@@ -37,18 +36,25 @@ export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
       // Inicializar todos como null
       ids.forEach((id) => { map[id] = null; });
       // Llenar con los datos encontrados
-      (data as FifoData[]).forEach((row) => {
+      ((data ?? []) as FifoData[]).forEach((row) => {
         map[row.entry_id] = row.fifo_number;
       });
       setFifoMap(map);
     } catch (err) {
       console.error('Error cargando etiquetas FIFO:', err);
+      setLoadError('No se pudieron consultar las etiquetas FIFO seleccionadas. Intenta actualizar el inventario y vuelve a intentarlo.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [records]);
+
+  useEffect(() => {
+    void loadFifoLabels();
+  }, [loadFifoLabels]);
 
   const handlePrint = () => {
+    if (loadError || recordsMissingFifo.length > 0) return;
+
     const labelsHtml = records.map((record) => {
       const fifo = fifoMap[record.id];
       const formattedDate = new Date(record.registered_at).toLocaleDateString('es-MX', {
@@ -163,7 +169,7 @@ export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
               }
             }
           </style>
-          <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"><\/script>
+          <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
         </head>
         <body>
           ${labelsMarkup}
@@ -201,7 +207,7 @@ export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
               });
               setTimeout(function() { window.print(); }, 1500);
             }
-          <\/script>
+          </script>
         </body>
       </html>
     `);
@@ -223,8 +229,8 @@ export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
               <Tags className="h-4 w-4 text-white" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-gray-900">Imprimir Etiquetas FIFO</h2>
-              <p className="text-xs text-gray-400">{records.length} etiqueta{records.length !== 1 ? 's' : ''} seleccionada{records.length !== 1 ? 's' : ''} · DYMO 550 · 102mm × 54mm</p>
+              <h2 className="text-base font-bold text-gray-900">Reimprimir Etiquetas FIFO</h2>
+              <p className="text-xs text-gray-400">{records.length} etiqueta{records.length !== 1 ? 's' : ''} seleccionada{records.length !== 1 ? 's' : ''} · incluye registros bloqueados · DYMO 550 · 102mm × 54mm</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
@@ -242,8 +248,17 @@ export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
           ) : (
             <>
               <p className="text-center text-xs text-gray-400 mb-5">
-                Vista previa a escala · Se imprimirán {records.length} etiqueta{records.length !== 1 ? 's' : ''}, una por página
+                Vista previa a escala · Cada etiqueta conserva su FIFO actual; la reimpresión no cambia el estado del inventario.
               </p>
+              {loadError ? (
+                <p className="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-center text-xs font-medium text-red-700">
+                  {loadError}
+                </p>
+              ) : recordsMissingFifo.length > 0 ? (
+                <p className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-center text-xs font-medium text-amber-700">
+                  {recordsMissingFifo.length} registro{recordsMissingFifo.length !== 1 ? 's' : ''} seleccionado{recordsMissingFifo.length !== 1 ? 's' : ''} no {recordsMissingFifo.length === 1 ? 'tiene' : 'tienen'} FIFO asignado. No se imprimirá con FIFO vacío; quita esos registros de la selección.
+                </p>
+              ) : null}
 
               {/* Grid de etiquetas */}
               <div className="flex flex-wrap gap-4 justify-center">
@@ -327,11 +342,12 @@ export function MultiLabelModal({ records, onClose }: MultiLabelModalProps) {
             <button
               type="button"
               onClick={handlePrint}
-              className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
+              disabled={Boolean(loadError) || recordsMissingFifo.length > 0}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               style={{ background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)', boxShadow: '0 4px 14px 0 rgba(124,58,237,0.35)' }}
             >
               <Printer className="h-4 w-4" />
-              Imprimir {records.length} Etiqueta{records.length !== 1 ? 's' : ''}
+              Reimprimir {records.length} etiqueta{records.length !== 1 ? 's' : ''}
             </button>
           </div>
         )}

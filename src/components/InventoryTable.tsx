@@ -4,7 +4,7 @@ import {
   Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes,
   Archive, Ruler, User, Calendar, Settings2, ClipboardList, Tag,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  MapPin, Lock,
+  MapPin, Lock, Printer,
 } from 'lucide-react';
 
 const PAGE_SIZE = 25;
@@ -22,6 +22,8 @@ interface InventoryTableProps {
   assignedEntryIds?: Set<number>;
   /** Mapa de entry_id → location_code para mostrar la leyenda */
   assignedEntryLocations?: Record<number, string>;
+  /** Mapa de entry_id → FIFO de la etiqueta existente */
+  fifoNumbersByEntryId?: Record<number, number>;
 }
 
 export function InventoryTable({
@@ -35,6 +37,7 @@ export function InventoryTable({
   onToggleSelectAll,
   assignedEntryIds = new Set(),
   assignedEntryLocations = {},
+  fifoNumbersByEntryId = {},
 }: InventoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -75,7 +78,7 @@ export function InventoryTable({
   const startIdx = (safePage - 1) * PAGE_SIZE;
   const pageRecords = records.slice(startIdx, startIdx + PAGE_SIZE);
   const pageIds = pageRecords.map((r) => r.id);
-  const selectablePageIds = pageIds.filter((id) => !assignedEntryIds.has(id));
+  const selectablePageIds = pageIds;
 
   const allPageSelected = selectablePageIds.length > 0 && selectablePageIds.every((id) => selectedIds.has(id));
   const somePageSelected = selectablePageIds.some((id) => selectedIds.has(id));
@@ -104,7 +107,7 @@ export function InventoryTable({
                   <input
                     id="inventory-select-all"
                     name="inventory_select_all"
-                    aria-label="Seleccionar todos los registros de esta página"
+                    aria-label="Seleccionar todos los registros de esta página para reimpresión"
                     type="checkbox"
                     checked={allPageSelected}
                     ref={(el) => {
@@ -112,7 +115,7 @@ export function InventoryTable({
                     }}
                     disabled={selectablePageIds.length === 0}
                     onChange={() => onToggleSelectAll(selectablePageIds)}
-                    title="Seleccionar todos los registros disponibles de esta página"
+                    title="Seleccionar todos los registros de esta página para reimprimir sus etiquetas"
                     className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
                   />
                 </div>
@@ -120,6 +123,7 @@ export function InventoryTable({
               <Th icon={<Hash className="h-3.5 w-3.5" />} label="Part Number" />
               <Th icon={<AlignLeft className="h-3.5 w-3.5" />} label="Descripción" />
               <Th icon={<ClipboardList className="h-3.5 w-3.5" />} label="PO" />
+              <Th icon={<Tag className="h-3.5 w-3.5" />} label="FIFO" center />
               <Th icon={<Boxes className="h-3.5 w-3.5" />} label="QTY" center />
               <Th icon={<Archive className="h-3.5 w-3.5" />} label="Cajas" center />
               <Th icon={<Ruler className="h-3.5 w-3.5" />} label="Unidad de Medida" />
@@ -134,42 +138,33 @@ export function InventoryTable({
               const isSelected = selectedIds.has(record.id);
               const isAssigned = assignedEntryIds.has(record.id);
               const locationCode = isAssigned ? (assignedEntryLocations[record.id] ?? '') : '';
+              const fifoNumber = fifoNumbersByEntryId[record.id];
 
               return (
                 <tr
                   key={record.id}
-                  className={`group transition-colors duration-150 border-b border-gray-100 last:border-0 ${
-                    isAssigned
-                      ? 'cursor-default'
-                      : 'cursor-pointer'
-                  } ${
-                    isAssigned
-                      ? 'bg-amber-50/60 hover:bg-amber-50'
-                      : isSelected
+                  className={`group cursor-pointer transition-colors duration-150 border-b border-gray-100 last:border-0 ${
+                    isSelected
                       ? 'bg-violet-50 hover:bg-violet-100/70'
+                      : isAssigned
+                      ? 'bg-amber-50/60 hover:bg-amber-50'
                       : 'hover:bg-indigo-50/40'
                   }`}
                   style={!isSelected && !isAssigned ? { background: idx % 2 === 0 ? '#ffffff' : '#fafbff' } : undefined}
-                  onClick={() => !isAssigned && onToggleSelect(record.id)}
+                  onClick={() => onToggleSelect(record.id)}
                 >
-                  {/* Checkbox — deshabilitado si está asignado */}
+                  {/* Selección permitida para imprimir/reimprimir, incluso si el registro está bloqueado */}
                   <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center">
-                      {isAssigned ? (
-                        <span title={`Asignado a locación ${locationCode}`}>
-                          <Lock className="h-4 w-4 text-amber-500" />
-                        </span>
-                      ) : (
-                        <input
-                          id={`inventory-select-${record.id}`}
-                          name={`inventory_select_${record.id}`}
-                          aria-label={`Seleccionar ${record.part_number}`}
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => onToggleSelect(record.id)}
-                          className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
-                        />
-                      )}
+                      <input
+                        id={`inventory-select-${record.id}`}
+                        name={`inventory_select_${record.id}`}
+                        aria-label={`Seleccionar ${record.part_number} para reimprimir etiqueta`}
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => onToggleSelect(record.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-violet-600 cursor-pointer accent-violet-600"
+                      />
                     </div>
                   </td>
 
@@ -210,6 +205,17 @@ export function InventoryTable({
                       </span>
                     ) : (
                       <span className="text-gray-400 italic text-sm">—</span>
+                    )}
+                  </td>
+
+                  {/* FIFO */}
+                  <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    {fifoNumber !== undefined ? (
+                      <span className="inline-flex items-center justify-center rounded-lg border border-violet-100 bg-violet-50 px-3 py-1.5 font-mono text-sm font-bold text-violet-700">
+                        #{fifoNumber}
+                      </span>
+                    ) : (
+                      <span className="text-sm italic text-gray-400">—</span>
                     )}
                   </td>
 
@@ -271,16 +277,26 @@ export function InventoryTable({
                   {/* Acciones */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                     {isAssigned ? (
-                      /* Fila bloqueada: solo muestra badge de locación */
-                      <div className="flex justify-center">
+                      /* Se conserva el bloqueo; solo se habilita reimprimir la etiqueta existente. */
+                      <div className="flex flex-wrap items-center justify-center gap-1.5">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-100 border border-amber-300 text-amber-700">
                           <Lock className="h-3 w-3" />
                           Bloqueado
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => onLabel(record)}
+                          title="Reimprimir etiqueta FIFO"
+                          aria-label={`Reimprimir etiqueta FIFO de ${record.part_number}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95"
+                        >
+                          <Printer className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Reimprimir</span>
+                        </button>
                       </div>
                     ) : (
                       <div className="flex justify-center items-center gap-1.5 flex-wrap">
-                        <button onClick={() => onLabel(record)} title="Crear etiqueta FIFO"
+                        <button onClick={() => onLabel(record)} title="Imprimir etiqueta FIFO"
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
                           <Tag className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline">Etiqueta</span>
