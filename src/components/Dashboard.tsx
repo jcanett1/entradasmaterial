@@ -102,6 +102,8 @@ export function Dashboard() {
   const [assignedEntryIds, setAssignedEntryIds] = useState<Set<number>>(new Set());
   // Mapa de entry_id → location_code para mostrar la leyenda
   const [assignedEntryLocations, setAssignedEntryLocations] = useState<Record<number, string>>({});
+  // Mapa de entry_id → FIFO para consultar e imprimir la etiqueta existente.
+  const [fifoNumbersByEntryId, setFifoNumbersByEntryId] = useState<Record<number, number>>({});
   // Entradas que ya salieron definitivamente o están fuera del inventario principal.
   const [unavailableEntryIds, setUnavailableEntryIds] = useState<Set<number>>(new Set());
   // Respaldo para salidas históricas creadas antes de guardar entry_id.
@@ -278,8 +280,11 @@ export function Dashboard() {
     const activeKitteoRows = (kitteoItemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
     const activeKitteoLocationRows = (kitteoLocationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
     const fifoToEntryId = new Map<string, number>();
+    const fifoNumbers: Record<number, number> = {};
     fifoRows.forEach(row => {
       const entryId = toEntryId(row.entry_id);
+      const fifoNumber = toEntryId(row.fifo_number);
+      if (entryId !== null && fifoNumber !== null) fifoNumbers[entryId] = fifoNumber;
       if (entryId !== null && row.part_number && row.fifo_number !== null && row.fifo_number !== undefined) {
         fifoToEntryId.set(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number), entryId);
       }
@@ -319,7 +324,7 @@ export function Dashboard() {
     setUnavailableEntryIds(unavailableIds);
     setHistoricalExitFingerprints(terminalExitRows);
     setUnavailableEntryLabels(unavailableLabels);
-    setSelectedIds(prev => new Set([...prev].filter(id => !ids.has(id) && !unavailableIds.has(id))));
+    setFifoNumbersByEntryId(fifoNumbers);
   }, []);
 
   useEffect(() => {
@@ -463,7 +468,6 @@ export function Dashboard() {
      SELECCIÓN MÚLTIPLE
   ======================= */
   const handleToggleSelect = (id: number) => {
-    if (blockedInventoryIds.has(id)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -473,8 +477,7 @@ export function Dashboard() {
   };
 
   const handleToggleSelectAll = (pageIds: number[]) => {
-    const selectablePageIds = pageIds.filter((id) => !blockedInventoryIds.has(id));
-    if (selectablePageIds.length === 0) return;
+    const selectablePageIds = pageIds;
     const allSelected = selectablePageIds.every((id) => selectedIds.has(id));
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -489,7 +492,7 @@ export function Dashboard() {
 
   const clearSelection = () => setSelectedIds(new Set());
 
-  const selectedRecords = filteredRecords.filter((r) => selectedIds.has(r.id) && !blockedInventoryIds.has(r.id));
+  const selectedRecords = filteredRecords.filter((r) => selectedIds.has(r.id));
 
   /* =======================
      EXPORT CSV
@@ -717,17 +720,17 @@ export function Dashboard() {
             </div>
 
             {/* ── Barra de selección múltiple (aparece cuando hay seleccionados) ── */}
-            {selectedIds.size > 0 && (
+            {selectedRecords.length > 0 && (
               <div
                 className="mb-4 px-5 py-3 rounded-2xl border flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm"
                 style={{ background: 'linear-gradient(90deg, #f5f3ff 0%, #ede9fe 100%)', borderColor: '#c4b5fd' }}
               >
                 <div className="flex items-center gap-2">
                   <div className="h-7 w-7 rounded-full bg-violet-600 flex items-center justify-center flex-shrink-0">
-                    <span className="text-white text-xs font-bold">{selectedIds.size}</span>
+                    <span className="text-white text-xs font-bold">{selectedRecords.length}</span>
                   </div>
                   <p className="text-sm font-semibold text-violet-800">
-                    {selectedIds.size} registro{selectedIds.size !== 1 ? 's' : ''} seleccionado{selectedIds.size !== 1 ? 's' : ''}
+                    {selectedRecords.length} registro{selectedRecords.length !== 1 ? 's' : ''} seleccionado{selectedRecords.length !== 1 ? 's' : ''} para reimpresión
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -744,7 +747,7 @@ export function Dashboard() {
                     style={{ background: 'linear-gradient(135deg, #7c3aed, #8b5cf6)', boxShadow: '0 4px 14px 0 rgba(124,58,237,0.35)' }}
                   >
                     <Tags className="h-4 w-4" />
-                    Imprimir {selectedIds.size} Etiqueta{selectedIds.size !== 1 ? 's' : ''}
+                    Reimprimir {selectedRecords.length} etiqueta{selectedRecords.length !== 1 ? 's' : ''}
                   </button>
                 </div>
               </div>
@@ -774,6 +777,7 @@ export function Dashboard() {
                 onToggleSelectAll={handleToggleSelectAll}
                 assignedEntryIds={blockedInventoryIds}
                 assignedEntryLocations={blockedInventoryLocations}
+                fifoNumbersByEntryId={fifoNumbersByEntryId}
               />
             </div>
           </>
