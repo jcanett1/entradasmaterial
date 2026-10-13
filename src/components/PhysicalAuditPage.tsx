@@ -166,6 +166,58 @@ function mergeRecountStates<T extends { id: number }>(items: T[], states: Physic
   }));
 }
 
+function buildAuditItemSnapshot(
+  referenceItems: ReferenceItem[],
+  selectedLocations: ReferenceLocation[],
+  locationIdByKey: Map<string, number>,
+  entryDescriptions: Record<number, string | null>,
+) {
+  const selectedLocationKeys = new Set(selectedLocations.map(location => `${location.source}:${location.id}`));
+  const groupedItems = new Map<string, {
+    audit_location_id: number;
+    part_number: string;
+    description: string | null;
+    expected_qty: number;
+  }>();
+
+  referenceItems.forEach(item => {
+    if (!selectedLocationKeys.has(`${item.source}:${item.location_id}`)) return;
+    const auditLocationId = locationIdByKey.get(`${item.source}:${item.location_code}`);
+    if (auditLocationId === undefined) return;
+
+    const partNumber = item.part_number.trim();
+    const key = `${auditLocationId}:${partNumber.toUpperCase()}`;
+    const entryDescription = item.entry_id === null ? null : entryDescriptions[item.entry_id];
+    const description = item.description?.trim() || entryDescription?.trim() || null;
+    const rawQuantity = Number(item.qty);
+    const quantity = Number.isFinite(rawQuantity) ? rawQuantity : 0;
+    const existing = groupedItems.get(key);
+
+    if (existing) {
+      existing.expected_qty += quantity;
+      if (!existing.description && description) existing.description = description;
+      return;
+    }
+
+    groupedItems.set(key, {
+      audit_location_id: auditLocationId,
+      part_number: partNumber,
+      description,
+      expected_qty: quantity,
+    });
+  });
+
+  return [...groupedItems.values()].map(item => ({
+    ...item,
+    // Una fila consolidada puede representar varias cajas/entradas, así que
+    // no se asocia a una etiqueta, entrada, PO o FIFO individual.
+    location_item_id: null,
+    entry_id: null,
+    po: null,
+    fifo_number: null,
+  }));
+}
+
 async function fetchAllRows<T>(table: string, select: string) {
   const rows: T[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -485,8 +537,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const requestRecount = async (item: PhysicalAuditSupervisorItem) => {
     const location = auditLocations.find(row => row.id === item.audit_location_id);
     if (!location || item.recount_requested) return;
-    const poFifo = `${item.po || 'sin PO'}${item.fifo_number !== null ? ` · FIFO ${item.fifo_number}` : ''}`;
-    if (!window.confirm(`¿Solicitar recuento únicamente de ${item.part_number} (${poFifo}) en la locación ${location.location_code}? Los demás números de parte no cambiarán.`)) return;
+    if (!window.confirm(`¿Solicitar recuento únicamente de ${item.part_number} en la locación ${location.location_code}? Los demás números de parte no cambiarán.`)) return;
 
     setSaving(true);
     try {
@@ -621,9 +672,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       })).filter(location => location.contador_user_id);
       await insertInChunks('physical_audit_locations', locationRows);
 
-      const selectedReferenceItems = referenceItems.filter(item => selectedLocations.some(location => location.source === item.source && location.id === item.location_id));
-
-      if (selectedReferenceItems.length > 0) {
+      if (referenceItems.some(item => selectedLocations.some(location => location.source === item.source && location.id === item.location_id))) {
         // Reemplazar audit_location_id usando el código de locación recién insertado.
         const { data: insertedLocations, error: insertedLocationsError } = await supabase
           .from('physical_audit_locations')
@@ -631,20 +680,8 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
           .eq('audit_id', createdAuditId);
         if (insertedLocationsError) throw insertedLocationsError;
         const locationIdByKey = new Map((insertedLocations ?? []).map(row => [`${row.source}:${row.location_code}`, row.id]));
-        const finalItems = referenceItems
-          .filter(item => selectedLocations.some(location => location.source === item.source && location.id === item.location_id))
-          .map(item => ({
-            audit_location_id: locationIdByKey.get(`${item.source}:${item.location_code}`),
-            location_item_id: item.source === 'normal' ? item.id : null,
-            entry_id: item.entry_id,
-            part_number: item.part_number,
-            description: item.description ?? (item.entry_id ? (entryDescriptions[item.entry_id] ?? null) : null),
-            po: item.po,
-            fifo_number: item.fifo_number,
-            expected_qty: item.qty ?? 0,
-          }))
-          .filter(item => item.audit_location_id);
-        await insertInChunks('physical_audit_items', finalItems);
+        const finalItems = buildAuditItemSnapshot(referenceItems, selectedLocations, locationIdByKey, entryDescriptions);
+        if (finalItems.length > 0) await insertInChunks('physical_audit_items', finalItems);
       }
 
       const { error: startError } = await supabase
@@ -852,7 +889,6 @@ function CounterSessionMenu({ userName, signOut }: { userName: string; signOut: 
 
 function CounterLocationCard({ location, items, allItems, countInputs, setCountInputs, submitCount, completeLocation, saving }: { location: PhysicalAuditLocation; items: PhysicalAuditCounterItem[]; allItems: PhysicalAuditCounterItem[]; countInputs: Record<number, string>; setCountInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>; submitCount: (item: PhysicalAuditCounterItem) => Promise<void>; completeLocation: (location: PhysicalAuditLocation) => Promise<void>; saving: boolean }) {
   const allCounted = allItems.every(item => item.counted);
-  const formatPoFifo = (item: PhysicalAuditCounterItem) => `${item.po || '—'}${item.fifo_number !== null ? ` · FIFO ${item.fifo_number}` : ''}`;
   const countInput = (item: PhysicalAuditCounterItem) => <input type="number" min="0" placeholder="Cantidad" value={countInputs[item.id] ?? (item.found_qty === null ? '' : String(item.found_qty))} onChange={event => setCountInputs(current => ({ ...current, [item.id]: event.target.value }))} disabled={item.counted || saving} className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-center font-bold focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" />;
   const registerButton = (item: PhysicalAuditCounterItem, compact = false) => <button type="button" disabled={item.counted || saving} onClick={() => void submitCount(item)} className={`shrink-0 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${compact ? 'min-w-[7.5rem]' : ''}`}>{item.counted ? 'Guardado' : item.recount_requested ? 'Registrar recuento' : 'Registrar'}</button>;
 
@@ -873,18 +909,14 @@ function CounterLocationCard({ location, items, allItems, countInputs, setCountI
               <div className="min-w-0 flex-1"><p className="break-words font-mono text-xs font-black text-indigo-700">{item.part_number}</p><p className="mt-1 break-words text-xs leading-5 text-gray-600">{item.description || 'Sin descripción'}</p></div>
               <StatusBadge status={itemDisplayStatus(item)} />
             </div>
-            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 border-t border-gray-200 pt-3">
-              <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-wide text-gray-400">PO / FIFO</p><p className="mt-1 break-words text-xs font-bold text-gray-700">{formatPoFifo(item)}</p></div>
-              <div className="text-right"><p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Actual</p><p className="mt-1 font-black text-gray-800">{item.found_qty ?? 'Pendiente'}</p></div>
-            </div>
             <div className="mt-3 flex items-end gap-2"><label className="min-w-0 flex-1"><span className="text-[10px] font-black uppercase tracking-wide text-gray-500">Cantidad encontrada</span>{countInput(item)}</label>{registerButton(item, true)}</div>
           </div>)}
         </div>
 
         <div className="hidden overflow-x-auto lg:block">
           <table className="w-full table-fixed text-left text-sm">
-            <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="w-[18%] px-3 py-3 xl:px-5">Número de parte</th><th className="w-[25%] px-3 py-3 xl:px-5">Descripción</th><th className="w-[17%] px-3 py-3 xl:px-5">PO / FIFO</th><th className="w-[16%] px-3 py-3 xl:px-5">Cantidad encontrada</th><th className="w-[14%] px-3 py-3 xl:px-5">Acción</th><th className="w-[10%] px-3 py-3 xl:px-5">Estado</th></tr></thead>
-            <tbody>{items.map(item => <tr key={item.id} className="border-t border-gray-100"><td className="break-words px-3 py-3 font-mono text-xs font-bold text-indigo-700 xl:px-5 xl:py-4">{item.part_number}</td><td className="break-words px-3 py-3 text-gray-700 xl:px-5 xl:py-4">{item.description || 'Sin descripción'}</td><td className="break-words px-3 py-3 text-xs text-gray-500 xl:px-5 xl:py-4">{formatPoFifo(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4">{countInput(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4">{registerButton(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4"><StatusBadge status={itemDisplayStatus(item)} /></td></tr>)}</tbody>
+            <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="w-[22%] px-3 py-3 xl:px-5">Número de parte</th><th className="w-[32%] px-3 py-3 xl:px-5">Descripción</th><th className="w-[22%] px-3 py-3 xl:px-5">Cantidad encontrada</th><th className="w-[14%] px-3 py-3 xl:px-5">Acción</th><th className="w-[10%] px-3 py-3 xl:px-5">Estado</th></tr></thead>
+            <tbody>{items.map(item => <tr key={item.id} className="border-t border-gray-100"><td className="break-words px-3 py-3 font-mono text-xs font-bold text-indigo-700 xl:px-5 xl:py-4">{item.part_number}</td><td className="break-words px-3 py-3 text-gray-700 xl:px-5 xl:py-4">{item.description || 'Sin descripción'}</td><td className="px-3 py-3 xl:px-5 xl:py-4">{countInput(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4">{registerButton(item)}</td><td className="px-3 py-3 xl:px-5 xl:py-4"><StatusBadge status={itemDisplayStatus(item)} /></td></tr>)}</tbody>
           </table>
         </div>
       </> : <div className="px-4 py-5 text-sm text-gray-500 sm:px-5">Confirma esta locación como revisada; no hay números de parte que capturar.</div>}
@@ -939,7 +971,7 @@ function AuditResultDetailModal({ item, location, audit, profiles, saving, onClo
   const capturedBy = nameFor(item.counted_by ?? item.last_counted_by);
   const recountRequested = Boolean(item.recount_requested);
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`Detalle de ${item.part_number}`}><div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5"><div><p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Detalle del resultado</p><h3 className="mt-1 font-mono text-xl font-black text-gray-900">{item.part_number}</h3><p className="mt-1 text-sm text-gray-500">{item.description || 'Sin descripción'}</p></div><button type="button" onClick={onClose} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label="Cerrar detalle"><X className="h-5 w-5" /></button></div><div className="space-y-5 p-6"><div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wide text-indigo-600">{location.location_code} · Rack {location.rack}</p><p className="mt-1 text-xs text-indigo-700">Estado de la locación</p></div><StatusBadge status={locationDisplayStatus(location)} /></div><div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3"><span className="text-xs font-bold text-gray-500">Estado del número de parte</span><StatusBadge status={itemDisplayStatus(item)} /></div><div className="grid grid-cols-2 gap-4 rounded-xl border border-gray-100 p-4 text-sm sm:grid-cols-3"><Detail label="Sistema" value={String(item.expected_qty)} /><Detail label="Físico" value={item.found_qty === null ? 'Pendiente' : String(item.found_qty)} /><Detail label="Diferencia" value={item.difference_qty === null ? '—' : item.difference_qty > 0 ? `+${item.difference_qty}` : String(item.difference_qty)} /><Detail label="PO / FIFO" value={`${item.po || '—'}${item.fifo_number !== null ? ` · FIFO ${item.fifo_number}` : ''}`} /><Detail label="Capturado" value={formatDate(item.counted_at || item.last_counted_at)} /><Detail label="Capturado por" value={capturedBy} /><Detail label="Auditoría registrada por" value={nameFor(audit?.created_by)} /></div>{recountRequested ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><strong>Recuento solicitado.</strong> Solo este número de parte volvió a la lista del contador; los demás artículos de la locación no cambiaron.</div> : <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center"><div><p className="font-black text-amber-900">¿Necesitas verificar este número de parte?</p><p className="mt-1 text-xs text-amber-800">Se reiniciará únicamente este artículo con su PO/FIFO y regresará a la lista del contador.</p></div><button type="button" disabled={saving || item.found_qty === null} onClick={() => void onRequestRecount(item)} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="h-4 w-4" />RECONTAR ESTE NÚMERO DE PARTE</button></div>}</div><div className="flex justify-end border-t border-gray-100 px-6 py-4"><button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50">Cerrar</button></div></div></div>;
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`Detalle de ${item.part_number}`}><div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5"><div><p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Detalle del resultado</p><h3 className="mt-1 font-mono text-xl font-black text-gray-900">{item.part_number}</h3><p className="mt-1 text-sm text-gray-500">{item.description || 'Sin descripción'}</p></div><button type="button" onClick={onClose} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label="Cerrar detalle"><X className="h-5 w-5" /></button></div><div className="space-y-5 p-6"><div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3"><div><p className="text-xs font-bold uppercase tracking-wide text-indigo-600">{location.location_code} · Rack {location.rack}</p><p className="mt-1 text-xs text-indigo-700">Estado de la locación</p></div><StatusBadge status={locationDisplayStatus(location)} /></div><div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3"><span className="text-xs font-bold text-gray-500">Estado del número de parte</span><StatusBadge status={itemDisplayStatus(item)} /></div><div className="grid grid-cols-2 gap-4 rounded-xl border border-gray-100 p-4 text-sm sm:grid-cols-3"><Detail label="Sistema" value={String(item.expected_qty)} /><Detail label="Físico" value={item.found_qty === null ? 'Pendiente' : String(item.found_qty)} /><Detail label="Diferencia" value={item.difference_qty === null ? '—' : item.difference_qty > 0 ? `+${item.difference_qty}` : String(item.difference_qty)} /><Detail label="Capturado" value={formatDate(item.counted_at || item.last_counted_at)} /><Detail label="Capturado por" value={capturedBy} /><Detail label="Auditoría registrada por" value={nameFor(audit?.created_by)} /></div>{recountRequested ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><strong>Recuento solicitado.</strong> Solo este número de parte volvió a la lista del contador; los demás artículos de la locación no cambiaron.</div> : <div className="flex flex-col justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center"><div><p className="font-black text-amber-900">¿Necesitas verificar este número de parte?</p><p className="mt-1 text-xs text-amber-800">Este número de parte volverá a la lista del contador para capturarse de nuevo.</p></div><button type="button" disabled={saving || item.found_qty === null} onClick={() => void onRequestRecount(item)} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className="h-4 w-4" />RECONTAR ESTE NÚMERO DE PARTE</button></div>}</div><div className="flex justify-end border-t border-gray-100 px-6 py-4"><button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50">Cerrar</button></div></div></div>;
 }
 
 function FindingsView({ findings, onReview }: { findings: PhysicalAuditFinding[]; onReview: (finding: PhysicalAuditFinding, status: 'validado' | 'rechazado') => Promise<void> }) {
