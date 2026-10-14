@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS public.location_items (
 CREATE INDEX IF NOT EXISTS idx_location_items_location_id ON public.location_items USING btree (location_id) TABLESPACE pg_default;
 CREATE INDEX IF NOT EXISTS idx_location_items_part_number ON public.location_items USING btree (part_number) TABLESPACE pg_default;
 CREATE INDEX IF NOT EXISTS idx_location_items_entry_id    ON public.location_items USING btree (entry_id)    TABLESPACE pg_default;
+CREATE INDEX IF NOT EXISTS idx_location_items_fifo_number ON public.location_items USING btree (fifo_number) TABLESPACE pg_default;
 
 -- Row Level Security
 ALTER TABLE public.location_items ENABLE ROW LEVEL SECURITY;

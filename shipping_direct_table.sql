@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.shipping_direct (
   description         text          NULL,
   qty                 integer       NOT NULL DEFAULT 0,
   boxes               integer       NULL,
+  fifo_number         integer       NULL,
   po                  varchar(100)  NULL,
   location_code       varchar(20)   NULL,
   location_id         integer       NULL REFERENCES public.locations(id) ON DELETE SET NULL,
@@ -22,6 +23,8 @@ CREATE TABLE IF NOT EXISTS public.shipping_direct (
   exited_at           timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   reviewed_at         timestamp     NULL,
   reviewed_by         varchar(100)  NULL,
+  returned_at         timestamp     NULL,
+  returned_by         varchar(100)  NULL,
   CONSTRAINT shipping_direct_pkey PRIMARY KEY (id),
   CONSTRAINT shipping_direct_source_transfer_unique UNIQUE (source_transfer_id)
 ) TABLESPACE pg_default;
@@ -30,10 +33,14 @@ CREATE INDEX IF NOT EXISTS idx_shipping_direct_part_number
   ON public.shipping_direct (part_number);
 CREATE INDEX IF NOT EXISTS idx_shipping_direct_exited_at
   ON public.shipping_direct (exited_at);
+CREATE INDEX IF NOT EXISTS idx_shipping_direct_fifo_number
+  ON public.shipping_direct (fifo_number);
 CREATE INDEX IF NOT EXISTS idx_shipping_direct_location_code
   ON public.shipping_direct (location_code);
 
 ALTER TABLE public.shipping_direct ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS shipping_direct_update_authenticated ON public.shipping_direct;
 
 DO $$
 BEGIN
@@ -61,10 +68,26 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public'
       AND tablename = 'shipping_direct'
-      AND policyname = 'shipping_direct_update_authenticated'
+      AND policyname = 'shipping_direct_update_managers'
   ) THEN
-    CREATE POLICY shipping_direct_update_authenticated
-      ON public.shipping_direct FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+    CREATE POLICY shipping_direct_update_managers
+      ON public.shipping_direct FOR UPDATE TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM public.usuarioalmacen AS ua
+          WHERE ua.user_id = (SELECT auth.uid())
+            AND ua.activo = true
+            AND ua.rol IN ('admin', 'supervisor')
+        )
+      )
+      WITH CHECK (
+        EXISTS (
+          SELECT 1 FROM public.usuarioalmacen AS ua
+          WHERE ua.user_id = (SELECT auth.uid())
+            AND ua.activo = true
+            AND ua.rol IN ('admin', 'supervisor')
+        )
+      );
   END IF;
 
   IF NOT EXISTS (

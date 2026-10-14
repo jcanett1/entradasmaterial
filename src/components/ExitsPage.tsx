@@ -5,7 +5,7 @@ import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Archive, ArrowRightFromLine, CheckCircle2, ListChecks,
-  History, Tag,
+  History, Tag, Undo2,
 } from 'lucide-react';
 
 interface Exit {
@@ -34,12 +34,15 @@ interface ShippingDirectRecord {
   po: string | null;
   entry_id: number | null;
   fifo_number: number | null;
+  location_id: number | null;
   location_code: string | null;
   destination: string;
   registered_by: string | null;
   exited_at: string;
   reviewed_at: string | null;
   reviewed_by: string | null;
+  returned_at: string | null;
+  returned_by: string | null;
 }
 
 interface EntryOption {
@@ -101,7 +104,7 @@ const fetchFifoByEntryIds = async (entryIds: number[]) => {
 };
 
 export function ExitsPage() {
-  const { userProfile } = useAuth();
+  const { userProfile, isManager } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
 
   const [exits, setExits] = useState<Exit[]>([]);
@@ -161,6 +164,8 @@ export function ExitsPage() {
   const [shippingDirectHistoryRefreshing, setShippingDirectHistoryRefreshing] = useState(false);
   const [shippingDirectHistorySearch, setShippingDirectHistorySearch] = useState('');
   const [shippingDirectHistoryError, setShippingDirectHistoryError] = useState<string | null>(null);
+  const [shippingDirectReturnSavingId, setShippingDirectReturnSavingId] = useState<number | null>(null);
+  const [shippingDirectReviewSavingId, setShippingDirectReviewSavingId] = useState<number | null>(null);
 
   useEffect(() => { fetchExits(); }, []);
 
@@ -196,7 +201,7 @@ export function ExitsPage() {
     setShippingDirectHistoryError(null);
     const { data, error } = await supabase
       .from('shipping_direct')
-      .select('id, source_transfer_id, entry_id, part_number, description, qty, boxes, po, location_code, destination, registered_by, exited_at, reviewed_at, reviewed_by')
+      .select('id, source_transfer_id, entry_id, part_number, description, qty, boxes, fifo_number, po, location_code, location_id, destination, registered_by, exited_at, reviewed_at, reviewed_by, returned_at, returned_by')
       .order('exited_at', { ascending: false });
 
     if (error) {
@@ -204,12 +209,12 @@ export function ExitsPage() {
       setShippingDirectHistoryError(`No se pudo cargar el historial: ${error.message}`);
       setShippingDirectHistory([]);
     } else {
-      const historyRows = (data as Omit<ShippingDirectRecord, 'fifo_number'>[]) ?? [];
+      const historyRows = (data as ShippingDirectRecord[]) ?? [];
       const entryIds = Array.from(new Set(historyRows.flatMap(record => record.entry_id === null ? [] : [record.entry_id])));
       const fifoByEntryId = await fetchFifoByEntryIds(entryIds);
       setShippingDirectHistory(historyRows.map(record => ({
         ...record,
-        fifo_number: record.entry_id === null ? null : (fifoByEntryId.get(record.entry_id) ?? null),
+        fifo_number: record.fifo_number ?? (record.entry_id === null ? null : (fifoByEntryId.get(record.entry_id) ?? null)),
       })));
     }
 
@@ -221,6 +226,45 @@ export function ExitsPage() {
     setShippingDirectHistorySearch('');
     setShippingDirectHistoryOpen(true);
     void fetchShippingDirectHistory();
+  };
+
+  const handleReturnShippingDirect = async (record: ShippingDirectRecord) => {
+    if (record.returned_at || (record.location_id === null && !record.location_code)) return;
+    if (!confirm(`¿Regresar ${record.part_number} a la locación original ${record.location_code ?? ''}?`)) return;
+
+    setShippingDirectReturnSavingId(record.id);
+    try {
+      const { error } = await supabase.rpc('return_shipping_direct_to_location', {
+        p_shipping_direct_id: record.id,
+      });
+      if (error) throw new Error(error.message);
+
+      await Promise.all([fetchShippingDirectHistory(), fetchExits()]);
+    } catch (error) {
+      console.error('Error regresando material desde Shipping Direct:', error);
+      alert(`No se pudo regresar el material a su locación original: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    } finally {
+      setShippingDirectReturnSavingId(null);
+    }
+  };
+
+  const handleReviewShippingDirect = async (record: ShippingDirectRecord) => {
+    if (!isManager || record.reviewed_at) return;
+
+    setShippingDirectReviewSavingId(record.id);
+    try {
+      const { error } = await supabase.rpc('mark_shipping_direct_reviewed', {
+        p_shipping_direct_id: record.id,
+      });
+      if (error) throw new Error(error.message);
+
+      await fetchShippingDirectHistory();
+    } catch (error) {
+      console.error('Error marcando salida de Shipping Direct como revisada:', error);
+      alert(`No se pudo marcar como revisado: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    } finally {
+      setShippingDirectReviewSavingId(null);
+    }
   };
 
   const fetchEntries = useCallback(async (term: string) => {
@@ -563,6 +607,8 @@ export function ExitsPage() {
       record.fifo_number?.toString() ?? '',
       record.location_code ?? '',
       record.registered_by ?? '',
+      record.reviewed_by ?? '',
+      record.returned_by ?? '',
       record.destination,
     ].join(' ').toLowerCase().includes(term);
   });
@@ -597,6 +643,7 @@ export function ExitsPage() {
         description: exit.description,
         qty: exit.qty,
         boxes: exit.boxes,
+        fifo_number: exit.fifo_number ?? null,
         po: exit.po,
         location_code: exit.location_code,
         location_id: exit.location_id ?? null,
@@ -1092,7 +1139,7 @@ export function ExitsPage() {
                   <History className="h-5 w-5 text-indigo-600" />
                   Historial de transferencias a Shipping Direct
                 </h2>
-                <p className="mt-1 text-xs text-gray-500">Consulta de solo lectura. No se pueden editar ni eliminar registros.</p>
+                <p className="mt-1 text-xs text-gray-500">No se editan ni eliminan registros. Puedes regresar una salida a su locación original y marcarla como revisada.</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1156,7 +1203,7 @@ export function ExitsPage() {
                 </div>
               ) : (
                 <div className="max-h-[48vh] overflow-auto rounded-xl border border-gray-200">
-                  <table className="w-full min-w-[1080px] border-collapse">
+                  <table className="w-full min-w-[1320px] border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
                         {[
@@ -1170,6 +1217,8 @@ export function ExitsPage() {
                           { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado por' },
                           { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Fecha de salida' },
                           { icon: <Hash className="h-3.5 w-3.5" />, label: 'ID transferencia' },
+                          { icon: <CheckCircle2 className="h-3.5 w-3.5" />, label: 'Revisión', center: true },
+                          { icon: <Undo2 className="h-3.5 w-3.5" />, label: 'Acción', center: true },
                         ].map(header => (
                           <th key={header.label} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider text-gray-500 ${header.center ? 'text-center' : 'text-left'}`}>
                             <div className={`flex items-center gap-1.5 ${header.center ? 'justify-center' : ''}`}>
@@ -1211,6 +1260,52 @@ export function ExitsPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3 font-mono text-xs text-gray-500">#{record.source_transfer_id}</td>
+                          <td className="px-4 py-3 text-center">
+                            {record.reviewed_at ? (
+                              <span
+                                className="inline-flex flex-col items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700"
+                                title={record.reviewed_by ? `Revisado por ${record.reviewed_by}` : 'Registro revisado'}
+                              >
+                                <span>Revisado</span>
+                                {record.reviewed_by && <span className="mt-0.5 max-w-28 truncate text-[10px] font-medium">{record.reviewed_by}</span>}
+                              </span>
+                            ) : isManager ? (
+                              <button
+                                type="button"
+                                onClick={() => void handleReviewShippingDirect(record)}
+                                disabled={shippingDirectReviewSavingId !== null}
+                                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-50"
+                              >
+                                {shippingDirectReviewSavingId === record.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                                Marcar revisado
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-400">Pendiente</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {record.returned_at ? (
+                              <span
+                                className="inline-flex flex-col items-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-bold text-blue-700"
+                                title={`Regresado${record.returned_by ? ` por ${record.returned_by}` : ''}`}
+                              >
+                                Regresado
+                              </span>
+                            ) : record.location_id === null && !record.location_code ? (
+                              <span className="text-xs italic text-gray-400" title="Este registro no conserva su locación original">Sin locación</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleReturnShippingDirect(record)}
+                                disabled={shippingDirectReturnSavingId !== null}
+                                title={`Regresar ${record.part_number} a ${record.location_code ?? 'su locación original'}`}
+                                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-50"
+                              >
+                                {shippingDirectReturnSavingId === record.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                                {shippingDirectReturnSavingId === record.id ? 'Regresando…' : 'Liberar / Regresar'}
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
