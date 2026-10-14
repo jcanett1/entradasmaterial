@@ -6,7 +6,7 @@ import {
   RefreshCw, LogOut, Hash, Boxes, ClipboardList, Calendar,
   User, Archive, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, CheckCircle2, AlertCircle,
-  History, ArrowRightFromLine, Trash2, ListChecks, ClipboardCheck,
+  History, ArrowRightFromLine, Trash2, ListChecks, ClipboardCheck, Tag,
 } from 'lucide-react';
 
 /* ── Tipos ── */
@@ -67,6 +67,8 @@ interface KitteoExit {
   registered_by: string | null;
   exited_at: string;
 }
+
+type KitteoExitWithFifo = KitteoExit & { fifo_number: number | null };
 
 interface ExitTarget {
   location: KitteoLocation;
@@ -209,7 +211,7 @@ export function KitteoPage() {
   const [bulkSaving, setBulkSaving] = useState(false);
 
   /* ── Estado historial ── */
-  const [historial, setHistorial] = useState<KitteoExit[]>([]);
+  const [historial, setHistorial] = useState<KitteoExitWithFifo[]>([]);
   const [histLoading, setHistLoading] = useState(false);
   const [histRefreshing, setHistRefreshing] = useState(false);
   const [histSearch, setHistSearch] = useState('');
@@ -649,7 +651,31 @@ export function KitteoPage() {
       .from('kitteo_exits')
       .select('*')
       .order('exited_at', { ascending: false });
-    setHistorial((data as KitteoExit[]) ?? []);
+    const exits = (data as KitteoExit[]) ?? [];
+    const entryIds = Array.from(new Set(exits.flatMap(exit => {
+      const entryId = toNumberOrNull(exit.entry_id);
+      return entryId === null ? [] : [entryId];
+    })));
+    const fifoByEntryId = new Map<number, number | null>();
+    if (entryIds.length > 0) {
+      const { data: fifoData, error: fifoError } = await supabase
+        .from('fifo_labels')
+        .select('entry_id, fifo_number')
+        .in('entry_id', entryIds);
+      if (fifoError) console.warn('No se pudieron cargar los FIFO del historial KITTEO:', fifoError);
+      ((fifoData ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
+        const entryId = toNumberOrNull(row.entry_id);
+        if (entryId === null || fifoByEntryId.has(entryId)) return;
+        fifoByEntryId.set(entryId, toNumberOrNull(row.fifo_number));
+      });
+    }
+    setHistorial(exits.map(exit => {
+      const entryId = toNumberOrNull(exit.entry_id);
+      return {
+        ...exit,
+        fifo_number: entryId === null ? null : (fifoByEntryId.get(entryId) ?? null),
+      };
+    }));
     setHistLoading(false);
     setTimeout(() => setHistRefreshing(false), 500);
   }, []);
@@ -1020,6 +1046,7 @@ export function KitteoPage() {
       && exitedTimestamp <= histToTimestamp;
     const matchText = !term ||
       h.part_number.toLowerCase().includes(term) ||
+      (h.fifo_number?.toString() ?? '').includes(term) ||
       h.location_code.toLowerCase().includes(term) ||
       (h.po ?? '').toLowerCase().includes(term) ||
       (h.description ?? '').toLowerCase().includes(term) ||
@@ -1432,7 +1459,7 @@ export function KitteoPage() {
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
               <input type="text" value={histSearch} onChange={e => { setHistSearch(e.target.value); setHistPage(1); }}
-                placeholder="Buscar part number o locación..."
+                placeholder="Buscar part number, FIFO o locación..."
                 className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white w-full" />
             </div>
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-gray-500">
@@ -1482,11 +1509,12 @@ export function KitteoPage() {
             <>
               <div className="rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
+                  <table className="w-full min-w-[980px] border-collapse">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
                         {[
                           { icon: <Hash className="h-3.5 w-3.5" />, label: 'Part Number' },
+                          { icon: <Tag className="h-3.5 w-3.5" />, label: 'FIFO', center: true },
                           { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Locación' },
                           { icon: <Hash className="h-3.5 w-3.5" />, label: 'Rack', center: true },
                           { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
@@ -1514,6 +1542,12 @@ export function KitteoPage() {
                                 {h.part_number}
                               </span>
                               {h.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[150px]">{h.description}</p>}
+                            </td>
+                            {/* FIFO */}
+                            <td className="px-4 py-3 text-center">
+                              {h.fifo_number !== null ? (
+                                <span className="inline-flex rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-1 font-mono text-xs font-bold text-violet-700">#{h.fifo_number}</span>
+                              ) : <span className="text-gray-400 italic text-sm">—</span>}
                             </td>
                             {/* Locación */}
                             <td className="px-4 py-3">
@@ -1571,7 +1605,7 @@ export function KitteoPage() {
                     {pageHist.length > 0 && (
                       <tfoot>
                         <tr className="bg-gray-50 border-t-2 border-gray-200">
-                          <td colSpan={3} className="px-4 py-3">
+                          <td colSpan={4} className="px-4 py-3">
                             <span className="text-xs font-bold text-gray-500 uppercase">Subtotal página</span>
                           </td>
                           <td className="px-4 py-3 text-center">
