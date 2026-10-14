@@ -25,6 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_locations_status ON public.locations(status);
 --  Racks D, E     → 42 locaciones cada uno
 --  Rack  F        → 21 locaciones
 --  Rack  G        → 32 locaciones
+--  Rack  H        → 8 locaciones
 -- ============================================================
 
 -- Rack A (48 locaciones)
@@ -101,6 +102,12 @@ INSERT INTO public.locations (rack, location_code) VALUES
 ('G','G-19'),('G','G-20'),('G','G-21'),('G','G-22'),('G','G-23'),('G','G-24'),
 ('G','G-25'),('G','G-26'),('G','G-27'),('G','G-28'),('G','G-29'),('G','G-30'),
 ('G','G-31'),('G','G-32')
+ON CONFLICT (location_code) DO NOTHING;
+
+-- Rack H (8 locaciones)
+INSERT INTO public.locations (rack, location_code) VALUES
+('H','H-01'),('H','H-02'),('H','H-03'),('H','H-04'),
+('H','H-05'),('H','H-06'),('H','H-07'),('H','H-08')
 ON CONFLICT (location_code) DO NOTHING;
 
 -- ============================================================

@@ -243,6 +243,7 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
   E: { bg: 'bg-teal-50',    border: 'border-teal-200',    text: 'text-teal-700',    badge: 'bg-teal-600' },
   F: { bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-700',   badge: 'bg-amber-500' },
   G: { bg: 'bg-rose-50',    border: 'border-rose-200',    text: 'text-rose-700',    badge: 'bg-rose-600' },
+  H: { bg: 'bg-cyan-50',    border: 'border-cyan-200',    text: 'text-cyan-700',    badge: 'bg-cyan-600' },
 };
 
 /* ════════════════════════════════════════════════════
@@ -284,7 +285,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [selectedDetailItemIds, setSelectedDetailItemIds] = useState<Set<number>>(new Set());
   const [detailSearchTerm, setDetailSearchTerm] = useState('');
 
-  const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
+  const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
   /* ── Fetch ── */
   const hydrateLocationBoxes = useCallback(async (sourceLocations: Location[]) => {
@@ -1357,7 +1358,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       {/* Grid de locaciones */}
       {selectedRack === 'ALL' ? (
         <div className="space-y-6">
-          {['A','B','C','D','E','F','G'].map(rack => {
+          {['A','B','C','D','E','F','G','H'].map(rack => {
             const rackLocs = filtered.filter(l => l.rack === rack);
             if (rackLocs.length === 0) return null;
             const c = RACK_COLORS[rack];
