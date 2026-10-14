@@ -48,11 +48,6 @@ const getInventoryAssignmentKey = (
   return `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}|${fifo ?? 'none'}`;
 };
 
-const getInventoryPartPoKey = (
-  partNumber: string | null | undefined,
-  po: string | null | undefined,
-) => `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}`;
-
 type HistoricalExitFingerprint = {
   entry_id: number | null;
   part_number: string | null;
@@ -62,17 +57,9 @@ type HistoricalExitFingerprint = {
   exited_at: string | null;
 };
 
+// Un registro KITTEO solo por número de parte es válido, pero no identifica una entrada concreta.
 const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) => {
-  if (exit.entry_id !== null) return entry.id === exit.entry_id;
-  if (getInventoryPartPoKey(entry.part_number, entry.po) !== getInventoryPartPoKey(exit.part_number, exit.po)) return false;
-
-  const entryTime = Date.parse(entry.registered_at);
-  const exitTime = exit.exited_at ? Date.parse(exit.exited_at) : Number.NaN;
-  if (Number.isNaN(entryTime) || Number.isNaN(exitTime) || entryTime > exitTime) return false;
-
-  const qtyMatches = exit.qty === null || entry.total_units === exit.qty;
-  const boxesMatches = exit.boxes === null || entry.total_boxes === exit.boxes;
-  return qtyMatches && boxesMatches;
+  return exit.entry_id !== null && entry.id === exit.entry_id;
 };
 
 export function Dashboard() {
@@ -392,19 +379,22 @@ export function Dashboard() {
     calculateStats();
   }, [filterRecords, calculateStats]);
 
-  const historicalUnavailableIds = new Set(
+  const confirmedHistoricalExitIds = new Set(
     records
       .filter(record => historicalExitFingerprints.some(exit => matchesHistoricalExit(record, exit)))
       .map(record => record.id),
   );
-  const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...historicalUnavailableIds]);
-  const blockedInventoryLocations = {
-    ...assignedEntryLocations,
-    ...Object.fromEntries(
-      [...new Set([...unavailableEntryIds, ...historicalUnavailableIds])]
-        .map(id => [id, unavailableEntryLabels[id] ?? 'Salida definitiva']),
-    ),
-  };
+  const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...confirmedHistoricalExitIds]);
+  const blockedInventoryLocations = Object.fromEntries(
+    [...blockedInventoryIds].map(id => [
+      id,
+      assignedEntryLocations[id]
+        ?? unavailableEntryLabels[id]
+        ?? (confirmedHistoricalExitIds.has(id)
+          ? 'Salida definitiva'
+          : 'Asignado'),
+    ]),
+  );
 
   /* =======================
      CREATE / UPDATE

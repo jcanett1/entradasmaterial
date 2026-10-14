@@ -587,6 +587,10 @@ export function ExitsPage() {
   const handleShippingDirectSave = async () => {
     const selected = exits.filter(exit => shippingDirectSelectedIds.includes(exit.id));
     if (selected.length === 0) return;
+    if (selected.some(exit => exit.entry_id === null || !Number.isInteger(exit.entry_id) || exit.entry_id <= 0)) {
+      alert('No se puede registrar la salida: una o más transferencias no tienen entry_id exacto. Revisa su FIFO y la entrada vinculada antes de continuar.');
+      return;
+    }
     if (!confirm(`¿Registrar ${selected.length} salida(s) definitiva(s) a Shipping Direct?`)) return;
 
     setShippingDirectSaving(true);
