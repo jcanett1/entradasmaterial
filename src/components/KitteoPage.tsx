@@ -119,11 +119,14 @@ interface KitteoPrecountRecord {
 type NewKitteoExit = Omit<KitteoExit, 'id'>;
 
 const insertKitteoExits = async (rows: NewKitteoExit[]) => {
-  let { error } = await supabase.from('kitteo_exits').insert(rows);
-  if (error && /entry_id|column .* does not exist/i.test(error.message)) {
-    const legacyRows = rows.map(({ entry_id: _entryId, ...row }) => row);
-    ({ error } = await supabase.from('kitteo_exits').insert(legacyRows));
+  const hasMissingEntryId = rows.some(({ entry_id }) =>
+    entry_id === null || !Number.isInteger(entry_id) || entry_id <= 0,
+  );
+  if (hasMissingEntryId) {
+    return new Error('No se puede registrar la salida KITTEO: cada caja debe tener un entry_id exacto. Revisa la asignación antes de intentar la salida.');
   }
+
+  const { error } = await supabase.from('kitteo_exits').insert(rows);
   return error;
 };
 

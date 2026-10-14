@@ -63,7 +63,11 @@ type HistoricalExitFingerprint = {
 };
 
 const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) => {
-  if (exit.entry_id !== null) return entry.id === exit.entry_id;
+  return exit.entry_id !== null && entry.id === exit.entry_id;
+};
+
+const matchesUnlinkedHistoricalExitCandidate = (entry: Entry, exit: HistoricalExitFingerprint) => {
+  if (exit.entry_id !== null) return false;
   if (getInventoryPartPoKey(entry.part_number, entry.po) !== getInventoryPartPoKey(exit.part_number, exit.po)) return false;
 
   const entryTime = Date.parse(entry.registered_at);
@@ -359,7 +363,8 @@ export function Dashboard() {
     const inventoryUnavailableIds = new Set([...assignedEntryIds, ...unavailableEntryIds]);
     setFilteredRecords(records.filter((r) => {
       const hasHistoricalExit = historicalExitFingerprints.some(exit => matchesHistoricalExit(r, exit));
-      const isUnavailable = inventoryUnavailableIds.has(r.id) || hasHistoricalExit;
+      const hasUnlinkedExitCandidate = historicalExitFingerprints.some(exit => matchesUnlinkedHistoricalExitCandidate(r, exit));
+      const isUnavailable = inventoryUnavailableIds.has(r.id) || hasHistoricalExit || hasUnlinkedExitCandidate;
       if (availableOnly && isUnavailable) return false;
 
       const recordDate = getLocalDateKey(r.registered_at);
@@ -392,19 +397,30 @@ export function Dashboard() {
     calculateStats();
   }, [filterRecords, calculateStats]);
 
-  const historicalUnavailableIds = new Set(
+  const confirmedHistoricalExitIds = new Set(
     records
       .filter(record => historicalExitFingerprints.some(exit => matchesHistoricalExit(record, exit)))
       .map(record => record.id),
   );
+  const ambiguousHistoricalExitIds = new Set(
+    records
+      .filter(record => historicalExitFingerprints.some(exit => matchesUnlinkedHistoricalExitCandidate(record, exit)))
+      .map(record => record.id),
+  );
+  const historicalUnavailableIds = new Set([...confirmedHistoricalExitIds, ...ambiguousHistoricalExitIds]);
   const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...historicalUnavailableIds]);
-  const blockedInventoryLocations = {
-    ...assignedEntryLocations,
-    ...Object.fromEntries(
-      [...new Set([...unavailableEntryIds, ...historicalUnavailableIds])]
-        .map(id => [id, unavailableEntryLabels[id] ?? 'Salida definitiva']),
-    ),
-  };
+  const blockedInventoryLocations = Object.fromEntries(
+    [...blockedInventoryIds].map(id => [
+      id,
+      assignedEntryLocations[id]
+        ?? unavailableEntryLabels[id]
+        ?? (confirmedHistoricalExitIds.has(id)
+          ? 'Salida definitiva'
+          : ambiguousHistoricalExitIds.has(id)
+            ? 'Salida sin vínculo; revisar'
+            : 'Asignado'),
+    ]),
+  );
 
   /* =======================
      CREATE / UPDATE
