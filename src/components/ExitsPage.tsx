@@ -230,7 +230,7 @@ export function ExitsPage() {
 
   const handleReturnShippingDirect = async (record: ShippingDirectRecord) => {
     if (record.returned_at || (record.location_id === null && !record.location_code)) return;
-    if (!confirm(`¿Regresar ${record.part_number} a la locación original ${record.location_code ?? ''}?`)) return;
+    if (!confirm(`La locación ${record.location_code ?? 'original'} puede estar ocupada. ${record.part_number} se agregará sin reemplazar el material existente. ¿Continuar?`)) return;
 
     setShippingDirectReturnSavingId(record.id);
     try {
@@ -1298,7 +1298,7 @@ export function ExitsPage() {
                                 type="button"
                                 onClick={() => void handleReturnShippingDirect(record)}
                                 disabled={shippingDirectReturnSavingId !== null}
-                                title={`Regresar ${record.part_number} a ${record.location_code ?? 'su locación original'}`}
+                                title={`Agregar ${record.part_number} a ${record.location_code ?? 'su locación original'} sin reemplazar el material existente`}
                                 className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-50"
                               >
                                 {shippingDirectReturnSavingId === record.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
