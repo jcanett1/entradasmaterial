@@ -179,7 +179,13 @@ export function ExitsPage() {
       .from('transferes')
       .select('*')
       .order('exited_at', { ascending: false });
-    setExits((data as Exit[]) ?? []);
+    const transferRows = (data as Exit[]) ?? [];
+    const entryIds = Array.from(new Set(transferRows.flatMap(exit => typeof exit.entry_id === 'number' ? [exit.entry_id] : [])));
+    const fifoByEntryId = await fetchFifoByEntryIds(entryIds);
+    setExits(transferRows.map(exit => ({
+      ...exit,
+      fifo_number: exit.fifo_number ?? (typeof exit.entry_id === 'number' ? (fifoByEntryId.get(exit.entry_id) ?? null) : null),
+    })));
     setLoading(false);
     setTimeout(() => setRefreshing(false), 500);
   };
@@ -725,7 +731,7 @@ export function ExitsPage() {
       ) : (
         <div className="rounded-2xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
+            <table className="w-full min-w-[1180px] border-collapse">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
                   {[
@@ -734,6 +740,7 @@ export function ExitsPage() {
                     { icon: <Boxes className="h-3.5 w-3.5" />, label: 'QTY', center: true },
                     { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
                     { icon: <ClipboardList className="h-3.5 w-3.5" />, label: 'PO' },
+                    { icon: <Tag className="h-3.5 w-3.5" />, label: 'FIFO', center: true },
                     { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Locación' },
                     { icon: <LogOut className="h-3.5 w-3.5" />, label: 'Destino', center: true },
                     { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado Por' },
@@ -790,6 +797,12 @@ export function ExitsPage() {
                         <span className="inline-flex px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 font-mono text-sm font-semibold border border-purple-100">{exit.po}</span>
                       ) : <span className="text-gray-400 italic text-sm">—</span>}
                     </td>
+                    {/* FIFO */}
+                    <td className="px-5 py-4 text-center">
+                      {exit.fifo_number !== null && exit.fifo_number !== undefined ? (
+                        <span className="inline-flex rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-1.5 font-mono text-sm font-bold text-violet-700">#{exit.fifo_number}</span>
+                      ) : <span className="text-gray-400 italic text-sm">—</span>}
+                    </td>
                     {/* Locación */}
                     <td className="px-5 py-4">
                       {exit.location_code ? (
@@ -841,7 +854,7 @@ export function ExitsPage() {
               {pageExits.length > 0 && (
                 <tfoot>
                   <tr className="bg-gray-50 border-t-2 border-gray-200">
-                    <td className="px-5 py-3">
+                    <td className="px-5 py-3" colSpan={2}>
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Subtotal página</span>
                     </td>
                     <td className="px-5 py-3 text-center">
@@ -854,7 +867,7 @@ export function ExitsPage() {
                         {pageExits.reduce((s, e) => s + (e.boxes ?? 0), 0).toLocaleString()}
                       </span>
                     </td>
-                    <td colSpan={6} />
+                    <td colSpan={7} />
                   </tr>
                 </tfoot>
               )}
