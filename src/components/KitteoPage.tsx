@@ -119,14 +119,17 @@ interface KitteoPrecountRecord {
 type NewKitteoExit = Omit<KitteoExit, 'id'>;
 
 const insertKitteoExits = async (rows: NewKitteoExit[]) => {
-  const hasMissingEntryId = rows.some(({ entry_id }) =>
-    entry_id === null || !Number.isInteger(entry_id) || entry_id <= 0,
-  );
-  if (hasMissingEntryId) {
-    return new Error('No se puede registrar la salida KITTEO: cada caja debe tener un entry_id exacto. Revisa la asignación antes de intentar la salida.');
+  // KITTEO permite salidas por número de parte para ubicaciones sin FIFO/PO/QTY.
+  let { error } = await supabase.from('kitteo_exits').insert(rows);
+  if (
+    error
+    && /entry_id|column .* does not exist/i.test(error.message)
+    && rows.every(({ entry_id }) => entry_id === null)
+  ) {
+    // En esquemas antiguos, omitir la columna solo es seguro para filas sin vínculo.
+    const legacyRows = rows.map(({ entry_id: _entryId, ...row }) => row);
+    ({ error } = await supabase.from('kitteo_exits').insert(legacyRows));
   }
-
-  const { error } = await supabase.from('kitteo_exits').insert(rows);
   return error;
 };
 

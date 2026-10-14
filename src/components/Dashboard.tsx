@@ -48,11 +48,6 @@ const getInventoryAssignmentKey = (
   return `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}|${fifo ?? 'none'}`;
 };
 
-const getInventoryPartPoKey = (
-  partNumber: string | null | undefined,
-  po: string | null | undefined,
-) => `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}`;
-
 type HistoricalExitFingerprint = {
   entry_id: number | null;
   part_number: string | null;
@@ -62,21 +57,9 @@ type HistoricalExitFingerprint = {
   exited_at: string | null;
 };
 
+// Un registro KITTEO solo por número de parte es válido, pero no identifica una entrada concreta.
 const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) => {
   return exit.entry_id !== null && entry.id === exit.entry_id;
-};
-
-const matchesUnlinkedHistoricalExitCandidate = (entry: Entry, exit: HistoricalExitFingerprint) => {
-  if (exit.entry_id !== null) return false;
-  if (getInventoryPartPoKey(entry.part_number, entry.po) !== getInventoryPartPoKey(exit.part_number, exit.po)) return false;
-
-  const entryTime = Date.parse(entry.registered_at);
-  const exitTime = exit.exited_at ? Date.parse(exit.exited_at) : Number.NaN;
-  if (Number.isNaN(entryTime) || Number.isNaN(exitTime) || entryTime > exitTime) return false;
-
-  const qtyMatches = exit.qty === null || entry.total_units === exit.qty;
-  const boxesMatches = exit.boxes === null || entry.total_boxes === exit.boxes;
-  return qtyMatches && boxesMatches;
 };
 
 export function Dashboard() {
@@ -363,8 +346,7 @@ export function Dashboard() {
     const inventoryUnavailableIds = new Set([...assignedEntryIds, ...unavailableEntryIds]);
     setFilteredRecords(records.filter((r) => {
       const hasHistoricalExit = historicalExitFingerprints.some(exit => matchesHistoricalExit(r, exit));
-      const hasUnlinkedExitCandidate = historicalExitFingerprints.some(exit => matchesUnlinkedHistoricalExitCandidate(r, exit));
-      const isUnavailable = inventoryUnavailableIds.has(r.id) || hasHistoricalExit || hasUnlinkedExitCandidate;
+      const isUnavailable = inventoryUnavailableIds.has(r.id) || hasHistoricalExit;
       if (availableOnly && isUnavailable) return false;
 
       const recordDate = getLocalDateKey(r.registered_at);
@@ -402,13 +384,7 @@ export function Dashboard() {
       .filter(record => historicalExitFingerprints.some(exit => matchesHistoricalExit(record, exit)))
       .map(record => record.id),
   );
-  const ambiguousHistoricalExitIds = new Set(
-    records
-      .filter(record => historicalExitFingerprints.some(exit => matchesUnlinkedHistoricalExitCandidate(record, exit)))
-      .map(record => record.id),
-  );
-  const historicalUnavailableIds = new Set([...confirmedHistoricalExitIds, ...ambiguousHistoricalExitIds]);
-  const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...historicalUnavailableIds]);
+  const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...confirmedHistoricalExitIds]);
   const blockedInventoryLocations = Object.fromEntries(
     [...blockedInventoryIds].map(id => [
       id,
@@ -416,9 +392,7 @@ export function Dashboard() {
         ?? unavailableEntryLabels[id]
         ?? (confirmedHistoricalExitIds.has(id)
           ? 'Salida definitiva'
-          : ambiguousHistoricalExitIds.has(id)
-            ? 'Salida sin vínculo; revisar'
-            : 'Asignado'),
+          : 'Asignado'),
     ]),
   );
 
