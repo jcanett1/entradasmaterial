@@ -26,6 +26,9 @@ CREATE INDEX IF NOT EXISTS idx_locations_status ON public.locations(status);
 --  Rack  F        → 21 locaciones
 --  Rack  G        → 32 locaciones
 --  Rack  H        → 8 locaciones
+--  Rack  I        → 15 locaciones
+--  Racks J, K     → 18 locaciones cada uno
+--  Rack  L        → 9 locaciones
 -- ============================================================
 
 -- Rack A (48 locaciones)
@@ -108,6 +111,16 @@ ON CONFLICT (location_code) DO NOTHING;
 INSERT INTO public.locations (rack, location_code) VALUES
 ('H','H-01'),('H','H-02'),('H','H-03'),('H','H-04'),
 ('H','H-05'),('H','H-06'),('H','H-07'),('H','H-08')
+ON CONFLICT (location_code) DO NOTHING;
+
+-- Racks I, J, K y L (60 locaciones en total)
+INSERT INTO public.locations (rack, location_code)
+SELECT rack_definitions.rack_code,
+       rack_definitions.rack_code || '-' || lpad(slot_numbers.slot_number::text, 2, '0')
+FROM (VALUES ('I', 15), ('J', 18), ('K', 18), ('L', 9))
+  AS rack_definitions(rack_code, location_count)
+CROSS JOIN LATERAL generate_series(1, rack_definitions.location_count)
+  AS slot_numbers(slot_number)
 ON CONFLICT (location_code) DO NOTHING;
 
 -- ============================================================
