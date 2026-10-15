@@ -2452,11 +2452,16 @@ export function KitteoPage() {
                         <span className="text-[10px] font-bold text-gray-400 uppercase">Artículo</span>
                       </div>
 
-                      {item.catalog_part_id !== null && (
+                      {item.catalog_part_id === null && (
                         <div className="flex gap-2 mt-3 flex-wrap">
                           <span className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
                             QTY: {(item.qty ?? 0).toLocaleString()}
                           </span>
+                          {(item.boxes ?? 0) > 0 && (
+                            <span className="px-2 py-1 rounded-lg bg-purple-50 text-purple-700 text-xs font-bold border border-purple-100">
+                              Cajas: {item.boxes}
+                            </span>
+                          )}
                           <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-bold border border-amber-100">
                             PO: {item.po || '—'}
                           </span>
