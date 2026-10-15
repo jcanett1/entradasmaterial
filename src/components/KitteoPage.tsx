@@ -14,6 +14,7 @@ import {
 interface KitteoLocationItem {
   id: number;
   source_transfer_id: number | null;
+  catalog_part_id: number | null;
   location_id: number;
   location_code: string;
   part_number: string;
@@ -53,6 +54,12 @@ interface EntryOption {
   po: string | null;
   fifo_number: number | null;
   exited_at: string;
+}
+
+interface CatalogPartOption {
+  id: number;
+  inventory_id: string;
+  description: string | null;
 }
 
 interface KitteoExit {
@@ -177,6 +184,14 @@ export function KitteoPage() {
   const [saving, setSaving] = useState(false);
   const entryDropRef = useRef<HTMLDivElement>(null);
   const entryDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [assignMode, setAssignMode] = useState<'transfers' | 'catalog'>('transfers');
+  const [catalogParts, setCatalogParts] = useState<CatalogPartOption[]>([]);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [selectedCatalogPart, setSelectedCatalogPart] = useState<CatalogPartOption | null>(null);
+  const [showCatalogDrop, setShowCatalogDrop] = useState(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const catalogDropRef = useRef<HTMLDivElement>(null);
+  const catalogDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* Modal detalle: lista de partes y acciones individuales */
   const [detailModal, setDetailModal] = useState<KitteoLocation | null>(null);
@@ -356,6 +371,7 @@ export function KitteoPage() {
         items: [{
           id: -(normalizedLocationId ?? 0),
           source_transfer_id: null,
+          catalog_part_id: null,
           location_id: normalizedLocationId ?? 0,
           location_code: location.location_code,
           part_number: location.part_number,
@@ -692,6 +708,7 @@ export function KitteoPage() {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (entryDropRef.current && !entryDropRef.current.contains(e.target as Node)) setShowEntryDrop(false);
+      if (catalogDropRef.current && !catalogDropRef.current.contains(e.target as Node)) setShowCatalogDrop(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -745,10 +762,62 @@ export function KitteoPage() {
     setShowEntryDrop(true);
   }, []);
 
+  const fetchCatalogParts = useCallback(async (term: string) => {
+    setCatalogLoading(true);
+    let query = supabase
+      .from('parts_catalog')
+      .select('id, inventory_id, description')
+      .order('inventory_id', { ascending: true });
+    if (term.trim()) {
+      query = query.or(`inventory_id.ilike.%${term.trim()}%,description.ilike.%${term.trim()}%`);
+    }
+
+    const { data, error } = await query.limit(25);
+    if (error) {
+      console.warn('No se pudieron cargar las partes del catálogo:', error);
+      setCatalogParts([]);
+    } else {
+      setCatalogParts((data ?? []) as CatalogPartOption[]);
+    }
+    setCatalogLoading(false);
+    setShowCatalogDrop(true);
+  }, []);
+
   const handleEntrySearch = (val: string) => {
     setEntrySearch(val);
     if (entryDebounce.current) clearTimeout(entryDebounce.current);
     entryDebounce.current = setTimeout(() => fetchEntries(val), 250);
+  };
+
+  const handleCatalogSearch = (val: string) => {
+    setCatalogSearch(val);
+    setSelectedCatalogPart(null);
+    setShowCatalogDrop(true);
+    if (catalogDebounce.current) clearTimeout(catalogDebounce.current);
+    catalogDebounce.current = setTimeout(() => fetchCatalogParts(val), 250);
+  };
+
+  const handleSelectCatalogPart = (part: CatalogPartOption) => {
+    setSelectedCatalogPart(part);
+    setCatalogSearch(part.inventory_id);
+    setCatalogParts([]);
+    setShowCatalogDrop(false);
+  };
+
+  const switchAssignMode = (mode: 'transfers' | 'catalog') => {
+    setAssignMode(mode);
+    setSelectedEntries([]);
+    setSelectedCatalogPart(null);
+    setEntrySearch('');
+    setCatalogSearch('');
+    setEntries([]);
+    setCatalogParts([]);
+    setShowEntryDrop(false);
+    setShowCatalogDrop(false);
+    if (entryDebounce.current) clearTimeout(entryDebounce.current);
+    if (catalogDebounce.current) clearTimeout(catalogDebounce.current);
+    if (mode === 'transfers') void fetchEntries('');
+    else void fetchCatalogParts('');
   };
 
   const openAssignModal = (location: KitteoLocation) => {
@@ -768,24 +837,43 @@ export function KitteoPage() {
 
   /* ── Asignar material a una locación ── */
   const handleAssign = async () => {
-    if (!assignModal || selectedEntries.length === 0) return;
+    if (!assignModal) return;
+    const isCatalogAssignment = assignMode === 'catalog';
+    if (isCatalogAssignment ? !selectedCatalogPart : selectedEntries.length === 0) return;
     setSaving(true);
 
     const assignedAt = new Date().toISOString();
-    const itemPayloads = selectedEntries.map(entry => ({
-      location_id: assignModal.id,
-      location_code: assignModal.location_code,
-      source_transfer_id: entry.id,
-      part_number: entry.part_number,
-      description: entry.description,
-      qty: entry.qty,
-      boxes: entry.boxes,
-      po: entry.po,
-      fifo_number: entry.fifo_number ?? null,
-      entry_id: entry.entry_id ?? null,
-      registered_by: userDisplayName || null,
-      assigned_at: assignedAt,
-    }));
+    const itemPayloads = isCatalogAssignment && selectedCatalogPart
+      ? [{
+          location_id: assignModal.id,
+          location_code: assignModal.location_code,
+          source_transfer_id: null,
+          catalog_part_id: selectedCatalogPart.id,
+          part_number: selectedCatalogPart.inventory_id,
+          description: selectedCatalogPart.description,
+          qty: 0,
+          boxes: null,
+          po: null,
+          fifo_number: null,
+          entry_id: null,
+          registered_by: userDisplayName || null,
+          assigned_at: assignedAt,
+        }]
+      : selectedEntries.map(entry => ({
+          location_id: assignModal.id,
+          location_code: assignModal.location_code,
+          source_transfer_id: entry.id,
+          catalog_part_id: null,
+          part_number: entry.part_number,
+          description: entry.description,
+          qty: entry.qty,
+          boxes: entry.boxes,
+          po: entry.po,
+          fifo_number: entry.fifo_number ?? null,
+          entry_id: entry.entry_id ?? null,
+          registered_by: userDisplayName || null,
+          assigned_at: assignedAt,
+        }));
     let { error: itemError } = await supabase.from('kitteo_location_items').insert(itemPayloads);
     if (itemError && /fifo_number|column .* does not exist/i.test(itemError.message)) {
       const legacyPayloads = itemPayloads.map(({ fifo_number: _fifoNumber, ...item }) => item);
@@ -806,14 +894,16 @@ export function KitteoPage() {
       alert(`El artículo se guardó, pero no se pudo actualizar el estado de la locación: ${locationError.message}`);
     }
 
-    const { error: transferError } = await supabase
-      .from('transferes')
-      .delete()
-      .in('id', selectedEntries.map(entry => entry.id));
+    if (!isCatalogAssignment) {
+      const { error: transferError } = await supabase
+        .from('transferes')
+        .delete()
+        .in('id', selectedEntries.map(entry => entry.id));
 
-    if (transferError) {
-      console.error('Error retirando transferencia después de asignar a KITTEO:', transferError);
-      alert(`Los artículos se asignaron a KITTEO, pero no se pudieron retirar de Transferencias KITTEO: ${transferError.message}`);
+      if (transferError) {
+        console.error('Error retirando transferencia después de asignar a KITTEO:', transferError);
+        alert(`Los artículos se asignaron a KITTEO, pero no se pudieron retirar de Transferencias KITTEO: ${transferError.message}`);
+      }
     }
 
     setSaving(false);
@@ -823,9 +913,17 @@ export function KitteoPage() {
   };
 
   const resetAssignForm = () => {
+    if (entryDebounce.current) clearTimeout(entryDebounce.current);
+    if (catalogDebounce.current) clearTimeout(catalogDebounce.current);
+    setAssignMode('transfers');
     setSelectedEntries([]);
     setEntrySearch('');
     setEntries([]);
+    setShowEntryDrop(false);
+    setSelectedCatalogPart(null);
+    setCatalogSearch('');
+    setCatalogParts([]);
+    setShowCatalogDrop(false);
   };
 
   /* ── Liberar un solo artículo (sin historial) ── */
@@ -2098,6 +2196,18 @@ export function KitteoPage() {
               </button>
             </div>
             <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1">
+                <button type="button" onClick={() => switchAssignMode('transfers')}
+                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all ${assignMode === 'transfers' ? 'bg-white text-orange-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  <Package className="h-4 w-4" /> Transferencias
+                </button>
+                <button type="button" onClick={() => switchAssignMode('catalog')}
+                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all ${assignMode === 'catalog' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  <Hash className="h-4 w-4" /> Partes catálogo
+                </button>
+              </div>
+              {assignMode === 'transfers' && (
+                <>
               <div ref={entryDropRef} className="relative">
                 <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
                   <Package className="h-3.5 w-3.5 inline mr-1 text-indigo-400" />Buscar en Transferencias (puedes elegir varias) <span className="text-red-400">*</span>
@@ -2157,17 +2267,86 @@ export function KitteoPage() {
                 </div>
                 </>
               )}
+                </>
+              )}
+
+              {assignMode === 'catalog' && (
+                <>
+                  <div ref={catalogDropRef} className="relative">
+                    <label htmlFor="kitteo-catalog-part-search" className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2 block">
+                      <Hash className="h-3.5 w-3.5 inline mr-1 text-indigo-400" />Número de parte del catálogo <span className="text-red-400">*</span>
+                    </label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                      <input
+                        id="kitteo-catalog-part-search"
+                        type="text"
+                        value={catalogSearch}
+                        onChange={event => handleCatalogSearch(event.target.value)}
+                        onFocus={() => { if (catalogParts.length > 0) setShowCatalogDrop(true); else void fetchCatalogParts(catalogSearch); }}
+                        placeholder="Buscar número de parte o descripción..."
+                        autoComplete="off"
+                        className={`w-full rounded-xl border bg-gray-50 py-2.5 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${selectedCatalogPart ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}`}
+                      />
+                    </div>
+                    {showCatalogDrop && (
+                      <div className="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-xl">
+                        {catalogLoading ? (
+                          <div className="flex items-center justify-center gap-2 px-4 py-5 text-sm text-gray-500">
+                            <Loader2 className="h-4 w-4 animate-spin" /> Buscando en el catálogo...
+                          </div>
+                        ) : catalogParts.length > 0 ? (
+                          catalogParts.map(part => (
+                            <button key={part.id} type="button"
+                              onMouseDown={event => { event.preventDefault(); handleSelectCatalogPart(part); }}
+                              className="w-full border-b border-gray-50 px-4 py-3 text-left transition-colors last:border-0 hover:bg-indigo-50">
+                              <p className="font-mono text-sm font-bold text-indigo-700">{part.inventory_id}</p>
+                              <p className="mt-0.5 text-xs text-gray-500">{part.description || 'Sin descripción'}</p>
+                            </button>
+                          ))
+                        ) : (
+                          <p className="px-4 py-5 text-center text-sm text-gray-500">No se encontraron números de parte en el catálogo.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedCatalogPart && (
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600">Parte del catálogo seleccionada</p>
+                          <p className="mt-1 truncate font-mono text-sm font-bold text-indigo-800">{selectedCatalogPart.inventory_id}</p>
+                          <p className="mt-0.5 text-xs text-gray-600">{selectedCatalogPart.description || 'Sin descripción'}</p>
+                        </div>
+                        <button type="button"
+                          onClick={() => { setSelectedCatalogPart(null); setCatalogSearch(''); void fetchCatalogParts(''); }}
+                          aria-label="Quitar parte seleccionada"
+                          className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-gray-600">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        <span className="rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-center text-xs font-bold text-blue-700">QTY: 0</span>
+                        <span className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-center text-xs font-bold text-amber-700">PO: —</span>
+                        <span className="rounded-lg border border-orange-100 bg-orange-50 px-2 py-1.5 text-center text-xs font-bold text-orange-700">FIFO: —</span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setAssignModal(null); resetAssignForm(); }}
                   className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all">
                   <X className="h-4 w-4 inline mr-1" />Cancelar
                 </button>
-                <button type="button" onClick={handleAssign} disabled={selectedEntries.length === 0 || saving}
+                <button type="button" onClick={handleAssign}
+                  disabled={saving || (assignMode === 'transfers' ? selectedEntries.length === 0 : !selectedCatalogPart)}
                   className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg, #ea580c, #f97316)' }}>
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Asignar
+                  {saving ? 'Guardando...' : assignMode === 'catalog' ? 'Asignar parte' : 'Asignar'}
                 </button>
               </div>
             </div>
@@ -2243,18 +2422,18 @@ export function KitteoPage() {
                   <div>
                     <p className="text-sm font-bold text-emerald-800">Agregar números de parte</p>
                     <p className="mt-0.5 text-xs text-emerald-700">
-                      Selecciona una transferencia disponible y asígnala a esta locación.
+                      Selecciona una transferencia o una parte del catálogo para esta locación.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => openAssignModal(detailModal)}
                     disabled={detailModal.status !== 'disponible'}
-                    title={detailModal.status === 'disponible' ? 'Agregar un número de parte desde Transferencias KITTEO' : 'Cambia el estado a Disponible para agregar números de parte'}
+                    title={detailModal.status === 'disponible' ? 'Agregar desde Transferencias o Partes catálogo' : 'Cambia el estado a Disponible para agregar números de parte'}
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-700 transition-all hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
                   >
                     <Package className="h-3.5 w-3.5" />
-                    {detailModal.status === 'disponible' ? 'Agregar desde Transferencias' : 'Disponible requerido'}
+                    {detailModal.status === 'disponible' ? 'Agregar número de parte' : 'Disponible requerido'}
                   </button>
                 </div>
               </div>
@@ -2273,22 +2452,19 @@ export function KitteoPage() {
                         <span className="text-[10px] font-bold text-gray-400 uppercase">Artículo</span>
                       </div>
 
-                      <div className="flex gap-2 mt-3 flex-wrap">
-                        <span className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
-                          QTY: {(item.qty ?? 0).toLocaleString()}
-                        </span>
-                        {(item.boxes ?? 0) > 0 && (
-                          <span className="px-2 py-1 rounded-lg bg-purple-50 text-purple-700 text-xs font-bold border border-purple-100">
-                            Cajas: {item.boxes}
+                      {item.catalog_part_id !== null && (
+                        <div className="flex gap-2 mt-3 flex-wrap">
+                          <span className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
+                            QTY: {(item.qty ?? 0).toLocaleString()}
                           </span>
-                        )}
-                        <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-bold border border-amber-100">
-                          PO: {item.po || '—'}
-                        </span>
-                        <span className="px-2 py-1 rounded-lg bg-orange-50 text-orange-700 text-xs font-bold border border-orange-100">
-                          FIFO: {item.fifo_number !== null ? `#${item.fifo_number}` : '—'}
-                        </span>
-                      </div>
+                          <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-xs font-bold border border-amber-100">
+                            PO: {item.po || '—'}
+                          </span>
+                          <span className="px-2 py-1 rounded-lg bg-orange-50 text-orange-700 text-xs font-bold border border-orange-100">
+                            FIFO: {item.fifo_number !== null ? `#${item.fifo_number}` : '—'}
+                          </span>
+                        </div>
+                      )}
 
                       <div className="flex gap-2 mt-3">
                         <button
