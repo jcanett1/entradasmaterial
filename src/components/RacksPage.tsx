@@ -244,6 +244,10 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
   F: { bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-700',   badge: 'bg-amber-500' },
   G: { bg: 'bg-rose-50',    border: 'border-rose-200',    text: 'text-rose-700',    badge: 'bg-rose-600' },
   H: { bg: 'bg-cyan-50',    border: 'border-cyan-200',    text: 'text-cyan-700',    badge: 'bg-cyan-600' },
+  I: { bg: 'bg-fuchsia-50', border: 'border-fuchsia-200', text: 'text-fuchsia-700', badge: 'bg-fuchsia-600' },
+  J: { bg: 'bg-lime-50',     border: 'border-lime-200',    text: 'text-lime-700',    badge: 'bg-lime-600' },
+  K: { bg: 'bg-orange-50',  border: 'border-orange-200',  text: 'text-orange-700',  badge: 'bg-orange-600' },
+  L: { bg: 'bg-sky-50',     border: 'border-sky-200',     text: 'text-sky-700',     badge: 'bg-sky-600' },
 };
 
 /* ════════════════════════════════════════════════════
@@ -285,7 +289,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [selectedDetailItemIds, setSelectedDetailItemIds] = useState<Set<number>>(new Set());
   const [detailSearchTerm, setDetailSearchTerm] = useState('');
 
-  const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+  const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
 
   /* ── Fetch ── */
   const hydrateLocationBoxes = useCallback(async (sourceLocations: Location[]) => {
@@ -1358,7 +1362,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       {/* Grid de locaciones */}
       {selectedRack === 'ALL' ? (
         <div className="space-y-6">
-          {['A','B','C','D','E','F','G','H'].map(rack => {
+          {['A','B','C','D','E','F','G','H','I','J','K','L'].map(rack => {
             const rackLocs = filtered.filter(l => l.rack === rack);
             if (rackLocs.length === 0) return null;
             const c = RACK_COLORS[rack];
