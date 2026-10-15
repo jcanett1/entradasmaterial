@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { PartsCatalogModal } from './PartsCatalogModal';
 import {
   MapPin, Package, Search, Loader2, X, Save,
   RefreshCw, LogOut, Hash, Boxes, ClipboardList, Calendar,
@@ -209,6 +210,7 @@ export function KitteoPage() {
   const [bulkSelectedIds, setBulkSelectedIds] = useState<number[]>([]);
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [showPartsCatalog, setShowPartsCatalog] = useState(false);
 
   /* ── Estado historial ── */
   const [historial, setHistorial] = useState<KitteoExitWithFifo[]>([]);
@@ -1096,7 +1098,7 @@ export function KitteoPage() {
       )}
 
       {/* Header con tabs */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <LogOut className="h-5 w-5 text-orange-500" />
@@ -1106,7 +1108,17 @@ export function KitteoPage() {
             {stats.total} locaciones · {stats.ocupado} ocupadas · {stats.disponible} disponibles
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+          {canManageKitteoLocationStatus && (
+            <button
+              type="button"
+              onClick={() => setShowPartsCatalog(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition-colors hover:bg-indigo-100"
+            >
+              <Hash className="h-4 w-4" />
+              Nuevo número de parte
+            </button>
+          )}
           <button
             onClick={() => { setBulkExitOpen(true); setBulkSelectedIds([]); setBulkSearch(''); }}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white text-sm font-bold shadow-sm hover:bg-red-700 transition-all">
@@ -2382,6 +2394,10 @@ export function KitteoPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showPartsCatalog && canManageKitteoLocationStatus && (
+        <PartsCatalogModal onClose={() => setShowPartsCatalog(false)} />
       )}
 
     </div>
