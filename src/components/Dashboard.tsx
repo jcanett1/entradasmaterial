@@ -15,16 +15,17 @@ import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
 import { KitteoPage } from './KitteoPage';
 import { PhysicalAuditPage } from './PhysicalAuditPage';
+import { InventoryComparisonPage } from './InventoryComparisonPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
-  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, AlertTriangle, Hash,
+  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, ArrowLeftRight, AlertTriangle, Hash,
   CheckCircle2, CalendarDays, FileText, ClipboardCheck,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
-type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes' | 'auditoria';
+type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes' | 'auditoria' | 'comparacion';
 type RackSubTab = 'locaciones' | 'salidas';
 
 const toEntryId = (value: unknown): number | null => {
@@ -591,6 +592,15 @@ export function Dashboard() {
               color="indigo"
             />
           )}
+          {isManager && (
+            <TabBtn
+              active={mainTab === 'comparacion'}
+              onClick={() => setMainTab('comparacion')}
+              icon={<ArrowLeftRight className="h-4 w-4" />}
+              label="Comparación"
+              color="violet"
+            />
+          )}
         </div>
 
         {/* ══════════════════════════════
@@ -604,6 +614,8 @@ export function Dashboard() {
         {mainTab === 'reportes' && <LocationReports />}
 
         {mainTab === 'auditoria' && isManager && <PhysicalAuditPage />}
+
+        {mainTab === 'comparacion' && isManager && <InventoryComparisonPage />}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO
