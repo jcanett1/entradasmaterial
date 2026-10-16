@@ -110,7 +110,7 @@ type PhysicalAuditRecountState = {
 
 const PAGE_SIZE = 1000;
 const CHUNK_SIZE = 500;
-const COUNTER_PAGE_SIZE = 50;
+const COUNTER_LOCATION_PAGE_SIZE = 50;
 const CHART_COLORS = ['#059669', '#d97706', '#ef4444', '#cbd5e1'];
 
 const formatDate = (value: string | null | undefined) => {
@@ -279,19 +279,11 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const [findingForm, setFindingForm] = useState({ partNumber: '', foundRack: '', foundQty: '', notes: '' });
 
   const activeAudit = useMemo(() => audits.find(audit => audit.id === activeAuditId) ?? null, [audits, activeAuditId]);
-  const counterTotalPages = Math.max(1, Math.ceil(counterItems.length / COUNTER_PAGE_SIZE));
-  const counterPageItems = useMemo(() => {
-    const start = (counterPage - 1) * COUNTER_PAGE_SIZE;
-    return counterItems.slice(start, start + COUNTER_PAGE_SIZE);
-  }, [counterItems, counterPage]);
 
   useEffect(() => {
     setCounterPage(1);
   }, [activeAuditId]);
 
-  useEffect(() => {
-    setCounterPage(current => Math.min(current, counterTotalPages));
-  }, [counterTotalPages]);
 
   const loadAudits = useCallback(async () => {
     const { data, error: auditError } = await supabase
@@ -804,9 +796,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       userName={userProfile?.nombre_completo || userProfile?.email || 'Contador'}
       signOut={signOut}
       page={counterPage}
-      totalPages={counterTotalPages}
       setPage={setCounterPage}
-      pageItems={counterPageItems}
     />;
   }
 
@@ -876,7 +866,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
 }
 
 function CounterAuditView({
-  audits, activeAudit, auditLocations, items, findingCatalog, findingCatalogLoading, findingCatalogError, onLoadFindingCatalog, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, totalPages, setPage, pageItems,
+  audits, activeAudit, auditLocations, items, findingCatalog, findingCatalogLoading, findingCatalogError, onLoadFindingCatalog, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, setPage,
 }: {
   audits: PhysicalAudit[];
   activeAudit: PhysicalAudit | null;
@@ -902,18 +892,52 @@ function CounterAuditView({
   userName: string;
   signOut: () => Promise<void>;
   page: number;
-  totalPages: number;
   setPage: (page: number) => void;
-  pageItems: PhysicalAuditCounterItem[];
 }) {
+  const [sourceFilter, setSourceFilter] = useState<'all' | AuditLocationSource>('all');
+  const sourceCounts = useMemo(() => ({
+    normal: auditLocations.filter(location => location.source === 'normal').length,
+    kitto: auditLocations.filter(location => location.source === 'kitto').length,
+  }), [auditLocations]);
+  const sourceOptions: Array<{ value: 'all' | AuditLocationSource; label: string; count: number }> = [
+    { value: 'all', label: 'Todas', count: auditLocations.length },
+    { value: 'normal', label: 'Almacén', count: sourceCounts.normal },
+    { value: 'kitto', label: 'Kitteo', count: sourceCounts.kitto },
+  ];
+  const filteredLocations = useMemo(() => {
+    const locations = sourceFilter === 'all' ? auditLocations : auditLocations.filter(location => location.source === sourceFilter);
+    return [...locations].sort((a, b) => {
+      const sourceOrder = (a.source === 'normal' ? 0 : 1) - (b.source === 'normal' ? 0 : 1);
+      if (sourceOrder !== 0) return sourceOrder;
+      return a.rack.localeCompare(b.rack, undefined, { numeric: true }) || a.location_code.localeCompare(b.location_code, 'es', { numeric: true });
+    });
+  }, [auditLocations, sourceFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredLocations.length / COUNTER_LOCATION_PAGE_SIZE));
+  const pageLocations = useMemo(() => {
+    const start = (page - 1) * COUNTER_LOCATION_PAGE_SIZE;
+    return filteredLocations.slice(start, start + COUNTER_LOCATION_PAGE_SIZE);
+  }, [filteredLocations, page]);
+
+  useEffect(() => {
+    setSourceFilter('all');
+    setPage(1);
+  }, [activeAudit?.id, setPage]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, setPage, totalPages]);
+
   const completedLocations = auditLocations.filter(location => location.status === 'completada').length;
-  const grouped = auditLocations
-    .map(location => ({
-      location,
-      items: pageItems.filter(item => item.audit_location_id === location.id),
-      allItems: items.filter(item => item.audit_location_id === location.id),
-    }))
-    .filter(group => group.items.length > 0 || (page === 1 && group.allItems.length === 0));
+  const itemsByLocation = new Map<number, PhysicalAuditCounterItem[]>();
+  items.forEach(item => {
+    const locationItems = itemsByLocation.get(item.audit_location_id) ?? [];
+    locationItems.push(item);
+    itemsByLocation.set(item.audit_location_id, locationItems);
+  });
+  const grouped = pageLocations.map(location => ({
+    location,
+    items: itemsByLocation.get(location.id) ?? [],
+  }));
   return (
     <div className="min-w-0 space-y-4 sm:space-y-6">
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><strong>No se pudo cargar la auditoría:</strong> {error}</div>}
@@ -936,7 +960,7 @@ function CounterAuditView({
             <CounterSessionMenu userName={userName} signOut={signOut} />
           </div>
         </div>
-        {tab === 'conteo' ? <><div className="space-y-4">{grouped.map(({ location, items: locationItems, allItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={allItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} itemCount={items.length} setPage={setPage} /></> : <CounterFindingForm catalog={findingCatalog} catalogLoading={findingCatalogLoading} catalogError={findingCatalogError} onLoadCatalog={onLoadFindingCatalog} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}
+        {tab === 'conteo' ? <><div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center"><div><p className="text-xs font-black uppercase tracking-wide text-gray-500">Filtrar asignaciones por origen</p><p className="mt-1 text-xs text-gray-500">{filteredLocations.length} locaciones visibles</p></div><div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar asignaciones por origen">{sourceOptions.map(option => <button key={option.value} type="button" aria-pressed={sourceFilter === option.value} disabled={option.count === 0} onClick={() => { setSourceFilter(option.value); setPage(1); }} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${sourceFilter === option.value ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}>{option.label}<span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px]">{option.count}</span></button>)}</div></div><div className="space-y-4">{grouped.map(({ location, items: locationItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={locationItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} locationCount={filteredLocations.length} setPage={setPage} /></> : <CounterFindingForm catalog={findingCatalog} catalogLoading={findingCatalogLoading} catalogError={findingCatalogError} onLoadCatalog={onLoadFindingCatalog} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}
       </>}
     </div>
   );
@@ -960,7 +984,7 @@ function CounterLocationCard({ location, items, allItems, countInputs, setCountI
       <div className="flex flex-col justify-between gap-3 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-white px-4 py-4 sm:px-5 lg:flex-row lg:items-center">
         <div className="flex min-w-0 items-center gap-3">
           <div className="shrink-0 rounded-xl bg-indigo-100 p-2.5 text-indigo-700"><MapPin className="h-5 w-5" /></div>
-          <div className="min-w-0"><h3 className="truncate font-black text-gray-900">{location.location_code} <span className="font-medium text-gray-500">· Rack {location.rack}</span></h3><p className="mt-1 text-xs text-gray-500">{items.length ? `${items.length} número${items.length === 1 ? '' : 's'} de parte asignado${items.length === 1 ? '' : 's'}` : 'Locación sin materiales registrados'}</p></div>
+          <div className="min-w-0"><h3 className="truncate font-black text-gray-900">{location.location_code} <span className="font-medium text-gray-500">· {location.source === 'kitto' ? 'Kitteo' : 'Almacén'} · Rack {location.rack}</span></h3><p className="mt-1 text-xs text-gray-500">{items.length ? `${items.length} número${items.length === 1 ? '' : 's'} de parte asignado${items.length === 1 ? '' : 's'}` : 'Locación sin materiales registrados'}</p></div>
         </div>
         <div className="flex flex-wrap items-center gap-2 pl-12 sm:pl-0"><StatusBadge status={locationDisplayStatus(location)} />{location.status !== 'completada' && <button type="button" disabled={saving || !allCounted} onClick={() => void completeLocation(location)} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="h-4 w-4" />Terminar locación</button>}</div>
       </div>
@@ -987,11 +1011,11 @@ function CounterLocationCard({ location, items, allItems, countInputs, setCountI
     </div>
   );
 }
-function CounterPagination({ page, totalPages, itemCount, setPage }: { page: number; totalPages: number; itemCount: number; setPage: (page: number) => void }) {
-  if (itemCount <= COUNTER_PAGE_SIZE) return null;
-  const firstItem = (page - 1) * COUNTER_PAGE_SIZE + 1;
-  const lastItem = Math.min(page * COUNTER_PAGE_SIZE, itemCount);
-  return <div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-sm sm:flex-row sm:items-center"><p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{firstItem}–{lastItem}</strong> de <strong className="text-gray-800">{itemCount}</strong> números de parte</p><div className="flex items-center gap-2"><button type="button" disabled={page === 1} onClick={() => setPage(Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button><span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {page} de {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage(Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button></div></div>;
+function CounterPagination({ page, totalPages, locationCount, setPage }: { page: number; totalPages: number; locationCount: number; setPage: (page: number) => void }) {
+  if (locationCount <= COUNTER_LOCATION_PAGE_SIZE) return null;
+  const firstLocation = (page - 1) * COUNTER_LOCATION_PAGE_SIZE + 1;
+  const lastLocation = Math.min(page * COUNTER_LOCATION_PAGE_SIZE, locationCount);
+  return <div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-sm sm:flex-row sm:items-center"><p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{firstLocation}–{lastLocation}</strong> de <strong className="text-gray-800">{locationCount}</strong> locaciones</p><div className="flex items-center gap-2"><button type="button" disabled={page === 1} onClick={() => setPage(Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button><span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {page} de {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage(Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button></div></div>;
 }
 
 function CounterFindingForm({ catalog, catalogLoading, catalogError, onLoadCatalog, form, setForm, onSubmit, saving }: { catalog: FindingCatalogPart[]; catalogLoading: boolean; catalogError: string | null; onLoadCatalog: () => Promise<void>; form: { partNumber: string; foundRack: string; foundQty: string; notes: string }; setForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundRack: string; foundQty: string; notes: string }>>; onSubmit: () => Promise<void>; saving: boolean }) {
