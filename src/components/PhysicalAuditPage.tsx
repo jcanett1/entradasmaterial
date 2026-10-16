@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -66,6 +66,11 @@ type ReferenceItem = {
   po: string | null;
   qty: number;
   fifo_number: number | null;
+};
+
+type FindingCatalogPart = {
+  part_number: string;
+  description: string | null;
 };
 
 type AuditAssignmentDraft = {
@@ -262,11 +267,16 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const [referenceLocations, setReferenceLocations] = useState<ReferenceLocation[]>([]);
   const [referenceItems, setReferenceItems] = useState<ReferenceItem[]>([]);
   const [entryDescriptions, setEntryDescriptions] = useState<Record<number, string | null>>({});
+  const [findingCatalog, setFindingCatalog] = useState<FindingCatalogPart[]>([]);
+  const [findingCatalogLoading, setFindingCatalogLoading] = useState(false);
+  const [findingCatalogLoaded, setFindingCatalogLoaded] = useState(false);
+  const [findingCatalogError, setFindingCatalogError] = useState<string | null>(null);
+  const findingCatalogLoadStarted = useRef(false);
   const [createForm, setCreateForm] = useState<CreateAuditForm>({ name: '', description: '', assignments: [] });
   const [saving, setSaving] = useState(false);
   const [countInputs, setCountInputs] = useState<Record<number, string>>({});
   const [counterPage, setCounterPage] = useState(1);
-  const [findingForm, setFindingForm] = useState({ itemId: '', foundLocation: '', foundRack: '', foundQty: '', notes: '' });
+  const [findingForm, setFindingForm] = useState({ partNumber: '', foundRack: '', foundQty: '', notes: '' });
 
   const activeAudit = useMemo(() => audits.find(audit => audit.id === activeAuditId) ?? null, [audits, activeAuditId]);
   const counterTotalPages = Math.max(1, Math.ceil(counterItems.length / COUNTER_PAGE_SIZE));
@@ -468,6 +478,48 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
     }
   }, [loadCounterProfiles]);
 
+  const loadFindingCatalog = useCallback(async () => {
+    if (findingCatalogLoaded || findingCatalogLoadStarted.current) return;
+    findingCatalogLoadStarted.current = true;
+    setFindingCatalogLoading(true);
+    setFindingCatalogError(null);
+
+    try {
+      const [catalogRows, normalItems, kitteoItems] = await Promise.all([
+        fetchAllRows<{ inventory_id: string; description: string | null }>('parts_catalog', 'inventory_id, description'),
+        fetchAllRows<{ part_number: string }>('location_items', 'part_number'),
+        fetchAllRows<{ part_number: string; description: string | null }>('kitteo_location_items', 'part_number, description'),
+      ]);
+      const partsByNumber = new Map<string, FindingCatalogPart>();
+      const addPart = (partNumber: string | null | undefined, description?: string | null) => {
+        const cleanPartNumber = partNumber?.trim() ?? '';
+        if (!cleanPartNumber) return;
+        const key = cleanPartNumber.toLocaleUpperCase('es-MX');
+        const cleanDescription = description?.trim() || null;
+        const existing = partsByNumber.get(key);
+        if (existing) {
+          if (!existing.description && cleanDescription) existing.description = cleanDescription;
+          return;
+        }
+        partsByNumber.set(key, { part_number: cleanPartNumber, description: cleanDescription });
+      };
+
+      catalogRows.forEach(row => addPart(row.inventory_id, row.description));
+      normalItems.forEach(item => addPart(item.part_number));
+      kitteoItems.forEach(item => addPart(item.part_number, item.description));
+      counterItems.forEach(item => addPart(item.part_number, item.description));
+
+      setFindingCatalog([...partsByNumber.values()].sort((a, b) => a.part_number.localeCompare(b.part_number, 'es', { numeric: true, sensitivity: 'base' })));
+      setFindingCatalogLoaded(true);
+    } catch (loadError) {
+      console.error('Error cargando el catálogo para reportar hallazgos:', loadError);
+      setFindingCatalogError(loadError instanceof Error ? loadError.message : 'No se pudo cargar el catálogo de números de parte.');
+      findingCatalogLoadStarted.current = false;
+    } finally {
+      setFindingCatalogLoading(false);
+    }
+  }, [counterItems, findingCatalogLoaded]);
+
   useEffect(() => {
     if (showCreate && isManager) void loadReferenceData();
   }, [showCreate, isManager, loadReferenceData]);
@@ -563,33 +615,34 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   };
 
   const submitFinding = async () => {
-    if (!activeAuditId || !findingForm.itemId || !findingForm.foundLocation.trim() || findingForm.foundQty.trim() === '') {
-      window.alert('Selecciona el número de parte, la ubicación real y la cantidad encontrada.');
+    const selectedPart = findingCatalog.find(part => part.part_number.toLocaleUpperCase('es-MX') === findingForm.partNumber.toLocaleUpperCase('es-MX'));
+    const matchingAuditItem = counterItems.find(item => item.part_number.toLocaleUpperCase('es-MX') === findingForm.partNumber.toLocaleUpperCase('es-MX'));
+    const matchingAuditLocation = matchingAuditItem ? auditLocations.find(location => location.id === matchingAuditItem.audit_location_id) ?? null : null;
+    const auditLocation = matchingAuditLocation ?? auditLocations[0] ?? null;
+    if (!activeAuditId || !selectedPart || !auditLocation || !findingForm.foundRack.trim() || findingForm.foundQty.trim() === '') {
+      window.alert('Selecciona el número de parte, el rack donde se encontró y la cantidad encontrada.');
       return;
     }
-    const item = counterItems.find(row => row.id === Number(findingForm.itemId));
-    const location = item ? auditLocations.find(row => row.id === item.audit_location_id) : null;
-    if (!item || !location) return;
     setSaving(true);
     const { error: findingError } = await supabase.rpc('physical_audit_report_finding', {
       p_audit_id: activeAuditId,
-      p_audit_location_id: location.id,
-      p_part_number: item.part_number,
-      p_description: item.description,
-      p_expected_location_code: location.location_code,
-      p_found_location_code: findingForm.foundLocation.trim(),
-      p_found_rack: findingForm.foundRack.trim() || null,
+      p_audit_location_id: auditLocation.id,
+      p_part_number: selectedPart.part_number,
+      p_description: selectedPart.description || matchingAuditItem?.description || null,
+      p_expected_location_code: matchingAuditLocation?.location_code ?? null,
+      p_found_location_code: `Rack ${findingForm.foundRack.trim()}`,
+      p_found_rack: null,
       p_found_qty: Math.floor(Number(findingForm.foundQty)),
-      p_po: item.po,
-      p_fifo_number: item.fifo_number,
+      p_po: matchingAuditItem?.po ?? null,
+      p_fifo_number: matchingAuditItem?.fifo_number ?? null,
       p_notes: findingForm.notes.trim() || null,
-      p_expected_location_id: location.location_id,
+      p_expected_location_id: matchingAuditLocation?.location_id ?? null,
       p_expected_location_item_id: null,
       p_found_location_id: null,
     });
     if (findingError) window.alert(`No se pudo enviar el hallazgo: ${findingError.message}`);
     else {
-      setFindingForm({ itemId: '', foundLocation: '', foundRack: '', foundQty: '', notes: '' });
+      setFindingForm({ partNumber: '', foundRack: '', foundQty: '', notes: '' });
       window.alert('Hallazgo enviado para revisión del supervisor.');
       await loadAuditData(activeAuditId);
     }
@@ -729,6 +782,10 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       activeAudit={activeAudit}
       auditLocations={auditLocations}
       items={counterItems}
+      findingCatalog={findingCatalog}
+      findingCatalogLoading={findingCatalogLoading}
+      findingCatalogError={findingCatalogError}
+      onLoadFindingCatalog={loadFindingCatalog}
       tab={counterTab}
       setTab={setCounterTab}
       countInputs={countInputs}
@@ -817,20 +874,24 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
 }
 
 function CounterAuditView({
-  audits, activeAudit, auditLocations, items, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, totalPages, setPage, pageItems,
+  audits, activeAudit, auditLocations, items, findingCatalog, findingCatalogLoading, findingCatalogError, onLoadFindingCatalog, tab, setTab, countInputs, setCountInputs, submitCount, completeLocation, findingForm, setFindingForm, submitFinding, saving, error, refresh, refreshing, userName, signOut, page, totalPages, setPage, pageItems,
 }: {
   audits: PhysicalAudit[];
   activeAudit: PhysicalAudit | null;
   auditLocations: PhysicalAuditLocation[];
   items: PhysicalAuditCounterItem[];
+  findingCatalog: FindingCatalogPart[];
+  findingCatalogLoading: boolean;
+  findingCatalogError: string | null;
+  onLoadFindingCatalog: () => Promise<void>;
   tab: CounterTab;
   setTab: (tab: CounterTab) => void;
   countInputs: Record<number, string>;
   setCountInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   submitCount: (item: PhysicalAuditCounterItem) => Promise<void>;
   completeLocation: (location: PhysicalAuditLocation) => Promise<void>;
-  findingForm: { itemId: string; foundLocation: string; foundRack: string; foundQty: string; notes: string };
-  setFindingForm: React.Dispatch<React.SetStateAction<{ itemId: string; foundLocation: string; foundRack: string; foundQty: string; notes: string }>>;
+  findingForm: { partNumber: string; foundRack: string; foundQty: string; notes: string };
+  setFindingForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundRack: string; foundQty: string; notes: string }>>;
   submitFinding: () => Promise<void>;
   saving: boolean;
   error: string | null;
@@ -866,14 +927,14 @@ function CounterAuditView({
         <div className="flex flex-col gap-2 rounded-2xl border border-gray-100 bg-white p-1.5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div className="flex max-w-full gap-1 overflow-x-auto">
             <AuditTabButton active={tab === 'conteo'} onClick={() => setTab('conteo')} icon={<ClipboardCheck className="h-4 w-4" />} label="Mis asignaciones" />
-            <AuditTabButton active={tab === 'hallazgo'} onClick={() => setTab('hallazgo')} icon={<AlertTriangle className="h-4 w-4" />} label="Material encontrado" />
+            <AuditTabButton active={tab === 'hallazgo'} onClick={() => { setTab('hallazgo'); void onLoadFindingCatalog(); }} icon={<AlertTriangle className="h-4 w-4" />} label="Material encontrado" />
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 px-1 pb-1 md:pb-0">
             <button type="button" onClick={() => void refresh()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 shadow-sm transition hover:bg-gray-50"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Actualizar</button>
             <CounterSessionMenu userName={userName} signOut={signOut} />
           </div>
         </div>
-        {tab === 'conteo' ? <><div className="space-y-4">{grouped.map(({ location, items: locationItems, allItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={allItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} itemCount={items.length} setPage={setPage} /></> : <CounterFindingForm items={items} locations={auditLocations} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}
+        {tab === 'conteo' ? <><div className="space-y-4">{grouped.map(({ location, items: locationItems, allItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={allItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} itemCount={items.length} setPage={setPage} /></> : <CounterFindingForm catalog={findingCatalog} catalogLoading={findingCatalogLoading} catalogError={findingCatalogError} onLoadCatalog={onLoadFindingCatalog} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}
       </>}
     </div>
   );
@@ -931,10 +992,75 @@ function CounterPagination({ page, totalPages, itemCount, setPage }: { page: num
   return <div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-sm sm:flex-row sm:items-center"><p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{firstItem}–{lastItem}</strong> de <strong className="text-gray-800">{itemCount}</strong> números de parte</p><div className="flex items-center gap-2"><button type="button" disabled={page === 1} onClick={() => setPage(Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button><span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {page} de {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage(Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button></div></div>;
 }
 
-function CounterFindingForm({ items, locations, form, setForm, onSubmit, saving }: { items: PhysicalAuditCounterItem[]; locations: PhysicalAuditLocation[]; form: { itemId: string; foundLocation: string; foundRack: string; foundQty: string; notes: string }; setForm: React.Dispatch<React.SetStateAction<{ itemId: string; foundLocation: string; foundRack: string; foundQty: string; notes: string }>>; onSubmit: () => Promise<void>; saving: boolean }) {
-  const selectedItem = items.find(item => String(item.id) === form.itemId);
-  const expectedLocation = selectedItem ? locations.find(location => location.id === selectedItem.audit_location_id) : null;
-  return <div className="space-y-5"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><strong>¿Cuándo usarlo?</strong><br />Cuando encuentres el número de parte físicamente en una ubicación diferente a la que aparece en la asignación.</div><div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between gap-3"><div><h3 className="text-lg font-black text-gray-900">Registrar número de parte encontrado</h3><p className="mt-1 text-sm text-gray-500">El supervisor revisará el hallazgo antes de cambiar la ubicación.</p></div><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">Requiere revisión</span></div><div className="grid grid-cols-1 gap-4 md:grid-cols-2"><Field label="Número de parte encontrado"><select value={form.itemId} onChange={event => setForm(current => ({ ...current, itemId: event.target.value }))} className="field-input"><option value="">Seleccionar número de parte</option>{items.map(item => <option key={item.id} value={item.id}>{item.part_number} · {item.location_code}</option>)}</select></Field><Field label="Descripción"><input value={selectedItem?.description ?? ''} readOnly className="field-input bg-gray-50 text-gray-500" placeholder="Aparece automáticamente" /></Field><Field label="Locación esperada"><input value={expectedLocation ? `${expectedLocation.location_code} · Rack ${expectedLocation.rack}` : ''} readOnly className="field-input bg-gray-50 text-gray-500" /></Field><Field label="Rack donde se encontró"><input value={form.foundRack} onChange={event => setForm(current => ({ ...current, foundRack: event.target.value }))} className="field-input" placeholder="Ej. A" /></Field><Field label="Ubicación real encontrada"><input value={form.foundLocation} onChange={event => setForm(current => ({ ...current, foundLocation: event.target.value }))} className="field-input" placeholder="Ej. A-20" /></Field><Field label="Cantidad encontrada"><input type="number" min="0" value={form.foundQty} onChange={event => setForm(current => ({ ...current, foundQty: event.target.value }))} className="field-input" placeholder="Cantidad" /></Field><div className="md:col-span-2"><Field label="Comentario opcional"><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} className="field-input min-h-24 py-3" placeholder="Agrega una nota para el supervisor..." /></Field></div></div><div className="mt-5 flex justify-end"><button type="button" disabled={saving} onClick={() => void onSubmit()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Plus className="h-4 w-4" />Enviar hallazgo</button></div></div></div>;
+function CounterFindingForm({ catalog, catalogLoading, catalogError, onLoadCatalog, form, setForm, onSubmit, saving }: { catalog: FindingCatalogPart[]; catalogLoading: boolean; catalogError: string | null; onLoadCatalog: () => Promise<void>; form: { partNumber: string; foundRack: string; foundQty: string; notes: string }; setForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundRack: string; foundQty: string; notes: string }>>; onSubmit: () => Promise<void>; saving: boolean }) {
+  const [partPickerOpen, setPartPickerOpen] = useState(false);
+  const [partSearch, setPartSearch] = useState('');
+  const selectedPart = catalog.find(part => part.part_number.toLocaleUpperCase('es-MX') === form.partNumber.toLocaleUpperCase('es-MX'));
+  const filteredCatalog = useMemo(() => {
+    const term = partSearch.trim().toLocaleLowerCase('es-MX');
+    if (!term) return catalog;
+    return catalog.filter(part => part.part_number.toLocaleLowerCase('es-MX').includes(term) || (part.description ?? '').toLocaleLowerCase('es-MX').includes(term));
+  }, [catalog, partSearch]);
+
+  useEffect(() => {
+    if (!partPickerOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPartPickerOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [partPickerOpen]);
+
+  const openPartPicker = () => {
+    setPartSearch('');
+    setPartPickerOpen(true);
+    void onLoadCatalog();
+  };
+
+  return (
+    <>
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><strong>¿Cuándo usarlo?</strong><br />Cuando encuentres físicamente un número de parte que no corresponde a la locación asignada.</div>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="mb-5 flex items-start justify-between gap-3">
+            <div><h3 className="text-lg font-black text-gray-900">Registrar número de parte encontrado</h3><p className="mt-1 text-sm text-gray-500">El supervisor revisará el hallazgo antes de cambiar la ubicación.</p></div>
+            <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-700">Requiere revisión</span>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field label="Número de parte encontrado">
+              <button type="button" onClick={openPartPicker} aria-haspopup="dialog" aria-expanded={partPickerOpen} className="field-input flex w-full items-center justify-between gap-3 text-left">
+                <span className={selectedPart ? 'font-mono font-bold text-indigo-700' : 'text-gray-400'}>{selectedPart?.part_number ?? 'Buscar y seleccionar número de parte'}</span>
+                <Search className="h-4 w-4 shrink-0 text-gray-400" />
+              </button>
+            </Field>
+            <Field label="Descripción"><input value={selectedPart?.description ?? ''} readOnly className="field-input bg-gray-50 text-gray-500" placeholder="Aparece automáticamente" /></Field>
+            <Field label="Rack donde se encontró"><input required value={form.foundRack} onChange={event => setForm(current => ({ ...current, foundRack: event.target.value }))} className="field-input" placeholder="Ej. A" /></Field>
+            <Field label="Cantidad encontrada"><input type="number" min="0" value={form.foundQty} onChange={event => setForm(current => ({ ...current, foundQty: event.target.value }))} className="field-input" placeholder="Cantidad" /></Field>
+            <div className="md:col-span-2"><Field label="Comentario opcional"><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} className="field-input min-h-24 py-3" placeholder="Agrega una nota para el supervisor..." /></Field></div>
+          </div>
+          <div className="mt-5 flex justify-end"><button type="button" disabled={saving} onClick={() => void onSubmit()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Plus className="h-4 w-4" />Enviar hallazgo</button></div>
+        </div>
+      </div>
+
+      {partPickerOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Buscar número de parte">
+        <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 sm:px-6">
+            <div><p className="text-xs font-black uppercase tracking-[0.14em] text-indigo-600">Catálogo completo</p><h3 className="mt-1 text-xl font-black text-gray-900">Buscar número de parte</h3><p className="mt-1 text-sm text-gray-500">Busca entre todos los números de parte registrados.</p></div>
+            <button type="button" onClick={() => setPartPickerOpen(false)} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label="Cerrar búsqueda"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="border-b border-gray-100 p-4 sm:px-6">
+            <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" /><input autoFocus value={partSearch} onChange={event => setPartSearch(event.target.value)} placeholder="Buscar por número de parte o descripción..." className="w-full rounded-xl border border-gray-200 bg-gray-50 py-3 pl-10 pr-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" /></div>
+            <p className="mt-2 text-xs text-gray-500">{catalogLoading ? 'Cargando catálogo...' : `${filteredCatalog.length.toLocaleString()} números de parte`}</p>
+          </div>
+          {catalogError && <div className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:mx-6"><span>{catalogError}</span><button type="button" onClick={() => void onLoadCatalog()} className="shrink-0 font-bold underline">Reintentar</button></div>}
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            {catalogLoading ? <div className="flex items-center justify-center gap-3 py-12 text-sm text-gray-500"><Loader2 className="h-5 w-5 animate-spin text-indigo-600" />Cargando números de parte...</div> : filteredCatalog.length > 0 ? <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{filteredCatalog.map(part => <button key={part.part_number} type="button" aria-pressed={selectedPart?.part_number === part.part_number} onClick={() => { setForm(current => ({ ...current, partNumber: part.part_number })); setPartPickerOpen(false); }} className={`rounded-xl border p-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 ${selectedPart?.part_number === part.part_number ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white'}`}><span className="block break-words font-mono text-sm font-black text-indigo-700">{part.part_number}</span><span className="mt-1 block break-words text-xs text-gray-600">{part.description || 'Sin descripción'}</span></button>)}</div> : <div className="py-12 text-center text-sm text-gray-500">{catalogError ? 'No se pudo mostrar el catálogo.' : partSearch.trim() ? 'No se encontraron números de parte con esa búsqueda.' : 'No hay números de parte registrados.'}</div>}
+          </div>
+          <div className="flex justify-end border-t border-gray-100 px-5 py-4 sm:px-6"><button type="button" onClick={() => setPartPickerOpen(false)} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50">Cerrar</button></div>
+        </div>
+      </div>}
+    </>
+  );
 }
 
 function AdvanceView({ rackSummary, auditLocations, items, filteredItems, selectedPart, selectedPartId, setSelectedPartId, partSearch, setPartSearch }: { rackSummary: AuditSummary[]; auditLocations: PhysicalAuditLocation[]; items: PhysicalAuditSupervisorItem[]; filteredItems: PhysicalAuditSupervisorItem[]; selectedPart: PhysicalAuditSupervisorItem | null; selectedPartId: number | null; setSelectedPartId: (id: number) => void; partSearch: string; setPartSearch: (value: string) => void }) {
