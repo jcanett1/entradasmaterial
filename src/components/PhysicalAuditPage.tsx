@@ -235,6 +235,34 @@ async function fetchAllRows<T>(table: string, select: string) {
   return rows;
 }
 
+async function fetchAllSupervisorItems(auditId: number) {
+  const rows: PhysicalAuditSupervisorItem[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .rpc('physical_audit_get_supervisor_items', { p_audit_id: auditId })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const pageRows = (data ?? []) as PhysicalAuditSupervisorItem[];
+    rows.push(...pageRows);
+    if (pageRows.length < PAGE_SIZE) break;
+  }
+  return rows;
+}
+
+async function fetchAllRecountStates(auditId: number) {
+  const rows: PhysicalAuditRecountState[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .rpc('physical_audit_get_item_recount_states', { p_audit_id: auditId })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    const pageRows = (data ?? []) as PhysicalAuditRecountState[];
+    rows.push(...pageRows);
+    if (pageRows.length < PAGE_SIZE) break;
+  }
+  return { data: rows, error: null };
+}
+
 async function insertInChunks(table: string, rows: unknown[]) {
   for (let index = 0; index < rows.length; index += CHUNK_SIZE) {
     const { error } = await supabase.from(table).insert(rows.slice(index, index + CHUNK_SIZE));
@@ -318,7 +346,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
         .eq('audit_id', auditId)
         .order('rack')
         .order('location_code');
-      const recountStatesPromise = supabase.rpc('physical_audit_get_item_recount_states', { p_audit_id: auditId });
+      const recountStatesPromise = fetchAllRecountStates(auditId);
 
       if (isCounterView) {
         const [locationsResult, itemsResult, recountStatesResult] = await Promise.all([
@@ -336,22 +364,21 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
         setAssignments([]);
         setFindings([]);
       } else {
-        const [locationsResult, assignmentsResult, itemsResult, findingsResult, recountStatesResult] = await Promise.all([
+        const [locationsResult, assignmentsResult, supervisorItemsResult, findingsResult, recountStatesResult] = await Promise.all([
           locationsPromise,
           supabase.from('physical_audit_rack_assignments').select('*').eq('audit_id', auditId).order('rack'),
-          supabase.rpc('physical_audit_get_supervisor_items', { p_audit_id: auditId }),
+          fetchAllSupervisorItems(auditId),
           supabase.rpc('physical_audit_get_supervisor_findings', { p_audit_id: auditId }),
           recountStatesPromise,
         ]);
         if (locationsResult.error) throw locationsResult.error;
         if (assignmentsResult.error) throw assignmentsResult.error;
-        if (itemsResult.error) throw itemsResult.error;
         if (findingsResult.error) throw findingsResult.error;
         if (recountStatesResult.error) console.warn('No se pudo cargar el estado individual de recuento:', recountStatesResult.error.message);
         const recountStates = recountStatesResult.error ? [] : (recountStatesResult.data ?? []) as PhysicalAuditRecountState[];
         setAuditLocations((locationsResult.data ?? []) as PhysicalAuditLocation[]);
         setAssignments((assignmentsResult.data ?? []) as PhysicalAuditRackAssignment[]);
-        setSupervisorItems(mergeRecountStates((itemsResult.data ?? []) as PhysicalAuditSupervisorItem[], recountStates));
+        setSupervisorItems(mergeRecountStates(supervisorItemsResult, recountStates));
         setFindings((findingsResult.data ?? []) as PhysicalAuditFinding[]);
         setCounterItems([]);
       }
