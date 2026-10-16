@@ -3,6 +3,8 @@ import { Download, FileSpreadsheet, FileText, MapPin, Package, RefreshCw, Search
 import { fetchLocationAssignments, LocationAssignment } from '@/services/locationReportService';
 
 type StorageFilter = 'todos' | 'principal' | 'kitteo';
+const PAGE_SIZE = 50;
+
 type ExportRow = {
   Almacén: string;
   Rack: string;
@@ -54,6 +56,7 @@ export function LocationBreakdown() {
   const [storageFilter, setStorageFilter] = useState<StorageFilter>('todos');
   const [rackFilter, setRackFilter] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +67,7 @@ export function LocationBreakdown() {
     setRefreshing(true);
     try {
       setAssignments(await fetchLocationAssignments());
+      setCurrentPage(1);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'No se pudo cargar el desglose de inventario.');
     } finally {
@@ -87,6 +91,10 @@ export function LocationBreakdown() {
   useEffect(() => {
     if (rackFilter !== 'todos' && !availableRacks.includes(rackFilter)) setRackFilter('todos');
   }, [availableRacks, rackFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [storageFilter, rackFilter, searchTerm]);
 
   const occurrenceCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -113,6 +121,13 @@ export function LocationBreakdown() {
       return matchesStorage && matchesRack && matchesSearch;
     });
   }, [assignments, rackFilter, searchTerm, storageFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = filteredRows.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE;
+  const firstVisibleRow = filteredRows.length === 0 ? 0 : startIndex + 1;
+  const lastVisibleRow = Math.min(safePage * PAGE_SIZE, filteredRows.length);
+  const pageRows = filteredRows.slice(startIndex, startIndex + PAGE_SIZE);
 
   const exportRows = useMemo(
     () => filteredRows.map(row => toExportRow(row, occurrenceCounts.get(locationKey(row)) ?? 1)),
@@ -245,11 +260,19 @@ export function LocationBreakdown() {
             <tbody className="divide-y divide-gray-100">
               {filteredRows.length === 0
                 ? <tr><td colSpan={10} className="px-5 py-14 text-center text-sm text-gray-400">No hay partidas que coincidan con los filtros seleccionados.</td></tr>
-                : filteredRows.map(row => <tr key={row.record_id} className="transition hover:bg-indigo-50/30"><td className="px-5 py-3 font-semibold text-gray-700">{storageLabel(row.storage_type)}</td><td className="px-3 py-3 font-bold text-gray-700">{row.rack || '—'}</td><td className="px-3 py-3 font-bold text-indigo-700">{row.location_code || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${row.location_status === 'ocupado' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{row.location_status === 'ocupado' ? 'Ocupado' : 'Disponible'}</span></td><td className="max-w-[330px] px-3 py-3 font-medium text-gray-700">{row.part_number}</td><td className="px-3 py-3 text-right text-gray-600">{formatNumber(occurrenceCounts.get(locationKey(row)) ?? 1)}</td><td className="px-3 py-3 text-right font-bold text-gray-800">{formatNumber(row.qty)}</td><td className="px-3 py-3 text-gray-600">{row.po || '—'}</td><td className="px-3 py-3 text-right font-semibold text-gray-700">{row.fifo_number === null ? '—' : formatNumber(row.fifo_number)}</td><td className="px-5 py-3 text-gray-500">{formatDate(row.assigned_at)}</td></tr>)}
+                : pageRows.map(row => <tr key={row.record_id} className="transition hover:bg-indigo-50/30"><td className="px-5 py-3 font-semibold text-gray-700">{storageLabel(row.storage_type)}</td><td className="px-3 py-3 font-bold text-gray-700">{row.rack || '—'}</td><td className="px-3 py-3 font-bold text-indigo-700">{row.location_code || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${row.location_status === 'ocupado' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{row.location_status === 'ocupado' ? 'Ocupado' : 'Disponible'}</span></td><td className="max-w-[330px] px-3 py-3 font-medium text-gray-700">{row.part_number}</td><td className="px-3 py-3 text-right text-gray-600">{formatNumber(occurrenceCounts.get(locationKey(row)) ?? 1)}</td><td className="px-3 py-3 text-right font-bold text-gray-800">{formatNumber(row.qty)}</td><td className="px-3 py-3 text-gray-600">{row.po || '—'}</td><td className="px-3 py-3 text-right font-semibold text-gray-700">{row.fifo_number === null ? '—' : formatNumber(row.fifo_number)}</td><td className="px-5 py-3 text-gray-500">{formatDate(row.assigned_at)}</td></tr>)}
             </tbody>
           </table>
         </div>
-        <div className="flex items-center gap-2 border-t border-gray-100 px-5 py-3 text-[10px] text-gray-400"><Download className="h-3.5 w-3.5" /> Excel y PDF descargan las filas visibles con los filtros actuales. El conteo de partidas considera el total del número de parte en la locación, aunque haya filtros de búsqueda.</div>
+        {filteredRows.length > 0 && <div className="flex flex-col justify-between gap-3 border-t border-gray-100 px-5 py-4 sm:flex-row sm:items-center">
+          <p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{formatNumber(firstVisibleRow)}–{formatNumber(lastVisibleRow)}</strong> de <strong className="text-gray-800">{formatNumber(filteredRows.length)}</strong> partidas</p>
+          <nav aria-label="Paginación del desglose" className="flex items-center justify-center gap-2">
+            <button type="button" disabled={safePage === 1} onClick={() => setCurrentPage(page => Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button>
+            <span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {formatNumber(safePage)} de {formatNumber(totalPages)}</span>
+            <button type="button" disabled={safePage === totalPages} onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button>
+          </nav>
+        </div>}
+        <div className="flex items-center gap-2 border-t border-gray-100 px-5 py-3 text-[10px] text-gray-400"><Download className="h-3.5 w-3.5" /> Excel y PDF exportan todas las partidas que coinciden con los filtros, no solo la página visible. El conteo de partidas considera el total del número de parte en la locación, aunque haya filtros de búsqueda.</div>
       </section>
     </div>
   );
