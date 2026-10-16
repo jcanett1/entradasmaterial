@@ -189,11 +189,12 @@ async function parseWorkbook(file: File): Promise<ParsedBalance> {
       dataRowCount += 1;
       const inventoryId = String(row[idIndex] ?? '').trim();
       const key = normalizeInventoryId(inventoryId);
-      const onHand = asNumber(row[quantityIndex]);
-      if (!key || onHand === null || onHand < 0) {
+      const parsedOnHand = asNumber(row[quantityIndex]);
+      if (!key || parsedOnHand === null || parsedOnHand < 0 || parsedOnHand > 999999999999.99) {
         skipped += 1;
         continue;
       }
+      const onHand = Number(parsedOnHand.toFixed(2));
       if (seenIds.has(key)) duplicates += 1;
       seenIds.add(key);
       rows.push({
@@ -419,7 +420,7 @@ export function InventoryComparisonPage() {
         .from('inventory_comparison_items')
         .select('inventory_id, normalized_inventory_id, description, has_corporate, corporate_on_hand, has_system, system_units, physical_counted, physical_audit_item_count, physical_audit_counted_items, physical_count_status, difference_system_corporate, difference_physical_corporate')
         .eq('comparison_run_id', runId)
-        .order('inventory_id', { ascending: true })
+        .order('normalized_inventory_id', { ascending: true })
         .range(from, to);
       return { data: (data ?? []) as unknown as StoredComparisonRow[], error };
     });
@@ -570,6 +571,7 @@ export function InventoryComparisonPage() {
         .from('physical_audit_locations')
         .select('id')
         .eq('audit_id', auditId)
+        .order('id', { ascending: true })
         .range(from, to);
       return { data: (data ?? []) as { id: number }[], error };
     });
@@ -585,6 +587,7 @@ export function InventoryComparisonPage() {
           .from('physical_audit_items')
           .select('part_number, description, found_qty')
           .in('audit_location_id', chunk)
+          .order('id', { ascending: true })
           .range(from, to);
         return { data: (data ?? []) as PhysicalSource[], error };
       })));
@@ -622,17 +625,17 @@ export function InventoryComparisonPage() {
         }),
         fetchAllPages<SystemSource>(async (from, to) => {
           const { data, error } = await supabase.from('entries')
-            .select('part_number, description, total_units').range(from, to);
+            .select('part_number, description, total_units').order('id', { ascending: true }).range(from, to);
           return { data: (data ?? []) as SystemSource[], error };
         }),
         fetchAllPages<SystemSource>(async (from, to) => {
           const { data, error } = await supabase.from('shipping_direct')
-            .select('part_number, qty, returned_at').is('returned_at', null).range(from, to);
+            .select('part_number, qty, returned_at').is('returned_at', null).order('id', { ascending: true }).range(from, to);
           return { data: (data ?? []) as SystemSource[], error };
         }),
         fetchAllPages<SystemSource>(async (from, to) => {
           const { data, error } = await supabase.from('kitteo_exits')
-            .select('part_number, qty').range(from, to);
+            .select('part_number, qty').order('id', { ascending: true }).range(from, to);
           return { data: (data ?? []) as SystemSource[], error };
         }),
         selectedAuditId ? loadAuditItems(Number(selectedAuditId)) : Promise.resolve([] as PhysicalSource[]),
@@ -856,7 +859,7 @@ export function InventoryComparisonPage() {
               </div>
               {pendingUpload ? <span className="grid h-6 w-6 flex-shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700"><Check className="h-4 w-4" /></span> : selectedImport ? <BadgeCheck className="h-5 w-5 flex-shrink-0 text-emerald-600" /> : null}
             </div>
-            {pendingUpload && (pendingUpload.duplicates > 0 || pendingUpload.skipped > 0) && <p className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-amber-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />Los Inventory ID repetidos se conservan como filas y se suman al comparar. Las filas incompletas o con On Hand no numérico/negativo se omiten.</p>}
+            {pendingUpload && (pendingUpload.duplicates > 0 || pendingUpload.skipped > 0) && <p className="mt-2 flex items-start gap-1.5 text-[10px] leading-4 text-amber-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />Los Inventory ID repetidos se conservan como filas y se suman al comparar. Se omiten filas incompletas o con On Hand no numérico, negativo o fuera del rango de la base de datos.</p>}
             <button type="button" onClick={saveBalance} disabled={!pendingUpload || savingUpload} className="mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 px-3 text-xs font-extrabold text-white shadow-sm hover:from-indigo-700 hover:to-violet-600 disabled:cursor-not-allowed disabled:opacity-50">{savingUpload ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}{savingUpload ? 'Guardando filas…' : 'Guardar balance en la base de datos'}</button>
           </div>
         </div>
