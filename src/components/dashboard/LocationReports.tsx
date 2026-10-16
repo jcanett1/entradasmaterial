@@ -10,6 +10,7 @@ import {
   Warehouse,
 } from 'lucide-react';
 import { DashboardLocation, fetchDashboardLocations } from '@/services/dashboardService';
+import { LocationBreakdown } from './LocationBreakdown';
 
 type StorageFilter = 'todos' | 'principal' | 'kitteo';
 type StatusFilter = 'todos' | 'ocupado' | 'disponible';
@@ -71,6 +72,7 @@ function toReportRow(location: DashboardLocation): ReportRow {
 }
 
 export function LocationReports() {
+  const [reportView, setReportView] = useState<'resumen' | 'desglose'>('resumen');
   const [locations, setLocations] = useState<DashboardLocation[]>([]);
   const [storageFilter, setStorageFilter] = useState<StorageFilter>('todos');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('todos');
@@ -231,13 +233,19 @@ export function LocationReports() {
         <div>
           <div className="flex items-center gap-2"><div className="rounded-xl bg-violet-100 p-2 text-violet-600"><FileText className="h-5 w-5" /></div><div><h2 className="text-xl font-black tracking-tight text-gray-900">Reportes de locaciones</h2><p className="mt-0.5 text-xs text-gray-500">Consulta qué números de parte están asignados a cada rack y locación KITTEO.</p></div></div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        {reportView === 'resumen' && <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => void loadLocations()} className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-600 shadow-sm transition hover:bg-gray-50"><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Actualizar</button>
           <button type="button" onClick={() => void exportExcel()} disabled={!reportRows.length || exporting !== null} className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet className="h-3.5 w-3.5" /> {exporting === 'excel' ? 'Generando...' : 'Excel'}</button>
           <button type="button" onClick={() => void exportPdf()} disabled={!reportRows.length || exporting !== null} className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 shadow-sm transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"><FileText className="h-3.5 w-3.5" /> {exporting === 'pdf' ? 'Generando...' : 'PDF'}</button>
-        </div>
+        </div>}
       </div>
 
+      <div role="tablist" aria-label="Tipo de reporte" className="inline-flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
+        <button type="button" role="tab" aria-selected={reportView === 'resumen'} onClick={() => setReportView('resumen')} className={`rounded-lg px-4 py-2 text-xs font-bold transition ${reportView === 'resumen' ? 'bg-violet-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}>Resumen actual</button>
+        <button type="button" role="tab" aria-selected={reportView === 'desglose'} onClick={() => setReportView('desglose')} className={`rounded-lg px-4 py-2 text-xs font-bold transition ${reportView === 'desglose' ? 'bg-violet-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}>Desglose</button>
+      </div>
+
+      {reportView === 'desglose' ? <LocationBreakdown /> : <>
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">No se pudo cargar el reporte: {error}</div>}
 
       <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
@@ -268,6 +276,7 @@ export function LocationReports() {
         </div>
         <div className="flex items-center gap-2 border-t border-gray-100 px-5 py-3 text-[10px] text-gray-400"><Download className="h-3.5 w-3.5" /> Los botones Excel y PDF exportan exactamente las filas visibles con los filtros actuales.</div>
       </section>
+      </>}
     </div>
   );
 }
