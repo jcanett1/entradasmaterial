@@ -305,7 +305,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
   const [saving, setSaving] = useState(false);
   const [countInputs, setCountInputs] = useState<Record<number, string>>({});
   const [counterPage, setCounterPage] = useState(1);
-  const [findingForm, setFindingForm] = useState({ partNumber: '', foundRack: '', foundQty: '', notes: '' });
+  const [findingForm, setFindingForm] = useState({ partNumber: '', foundLocationId: '', foundQty: '', notes: '' });
 
   const activeAudit = useMemo(() => audits.find(audit => audit.id === activeAuditId) ?? null, [audits, activeAuditId]);
 
@@ -636,13 +636,16 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
 
   const submitFinding = async () => {
     const selectedPart = findingCatalog.find(part => part.part_number.toLocaleUpperCase('es-MX') === findingForm.partNumber.toLocaleUpperCase('es-MX'));
-    const matchingAuditItem = counterItems.find(item => item.part_number.toLocaleUpperCase('es-MX') === findingForm.partNumber.toLocaleUpperCase('es-MX'));
+    const partNumberKey = findingForm.partNumber.toLocaleUpperCase('es-MX');
+    const auditLocation = auditLocations.find(location => location.id === Number(findingForm.foundLocationId) && location.status !== 'omitida') ?? null;
+    const matchingLocationItem = auditLocation
+      ? counterItems.find(item => item.audit_location_id === auditLocation.id && item.part_number.toLocaleUpperCase('es-MX') === partNumberKey) ?? null
+      : null;
+    const matchingAuditItem = matchingLocationItem ?? counterItems.find(item => item.part_number.toLocaleUpperCase('es-MX') === partNumberKey) ?? null;
     const matchingAuditLocation = matchingAuditItem ? auditLocations.find(location => location.id === matchingAuditItem.audit_location_id) ?? null : null;
-    const foundRackKey = findingForm.foundRack.trim().replace(/^rack\s+/i, '').toLocaleUpperCase('es-MX');
-    const matchingRackLocation = auditLocations.find(location => location.rack.trim().toLocaleUpperCase('es-MX') === foundRackKey) ?? null;
-    const auditLocation = matchingRackLocation ?? matchingAuditLocation ?? auditLocations[0] ?? null;
-    if (!activeAuditId || !selectedPart || !auditLocation || !findingForm.foundRack.trim() || findingForm.foundQty.trim() === '') {
-      window.alert('Selecciona el número de parte, el rack donde se encontró y la cantidad encontrada.');
+    const foundQty = Number(findingForm.foundQty);
+    if (!activeAuditId || !selectedPart || !auditLocation || findingForm.foundQty.trim() === '' || !Number.isFinite(foundQty) || foundQty < 0) {
+      window.alert('Selecciona el número de parte, una locación asignada y una cantidad válida.');
       return;
     }
     setSaving(true);
@@ -652,19 +655,19 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       p_part_number: selectedPart.part_number,
       p_description: selectedPart.description || matchingAuditItem?.description || null,
       p_expected_location_code: matchingAuditLocation?.location_code ?? null,
-      p_found_location_code: `Rack ${findingForm.foundRack.trim()}`,
-      p_found_rack: findingForm.foundRack.trim() || null,
-      p_found_qty: Math.floor(Number(findingForm.foundQty)),
-      p_po: matchingAuditItem?.po ?? null,
-      p_fifo_number: matchingAuditItem?.fifo_number ?? null,
+      p_found_location_code: auditLocation.location_code,
+      p_found_rack: auditLocation.rack,
+      p_found_qty: Math.floor(foundQty),
+      p_po: matchingLocationItem?.po ?? null,
+      p_fifo_number: matchingLocationItem?.fifo_number ?? null,
       p_notes: findingForm.notes.trim() || null,
       p_expected_location_id: matchingAuditLocation?.source === 'normal' ? matchingAuditLocation.location_id : null,
       p_expected_location_item_id: null,
-      p_found_location_id: null,
+      p_found_location_id: auditLocation.source === 'normal' ? auditLocation.location_id : null,
     });
     if (findingError) window.alert(`No se pudo enviar el hallazgo: ${findingError.message}`);
     else {
-      setFindingForm({ partNumber: '', foundRack: '', foundQty: '', notes: '' });
+      setFindingForm({ partNumber: '', foundLocationId: '', foundQty: '', notes: '' });
       window.alert('Hallazgo registrado y contabilizado automáticamente. Aparece en Material encontrado.');
       await loadAuditData(activeAuditId);
     }
@@ -910,8 +913,8 @@ function CounterAuditView({
   setCountInputs: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   submitCount: (item: PhysicalAuditCounterItem) => Promise<void>;
   completeLocation: (location: PhysicalAuditLocation) => Promise<void>;
-  findingForm: { partNumber: string; foundRack: string; foundQty: string; notes: string };
-  setFindingForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundRack: string; foundQty: string; notes: string }>>;
+  findingForm: { partNumber: string; foundLocationId: string; foundQty: string; notes: string };
+  setFindingForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundLocationId: string; foundQty: string; notes: string }>>;
   submitFinding: () => Promise<void>;
   saving: boolean;
   error: string | null;
@@ -988,7 +991,7 @@ function CounterAuditView({
             <CounterSessionMenu userName={userName} signOut={signOut} />
           </div>
         </div>
-        {tab === 'conteo' ? <><div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center"><div><p className="text-xs font-black uppercase tracking-wide text-gray-500">Filtrar asignaciones por origen</p><p className="mt-1 text-xs text-gray-500">{filteredLocations.length} locaciones visibles</p></div><div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar asignaciones por origen">{sourceOptions.map(option => <button key={option.value} type="button" aria-pressed={sourceFilter === option.value} disabled={option.count === 0} onClick={() => { setSourceFilter(option.value); setPage(1); }} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${sourceFilter === option.value ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}>{option.label}<span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px]">{option.count}</span></button>)}</div></div><div className="space-y-4">{grouped.map(({ location, items: locationItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={locationItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} locationCount={filteredLocations.length} setPage={setPage} /></> : <CounterFindingForm catalog={findingCatalog} catalogLoading={findingCatalogLoading} catalogError={findingCatalogError} onLoadCatalog={onLoadFindingCatalog} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}
+        {tab === 'conteo' ? <><div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center"><div><p className="text-xs font-black uppercase tracking-wide text-gray-500">Filtrar asignaciones por origen</p><p className="mt-1 text-xs text-gray-500">{filteredLocations.length} locaciones visibles</p></div><div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar asignaciones por origen">{sourceOptions.map(option => <button key={option.value} type="button" aria-pressed={sourceFilter === option.value} disabled={option.count === 0} onClick={() => { setSourceFilter(option.value); setPage(1); }} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${sourceFilter === option.value ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}>{option.label}<span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px]">{option.count}</span></button>)}</div></div><div className="space-y-4">{grouped.map(({ location, items: locationItems }) => <CounterLocationCard key={location.id} location={location} items={locationItems} allItems={locationItems} countInputs={countInputs} setCountInputs={setCountInputs} submitCount={submitCount} completeLocation={completeLocation} saving={saving} />)}</div><CounterPagination page={page} totalPages={totalPages} locationCount={filteredLocations.length} setPage={setPage} /></> : <CounterFindingForm locations={auditLocations} catalog={findingCatalog} catalogLoading={findingCatalogLoading} catalogError={findingCatalogError} onLoadCatalog={onLoadFindingCatalog} form={findingForm} setForm={setFindingForm} onSubmit={submitFinding} saving={saving} />}
       </>}
     </div>
   );
@@ -1046,7 +1049,17 @@ function CounterPagination({ page, totalPages, locationCount, setPage }: { page:
   return <div className="flex flex-col justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm shadow-sm sm:flex-row sm:items-center"><p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{firstLocation}–{lastLocation}</strong> de <strong className="text-gray-800">{locationCount}</strong> locaciones</p><div className="flex items-center gap-2"><button type="button" disabled={page === 1} onClick={() => setPage(Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button><span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {page} de {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage(Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button></div></div>;
 }
 
-function CounterFindingForm({ catalog, catalogLoading, catalogError, onLoadCatalog, form, setForm, onSubmit, saving }: { catalog: FindingCatalogPart[]; catalogLoading: boolean; catalogError: string | null; onLoadCatalog: () => Promise<void>; form: { partNumber: string; foundRack: string; foundQty: string; notes: string }; setForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundRack: string; foundQty: string; notes: string }>>; onSubmit: () => Promise<void>; saving: boolean }) {
+function CounterFindingForm({ locations, catalog, catalogLoading, catalogError, onLoadCatalog, form, setForm, onSubmit, saving }: {
+  locations: PhysicalAuditLocation[];
+  catalog: FindingCatalogPart[];
+  catalogLoading: boolean;
+  catalogError: string | null;
+  onLoadCatalog: () => Promise<void>;
+  form: { partNumber: string; foundLocationId: string; foundQty: string; notes: string };
+  setForm: React.Dispatch<React.SetStateAction<{ partNumber: string; foundLocationId: string; foundQty: string; notes: string }>>;
+  onSubmit: () => Promise<void>;
+  saving: boolean;
+}) {
   const [partPickerOpen, setPartPickerOpen] = useState(false);
   const [partSearch, setPartSearch] = useState('');
   const selectedPart = catalog.find(part => part.part_number.toLocaleUpperCase('es-MX') === form.partNumber.toLocaleUpperCase('es-MX'));
@@ -1055,6 +1068,10 @@ function CounterFindingForm({ catalog, catalogLoading, catalogError, onLoadCatal
     if (!term) return catalog;
     return catalog.filter(part => part.part_number.toLocaleLowerCase('es-MX').includes(term) || (part.description ?? '').toLocaleLowerCase('es-MX').includes(term));
   }, [catalog, partSearch]);
+  const availableLocations = useMemo(() => locations
+    .filter(location => location.status !== 'omitida')
+    .sort((a, b) => a.location_code.localeCompare(b.location_code, 'es', { numeric: true }) || a.rack.localeCompare(b.rack, 'es', { numeric: true })),
+  [locations]);
 
   useEffect(() => {
     if (!partPickerOpen) return;
@@ -1088,7 +1105,7 @@ function CounterFindingForm({ catalog, catalogLoading, catalogError, onLoadCatal
               </button>
             </Field>
             <Field label="Descripción"><input value={selectedPart?.description ?? ''} readOnly className="field-input bg-gray-50 text-gray-500" placeholder="Aparece automáticamente" /></Field>
-            <Field label="Rack donde se encontró"><input required value={form.foundRack} onChange={event => setForm(current => ({ ...current, foundRack: event.target.value }))} className="field-input" placeholder="Ej. A" /></Field>
+            <Field label="Locación asignada donde se encontró"><select required value={form.foundLocationId} onChange={event => setForm(current => ({ ...current, foundLocationId: event.target.value }))} className="field-input"><option value="">Seleccionar locación asignada</option>{availableLocations.map(location => <option key={location.id} value={location.id}>{location.location_code} · Rack {location.rack} · {location.source === 'kitto' ? 'Kitteo' : 'Almacén'}</option>)}</select></Field>
             <Field label="Cantidad encontrada"><input type="number" min="0" value={form.foundQty} onChange={event => setForm(current => ({ ...current, foundQty: event.target.value }))} className="field-input" placeholder="Cantidad" /></Field>
             <div className="md:col-span-2"><Field label="Comentario opcional"><textarea value={form.notes} onChange={event => setForm(current => ({ ...current, notes: event.target.value }))} className="field-input min-h-24 py-3" placeholder="Agrega una nota para el supervisor..." /></Field></div>
           </div>
