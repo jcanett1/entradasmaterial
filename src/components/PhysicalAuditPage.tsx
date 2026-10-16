@@ -132,7 +132,7 @@ const formatStatus = (status: PhysicalAuditStatus | string) => ({
   pendiente_revision: 'Pendiente de revisión',
   validado: 'Validado',
   rechazado: 'Rechazado',
-  aplicado: 'Aplicado',
+  aplicado: 'Contado automáticamente',
   recontar: 'Recontar',
 }[status] ?? status);
 
@@ -618,7 +618,9 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
     const selectedPart = findingCatalog.find(part => part.part_number.toLocaleUpperCase('es-MX') === findingForm.partNumber.toLocaleUpperCase('es-MX'));
     const matchingAuditItem = counterItems.find(item => item.part_number.toLocaleUpperCase('es-MX') === findingForm.partNumber.toLocaleUpperCase('es-MX'));
     const matchingAuditLocation = matchingAuditItem ? auditLocations.find(location => location.id === matchingAuditItem.audit_location_id) ?? null : null;
-    const auditLocation = matchingAuditLocation ?? auditLocations[0] ?? null;
+    const foundRackKey = findingForm.foundRack.trim().replace(/^rack\s+/i, '').toLocaleUpperCase('es-MX');
+    const matchingRackLocation = auditLocations.find(location => location.rack.trim().toLocaleUpperCase('es-MX') === foundRackKey) ?? null;
+    const auditLocation = matchingRackLocation ?? matchingAuditLocation ?? auditLocations[0] ?? null;
     if (!activeAuditId || !selectedPart || !auditLocation || !findingForm.foundRack.trim() || findingForm.foundQty.trim() === '') {
       window.alert('Selecciona el número de parte, el rack donde se encontró y la cantidad encontrada.');
       return;
@@ -631,19 +633,19 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
       p_description: selectedPart.description || matchingAuditItem?.description || null,
       p_expected_location_code: matchingAuditLocation?.location_code ?? null,
       p_found_location_code: `Rack ${findingForm.foundRack.trim()}`,
-      p_found_rack: null,
+      p_found_rack: findingForm.foundRack.trim() || null,
       p_found_qty: Math.floor(Number(findingForm.foundQty)),
       p_po: matchingAuditItem?.po ?? null,
       p_fifo_number: matchingAuditItem?.fifo_number ?? null,
       p_notes: findingForm.notes.trim() || null,
-      p_expected_location_id: matchingAuditLocation?.location_id ?? null,
+      p_expected_location_id: matchingAuditLocation?.source === 'normal' ? matchingAuditLocation.location_id : null,
       p_expected_location_item_id: null,
       p_found_location_id: null,
     });
     if (findingError) window.alert(`No se pudo enviar el hallazgo: ${findingError.message}`);
     else {
       setFindingForm({ partNumber: '', foundRack: '', foundQty: '', notes: '' });
-      window.alert('Hallazgo enviado para revisión del supervisor.');
+      window.alert('Hallazgo registrado y contabilizado automáticamente. Aparece en Material encontrado.');
       await loadAuditData(activeAuditId);
     }
     setSaving(false);
@@ -1101,7 +1103,35 @@ function AuditResultDetailModal({ item, location, audit, profiles, saving, onClo
 }
 
 function FindingsView({ findings, onReview }: { findings: PhysicalAuditFinding[]; onReview: (finding: PhysicalAuditFinding, status: 'validado' | 'rechazado') => Promise<void> }) {
-  return <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="flex flex-col justify-between gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center"><div><h3 className="font-black text-gray-900">Material encontrado</h3><p className="mt-1 text-xs text-gray-500">Revisa piezas reportadas en una locación diferente a la esperada.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">{findings.filter(finding => finding.status === 'pendiente_revision').length} pendientes</span></div><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Número de parte</th><th className="px-4 py-3">Esperada</th><th className="px-4 py-3">Encontrada en</th><th className="px-4 py-3">Cantidad</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Acción</th></tr></thead><tbody>{findings.map(finding => <tr key={finding.id} className="border-t border-gray-100"><td className="px-4 py-4 text-gray-500">{formatDate(finding.created_at)}</td><td className="px-4 py-4 font-mono font-bold text-indigo-700">{finding.part_number}</td><td className="px-4 py-4 font-mono">{finding.expected_location_code || '—'}</td><td className="px-4 py-4 font-mono font-bold">{finding.found_location_code}{finding.found_rack ? ` · Rack ${finding.found_rack}` : ''}</td><td className="px-4 py-4 font-bold">{finding.found_qty}</td><td className="px-4 py-4"><StatusBadge status={finding.status} /></td><td className="px-4 py-4">{finding.status === 'pendiente_revision' ? <div className="flex gap-2"><button type="button" onClick={() => void onReview(finding, 'validado')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 font-bold text-white">Validar</button><button type="button" onClick={() => void onReview(finding, 'rechazado')} className="rounded-lg bg-red-50 px-2.5 py-1.5 font-bold text-red-700">Rechazar</button></div> : <span className="text-gray-400">Revisado</span>}</td></tr>)}</tbody></table></div>{findings.length === 0 && <div className="p-10 text-center text-sm text-gray-500">No hay material encontrado reportado en esta auditoría.</div>}</div>;
+  const foundAt = (finding: PhysicalAuditFinding) => {
+    const locationCode = finding.found_location_code.trim();
+    if (!finding.found_rack) return locationCode;
+    return /^rack\s+/i.test(locationCode) ? locationCode : `${locationCode} · Rack ${finding.found_rack}`;
+  };
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+      <div className="flex flex-col justify-between gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center">
+        <div><h3 className="font-black text-gray-900">Material encontrado</h3><p className="mt-1 text-xs text-gray-500">Consulta los hallazgos; los nuevos se contabilizan automáticamente.</p></div>
+        <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">{findings.filter(finding => finding.status === 'pendiente_revision').length} pendientes de revisión</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[980px] text-left text-xs">
+          <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Número de parte</th><th className="px-4 py-3">Esperada</th><th className="px-4 py-3">Encontrada en</th><th className="px-4 py-3">Cantidad</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Acción</th></tr></thead>
+          <tbody>{findings.map(finding => <tr key={finding.id} className="border-t border-gray-100">
+            <td className="px-4 py-4 text-gray-500">{formatDate(finding.created_at)}</td>
+            <td className="px-4 py-4 font-mono font-bold text-indigo-700">{finding.part_number}</td>
+            <td className="px-4 py-4 font-mono">{finding.expected_location_code || '—'}</td>
+            <td className="px-4 py-4 font-mono font-bold">{foundAt(finding)}</td>
+            <td className="px-4 py-4 font-bold">{finding.found_qty}</td>
+            <td className="px-4 py-4"><StatusBadge status={finding.status} /></td>
+            <td className="px-4 py-4">{finding.status === 'pendiente_revision' ? <div className="flex gap-2"><button type="button" onClick={() => void onReview(finding, 'validado')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 font-bold text-white">Validar</button><button type="button" onClick={() => void onReview(finding, 'rechazado')} className="rounded-lg bg-red-50 px-2.5 py-1.5 font-bold text-red-700">Rechazar</button></div> : finding.status === 'aplicado' ? <span className="font-bold text-emerald-700">Contado automáticamente</span> : <span className="text-gray-400">Revisado</span>}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      {findings.length === 0 && <div className="p-10 text-center text-sm text-gray-500">No hay material encontrado reportado en esta auditoría.</div>}
+    </div>
+  );
 }
 
 function CreateAuditModal({ form, setForm, counters, locations, loading, saving, onClose, onAddAssignment, onRemoveAssignment, onCreate }: { form: CreateAuditForm; setForm: React.Dispatch<React.SetStateAction<CreateAuditForm>>; counters: CounterProfile[]; locations: ReferenceLocation[]; loading: boolean; saving: boolean; onClose: () => void; onAddAssignment: (assignment: AuditAssignmentDraft) => void; onRemoveAssignment: (index: number) => void; onCreate: () => Promise<void> }) {
