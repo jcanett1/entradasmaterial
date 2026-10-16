@@ -78,6 +78,25 @@ type SystemSource = {
   qty?: number | null;
 };
 
+type LocationItemSource = {
+  location_id: number | string | null;
+  part_number: string | null;
+  qty: number | string | null;
+};
+
+type LocationSource = {
+  id: number | string;
+  status: string | null;
+  part_number: string | null;
+  qty: number | string | null;
+};
+
+type PartLocationBalance = { partNumber: string; quantity: number };
+type LocationBalances = {
+  warehouse: Map<string, PartLocationBalance>;
+  kitteo: Map<string, PartLocationBalance>;
+};
+
 type PhysicalSource = {
   part_number: string | null;
   description: string | null;
@@ -95,6 +114,8 @@ type ComparisonRow = {
   corporateQty: number | null;
   hasSystem: boolean;
   systemQty: number | null;
+  warehouseQty: number | null;
+  kitteoQty: number | null;
   physicalQty: number | null;
   physicalItemCount: number;
   physicalCountedItems: number;
@@ -112,6 +133,8 @@ type StoredComparisonRow = {
   corporate_on_hand: number | string | null;
   has_system: boolean;
   system_units: number | string | null;
+  warehouse_units: number | string | null;
+  kitteo_units: number | string | null;
   physical_counted: number | string | null;
   physical_audit_item_count: number;
   physical_audit_counted_items: number;
@@ -123,7 +146,7 @@ type StoredComparisonRow = {
 const PAGE_SIZE = 1000;
 const INSERT_BATCH_SIZE = 300;
 const RESULT_PAGE_SIZE = 25;
-const SYSTEM_QUANTITY_RULE = 'Saldo neto por Inventory ID: suma de entries.total_units menos salidas definitivas de shipping_direct (excluye devoluciones) y kitteo_exits. No se restan transferes porque son movimientos internos. El saldo mostrado tiene piso 0 cuando las salidas superan lo registrado, conforme al esquema de comparación.';
+const SYSTEM_QUANTITY_RULE = 'Saldo neto por número de parte: suma de entries.total_units menos salidas definitivas de shipping_direct (excluye devoluciones) y kitteo_exits. No se restan transferes porque son movimientos internos. El saldo mostrado tiene piso 0 cuando las salidas superan lo registrado. Almacén y KITTEO guardan las cantidades asignadas a sus locaciones al momento de la comparación.';
 const numberFormat = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 });
 const formatNumber = (value: number) => numberFormat.format(value);
 const formatDifference = (value: number) => value > 0 ? `+${formatNumber(value)}` : formatNumber(value);
@@ -222,6 +245,65 @@ async function fetchAllPages<T>(fetchPage: (from: number, to: number) => Promise
   return rows;
 }
 
+function aggregateLocationQuantities(locations: LocationSource[], items: LocationItemSource[]) {
+  const balances = new Map<string, PartLocationBalance>();
+  const locationsWithItemRows = new Set<number>();
+  const addQuantity = (partNumber: string | null, qty: number | string | null) => {
+    const key = normalizeInventoryId(partNumber);
+    if (!key || !partNumber?.trim()) return;
+    const existing = balances.get(key);
+    balances.set(key, {
+      partNumber: existing?.partNumber ?? partNumber.trim(),
+      quantity: (existing?.quantity ?? 0) + (asNumber(qty) ?? 0),
+    });
+  };
+
+  items.forEach(item => {
+    const locationId = asNumber(item.location_id);
+    if (locationId !== null) locationsWithItemRows.add(locationId);
+    addQuantity(item.part_number, item.qty);
+  });
+
+  // Locaciones antiguas pueden conservar su única partida en la fila padre.
+  locations.forEach(location => {
+    const locationId = asNumber(location.id);
+    if (locationId === null || locationsWithItemRows.has(locationId) || location.status?.toLowerCase() !== 'ocupado') return;
+    addQuantity(location.part_number, location.qty);
+  });
+
+  return balances;
+}
+
+async function fetchCurrentLocationBalances(): Promise<LocationBalances> {
+  const [warehouseLocations, warehouseItems, kitteoLocations, kitteoItems] = await Promise.all([
+    fetchAllPages<LocationSource>(async (from, to) => {
+      const { data, error } = await supabase.from('locations')
+        .select('id, status, part_number, qty').order('id', { ascending: true }).range(from, to);
+      return { data: (data ?? []) as LocationSource[], error };
+    }),
+    fetchAllPages<LocationItemSource>(async (from, to) => {
+      const { data, error } = await supabase.from('location_items')
+        .select('location_id, part_number, qty').order('id', { ascending: true }).range(from, to);
+      return { data: (data ?? []) as LocationItemSource[], error };
+    }),
+    fetchAllPages<LocationSource>(async (from, to) => {
+      const { data, error } = await supabase.from('kitteo_locations')
+        .select('id, status, part_number, qty').order('id', { ascending: true }).range(from, to);
+      return { data: (data ?? []) as LocationSource[], error };
+    }),
+    fetchAllPages<LocationItemSource>(async (from, to) => {
+      const { data, error } = await supabase.from('kitteo_location_items')
+        .select('location_id, part_number, qty').order('id', { ascending: true }).range(from, to);
+      return { data: (data ?? []) as LocationItemSource[], error };
+    }),
+  ]);
+
+  return {
+    warehouse: aggregateLocationQuantities(warehouseLocations, warehouseItems),
+    kitteo: aggregateLocationQuantities(kitteoLocations, kitteoItems),
+  };
+}
+
 function mapStoredRow(row: StoredComparisonRow): ComparisonRow {
   const corporateQty = row.corporate_on_hand === null ? null : Number(row.corporate_on_hand);
   const systemQty = row.system_units === null ? null : Number(row.system_units);
@@ -245,6 +327,8 @@ function mapStoredRow(row: StoredComparisonRow): ComparisonRow {
     corporateQty,
     hasSystem: row.has_system,
     systemQty,
+    warehouseQty: row.warehouse_units === null ? null : Number(row.warehouse_units),
+    kitteoQty: row.kitteo_units === null ? null : Number(row.kitteo_units),
     physicalQty,
     physicalItemCount: Number(row.physical_audit_item_count),
     physicalCountedItems: Number(row.physical_audit_counted_items),
@@ -261,6 +345,7 @@ function buildComparisonRows(
   shippingDirect: SystemSource[],
   kitteoExits: SystemSource[],
   physicalRows: PhysicalSource[],
+  locationBalances: LocationBalances,
 ) {
   const corporateById = new Map<string, { inventoryId: string; description: string; onHand: number }>();
   corporateRows.forEach(row => {
@@ -319,11 +404,20 @@ function buildComparisonRows(
     physicalById.set(key, existing);
   });
 
-  const allIds = new Set([...corporateById.keys(), ...systemBalances.keys(), ...physicalById.keys()]);
+  const allIds = new Set([
+    ...corporateById.keys(),
+    ...systemBalances.keys(),
+    ...locationBalances.warehouse.keys(),
+    ...locationBalances.kitteo.keys(),
+    ...physicalById.keys(),
+  ]);
   const rows = [...allIds].map(key => {
     const corporate = corporateById.get(key);
     const system = systemBalances.get(key);
+    const warehouse = locationBalances.warehouse.get(key);
+    const kitteo = locationBalances.kitteo.get(key);
     const physical = physicalById.get(key);
+    const hasLocationInventory = Boolean(warehouse || kitteo);
     const physicalCountStatus: PhysicalCountStatus = !physical
       ? 'not_audited'
       : physical.countedItems === 0
@@ -331,26 +425,29 @@ function buildComparisonRows(
         : physical.countedItems < physical.totalItems ? 'partial' : 'complete';
     const physicalQty = physical && physical.countedItems > 0 ? physical.quantity : null;
     const corporateQty = corporate?.onHand ?? null;
-    const systemQty = system?.units ?? null;
+    const systemQty = system?.units ?? (hasLocationInventory ? 0 : null);
     const differenceSystemCorporate = (systemQty ?? 0) - (corporateQty ?? 0);
     const differencePhysicalCorporate = corporateQty !== null && physicalCountStatus === 'complete' && physicalQty !== null
       ? physicalQty - corporateQty
       : null;
-    const status: ComparisonStatus = !corporate && !system && physical
+    const hasSystem = Boolean(system) || hasLocationInventory;
+    const status: ComparisonStatus = !corporate && !hasSystem && physical
       ? 'physical-only'
       : !corporate
         ? 'system-only'
-        : !system
+        : !hasSystem
           ? 'corporate-only'
           : differenceSystemCorporate === 0 ? 'match' : 'difference';
     return {
       key,
-      inventoryId: corporate?.inventoryId ?? system?.partNumber ?? physical?.partNumber ?? key,
+      inventoryId: corporate?.inventoryId ?? system?.partNumber ?? warehouse?.partNumber ?? kitteo?.partNumber ?? physical?.partNumber ?? key,
       description: corporate?.description || system?.description || physical?.description || 'Sin descripción',
       hasCorporate: Boolean(corporate),
       corporateQty,
-      hasSystem: Boolean(system),
+      hasSystem,
       systemQty,
+      warehouseQty: warehouse?.quantity ?? 0,
+      kitteoQty: kitteo?.quantity ?? 0,
       physicalQty,
       physicalItemCount: physical?.totalItems ?? 0,
       physicalCountedItems: physical?.countedItems ?? 0,
@@ -418,7 +515,7 @@ export function InventoryComparisonPage() {
     const stored = await fetchAllPages<StoredComparisonRow>(async (from, to) => {
       const { data, error } = await supabase
         .from('inventory_comparison_items')
-        .select('inventory_id, normalized_inventory_id, description, has_corporate, corporate_on_hand, has_system, system_units, physical_counted, physical_audit_item_count, physical_audit_counted_items, physical_count_status, difference_system_corporate, difference_physical_corporate')
+        .select('inventory_id, normalized_inventory_id, description, has_corporate, corporate_on_hand, has_system, system_units, warehouse_units, kitteo_units, physical_counted, physical_audit_item_count, physical_audit_counted_items, physical_count_status, difference_system_corporate, difference_physical_corporate')
         .eq('comparison_run_id', runId)
         .order('normalized_inventory_id', { ascending: true })
         .range(from, to);
@@ -603,7 +700,7 @@ export function InventoryComparisonPage() {
     setNotice('');
     let createdRunId: string | null = null;
     try {
-      const [corporateRows, entryRows, shippingRows, kitteoExitRows, physicalRows] = await Promise.all([
+      const [corporateRows, entryRows, shippingRows, kitteoExitRows, physicalRows, locationBalances] = await Promise.all([
         fetchAllPages<CorporateRow>(async (from, to) => {
           const { data, error } = await supabase
             .from('inventory_balance_items')
@@ -639,6 +736,7 @@ export function InventoryComparisonPage() {
           return { data: (data ?? []) as SystemSource[], error };
         }),
         selectedAuditId ? loadAuditItems(Number(selectedAuditId)) : Promise.resolve([] as PhysicalSource[]),
+        fetchCurrentLocationBalances(),
       ]);
 
       if (corporateRows.length === 0) throw new Error('El balance seleccionado no tiene filas guardadas.');
@@ -648,6 +746,7 @@ export function InventoryComparisonPage() {
         shippingRows,
         kitteoExitRows,
         physicalRows,
+        locationBalances,
       );
       if (rows.length === 0) throw new Error('No se generaron filas para comparar.');
 
@@ -675,6 +774,8 @@ export function InventoryComparisonPage() {
         corporate_on_hand: row.corporateQty,
         has_system: row.hasSystem,
         system_units: row.systemQty,
+        warehouse_units: row.warehouseQty,
+        kitteo_units: row.kitteoQty,
         physical_counted: row.physicalQty,
         physical_audit_item_count: row.physicalItemCount,
         physical_audit_counted_items: row.physicalCountedItems,
@@ -763,6 +864,8 @@ export function InventoryComparisonPage() {
       'Inventory ID',
       'Description',
       'On Hand (corporativo)',
+      'Almacén',
+      'KITTEO',
       'Unidades / Sistema (saldo neto)',
       'Físicamente contado (physical_audit_items.found_qty)',
       'Estado del conteo físico',
@@ -776,6 +879,8 @@ export function InventoryComparisonPage() {
       row.inventoryId,
       row.description,
       row.corporateQty ?? '',
+      row.warehouseQty ?? '',
+      row.kitteoQty ?? '',
       row.systemQty ?? '',
       row.physicalQty ?? '',
       physicalStatusLabels[row.physicalCountStatus],
@@ -888,7 +993,7 @@ export function InventoryComparisonPage() {
         <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700"><Database className="h-4 w-4" /></span>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-extrabold text-amber-900">Unidades / Sistema · saldo actual neto</p>
-          <p className="mt-0.5 text-[11px] leading-5 text-amber-800">Suma <code>entries.total_units</code>, resta <code>shipping_direct.qty</code> no devuelto y <code>kitteo_exits.qty</code>. Las transferencias internas no se descuentan. Si las salidas históricas exceden lo registrado para un ID, el saldo se muestra en 0 y se indica abajo.</p>
+          <p className="mt-0.5 text-[11px] leading-5 text-amber-800">Sistema-Neto sigue siendo el total: suma <code>entries.total_units</code> y resta salidas no devueltas de <code>shipping_direct.qty</code> y salidas de <code>kitteo_exits.qty</code>; las transferencias internas no se descuentan. Almacén y KITTEO muestran por separado lo asignado a sus locaciones al guardar la comparación; pueden no sumar el total si hay material sin ubicación o movimientos pendientes.</p>
         </div>
       </section>
 
@@ -904,6 +1009,7 @@ export function InventoryComparisonPage() {
       {fileError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs leading-5 text-red-800"><CircleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" /><span className="flex-1">{fileError}</span><button type="button" aria-label="Cerrar error" onClick={() => setFileError('')}><X className="h-4 w-4" /></button></div>}
       {notice && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" /><span className="flex-1">{notice}</span><button type="button" aria-label="Cerrar aviso" onClick={() => setNotice('')}><X className="h-4 w-4" /></button></div>}
       {negativeSystemBalanceCount > 0 && <div role="status" className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900"><AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" /><span>En {formatNumber(negativeSystemBalanceCount)} Inventory ID, las salidas definitivas registradas exceden las entradas. Conforme al esquema, el saldo neto se limitó a 0 en vez de guardar una cantidad negativa.</span></div>}
+      {comparisonRows.some(row => row.warehouseQty === null || row.kitteoQty === null) && <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-800">Este snapshot histórico es anterior al desglose por Almacén y KITTEO. Vuelve a ejecutar la comparación para guardar esos saldos.</div>}
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard label="Coinciden" value={counts.match} detail="Mismo saldo sistema/corporativo" tone="green" icon={<CheckCircle2 className="h-5 w-5" />} />
@@ -947,13 +1053,15 @@ export function InventoryComparisonPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1370px] border-collapse">
+          <table className="w-full min-w-[1570px] border-collapse">
             <thead className="bg-gradient-to-r from-slate-50 to-indigo-50/60">
               <tr>
                 <th className="px-4 py-3 text-left text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Inventory ID</th>
                 <th className="px-3 py-3 text-left text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Descripción</th>
                 <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">On Hand<br /><span className="text-[8px] text-gray-400">Corporativo</span></th>
-                <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Unidades<br /><span className="text-[8px] text-gray-400">Sistema · neto</span></th>
+                <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Almacén<br /><span className="text-[8px] text-gray-400">Asignado a racks</span></th>
+                <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">KITTEO<br /><span className="text-[8px] text-gray-400">Asignado a locaciones</span></th>
+                <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Unidades<br /><span className="text-[8px] text-gray-400">Sistema-Neto · total</span></th>
                 <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Físicamente<br /><span className="text-[8px] text-gray-400">Contado · found_qty</span></th>
                 <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Diferencia<br /><span className="text-[8px] text-gray-400">Sistema − corporativo</span></th>
                 <th className="px-3 py-3 text-right text-[9px] font-extrabold uppercase tracking-wider text-gray-500">Diferencia<br /><span className="text-[8px] text-gray-400">Físico − corporativo</span></th>
@@ -965,20 +1073,25 @@ export function InventoryComparisonPage() {
                 const status = statusInfo[row.status];
                 const StatusIcon = status.icon;
                 const differenceClass = (difference: number) => difference === 0
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : difference > 0 ? 'border-orange-200 bg-orange-50 text-orange-700' : 'border-red-200 bg-red-50 text-red-700';
+                  ? 'border-gray-200 bg-gray-50 text-gray-500'
+                  : difference > 0 ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-red-200 bg-red-50 text-red-700';
+                const rowStatusClass = row.status === 'difference'
+                  ? row.differenceSystemCorporate > 0 ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-red-50 text-red-700 border-red-200'
+                  : status.className;
                 return <tr key={row.key} className={`border-b border-gray-100 last:border-0 hover:bg-indigo-50/50 ${index % 2 ? 'bg-slate-50/60' : 'bg-white'}`}>
                   <td className="px-4 py-3"><span className="inline-block max-w-[220px] truncate rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 font-mono text-[10px] font-bold text-indigo-700" title={row.inventoryId}>{row.inventoryId}</span></td>
                   <td className="max-w-[260px] truncate px-3 py-3 text-xs text-gray-600" title={row.description}>{row.description}</td>
                   <td className="px-3 py-3 text-right text-xs font-extrabold tabular-nums text-gray-800">{row.corporateQty === null ? <span className="text-gray-300">—</span> : formatNumber(row.corporateQty)}</td>
+                  <td className="px-3 py-3 text-right text-xs font-extrabold tabular-nums text-gray-800">{row.warehouseQty === null ? <span className="text-gray-300">—</span> : formatNumber(row.warehouseQty)}</td>
+                  <td className="px-3 py-3 text-right text-xs font-extrabold tabular-nums text-gray-800">{row.kitteoQty === null ? <span className="text-gray-300">—</span> : formatNumber(row.kitteoQty)}</td>
                   <td className="px-3 py-3 text-right text-xs font-extrabold tabular-nums text-gray-800">{row.systemQty === null ? <span className="text-gray-300">—</span> : formatNumber(row.systemQty)}</td>
                   <td className="px-3 py-3 text-right"><div className="flex flex-col items-end gap-1"><strong className="text-xs tabular-nums text-gray-800">{row.physicalQty === null ? <span className="text-gray-300">—</span> : formatNumber(row.physicalQty)}</strong><span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-extrabold ${row.physicalCountStatus === 'complete' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : row.physicalCountStatus === 'partial' ? 'border-amber-200 bg-amber-50 text-amber-700' : row.physicalCountStatus === 'pending' ? 'border-orange-200 bg-orange-50 text-orange-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>{physicalStatusLabels[row.physicalCountStatus]}</span></div></td>
                   <td className="px-3 py-3 text-right"><span className={`inline-flex min-w-12 justify-center rounded-full border px-2 py-1 text-[10px] font-extrabold tabular-nums ${differenceClass(row.differenceSystemCorporate)}`}>{formatDifference(row.differenceSystemCorporate)}</span></td>
                   <td className="px-3 py-3 text-right">{row.differencePhysicalCorporate === null ? <span className="text-xs text-gray-300">—</span> : <span className={`inline-flex min-w-12 justify-center rounded-full border px-2 py-1 text-[10px] font-extrabold tabular-nums ${differenceClass(row.differencePhysicalCorporate)}`}>{formatDifference(row.differencePhysicalCorporate)}</span>}</td>
-                  <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-extrabold ${status.className}`}><StatusIcon className="h-3.5 w-3.5" />{status.label}</span></td>
+                  <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-extrabold ${rowStatusClass}`}><StatusIcon className="h-3.5 w-3.5" />{status.label}</span></td>
                 </tr>;
               })}
-              {filteredRows.length === 0 && <tr><td colSpan={8} className="h-40 text-center text-xs text-gray-400"><div className="flex flex-col items-center gap-2"><Search className="h-5 w-5" /><strong className="text-gray-600">{comparisonRows.length === 0 ? 'Aún no hay una comparación guardada' : 'No hay resultados para este filtro'}</strong><span>{comparisonRows.length === 0 ? 'Guarda un balance y pulsa “Comparar y guardar resultado”.' : 'Prueba otra búsqueda o selecciona “Todos”.'}</span></div></td></tr>}
+              {filteredRows.length === 0 && <tr><td colSpan={10} className="h-40 text-center text-xs text-gray-400"><div className="flex flex-col items-center gap-2"><Search className="h-5 w-5" /><strong className="text-gray-600">{comparisonRows.length === 0 ? 'Aún no hay una comparación guardada' : 'No hay resultados para este filtro'}</strong><span>{comparisonRows.length === 0 ? 'Guarda un balance y pulsa “Comparar y guardar resultado”.' : 'Prueba otra búsqueda o selecciona “Todos”.'}</span></div></td></tr>}
             </tbody>
           </table>
         </div>
