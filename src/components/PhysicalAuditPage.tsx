@@ -111,6 +111,7 @@ type PhysicalAuditRecountState = {
 const PAGE_SIZE = 1000;
 const CHUNK_SIZE = 500;
 const COUNTER_LOCATION_PAGE_SIZE = 50;
+const RESULTS_PAGE_SIZE = 50;
 const CHART_COLORS = ['#059669', '#d97706', '#ef4444', '#cbd5e1'];
 
 const formatDate = (value: string | null | undefined) => {
@@ -855,7 +856,7 @@ export function PhysicalAuditPage({ counterOnly = false }: { counterOnly?: boole
           {auditTab === 'resumen' && <SummaryView rackSummary={rackSummary} totalLocations={totalLocations} completedLocations={completedLocations} totalItems={totalItems} countedItems={countedItems} expectedUnits={expectedUnits} foundUnits={foundUnits} differenceUnits={differenceUnits} correctItems={correctItems} differenceItems={differenceItems} pendingItems={pendingItems} donutData={donutData} />}
           {auditTab === 'asignacion' && <AssignmentView assignments={assignments} auditLocations={auditLocations} counters={counterProfiles} onCreate={() => setShowCreate(true)} onRemove={removeExistingAssignment} />}
           {auditTab === 'monitoreo' && <LiveView assignments={assignments} auditLocations={auditLocations} items={supervisorItems} />}
-          {auditTab === 'resultados' && <><ResultsView items={filteredSupervisorItems} search={partSearch} setSearch={setPartSearch} onSelect={id => { setSelectedPartId(id); setSelectedResultId(id); }} />{selectedResultId !== null && (() => { const result = supervisorItems.find(item => item.id === selectedResultId) ?? null; const resultLocation = result ? auditLocations.find(location => location.id === result.audit_location_id) ?? null : null; return result && resultLocation ? <AuditResultDetailModal item={result} location={resultLocation} audit={activeAudit} profiles={userProfiles} saving={saving} onClose={() => setSelectedResultId(null)} onRequestRecount={requestRecount} /> : null; })()}</>}
+          {auditTab === 'resultados' && <><ResultsView items={filteredSupervisorItems} locations={auditLocations} auditId={activeAuditId} search={partSearch} setSearch={setPartSearch} onSelect={id => { setSelectedPartId(id); setSelectedResultId(id); }} />{selectedResultId !== null && (() => { const result = supervisorItems.find(item => item.id === selectedResultId) ?? null; const resultLocation = result ? auditLocations.find(location => location.id === result.audit_location_id) ?? null : null; return result && resultLocation ? <AuditResultDetailModal item={result} location={resultLocation} audit={activeAudit} profiles={userProfiles} saving={saving} onClose={() => setSelectedResultId(null)} onRequestRecount={requestRecount} /> : null; })()}</>}
           {auditTab === 'hallazgos' && <FindingsView findings={findings} onReview={reviewFinding} />}
         </>
       )}
@@ -1110,8 +1111,151 @@ function LiveView({ assignments, auditLocations, items }: { assignments: Physica
   return <div className="space-y-5"><div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-700"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_#d1fae5]" />Monitoreo en vivo activo: los registros se actualizan cuando un contador guarda una cantidad.</div><div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{assignments.map(assignment => { const locations = auditLocations.filter(location => location.rack === assignment.rack); const done = locations.filter(location => location.status === 'completada').length; const rackItems = items.filter(item => item.rack === assignment.rack); const differences = rackItems.filter(item => item.status === 'faltante' || item.status === 'sobrante').length; const percentage = locations.length ? Math.round((done / locations.length) * 100) : 0; return <div key={assignment.id} className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-100 text-sm font-black text-indigo-700">{assignment.rack}</span><div><h3 className="font-black text-gray-900">Rack {assignment.rack}</h3><p className="mt-1 text-xs text-gray-500">{assignment.contador_user_id.slice(0, 8)} · {done} de {locations.length} locaciones</p></div></div><StatusBadge status={assignment.status} /></div><div className="mt-5 h-2 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-indigo-600 transition-all" style={{ width: `${percentage}%` }} /></div><div className="mt-2 flex justify-between text-xs"><strong className="text-indigo-700">{percentage}%</strong><span className="text-gray-500">{differences} diferencias</span></div></div>; })}</div><div className="rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="border-b border-gray-100 px-5 py-4"><h3 className="font-black text-gray-900">Últimas capturas</h3><p className="mt-1 text-xs text-gray-500">Ordenadas por la fecha de conteo</p></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-5 py-3">Hora</th><th className="px-5 py-3">Rack / Locación</th><th className="px-5 py-3">Número de parte</th><th className="px-5 py-3">Físico</th><th className="px-5 py-3">Resultado</th></tr></thead><tbody>{items.filter(item => item.counted_at).sort((a, b) => Date.parse(b.counted_at ?? '') - Date.parse(a.counted_at ?? '')).slice(0, 12).map(item => <tr key={item.id} className="border-t border-gray-100"><td className="px-5 py-4 text-gray-500">{formatDate(item.counted_at)}</td><td className="px-5 py-4 font-mono font-bold text-indigo-700">{item.rack} · {item.location_code}</td><td className="px-5 py-4 font-mono font-bold">{item.part_number}</td><td className="px-5 py-4 font-bold">{item.found_qty}</td><td className="px-5 py-4"><StatusBadge status={itemDisplayStatus(item)} /></td></tr>)}</tbody></table></div></div></div>;
 }
 
-function ResultsView({ items, search, setSearch, onSelect }: { items: PhysicalAuditSupervisorItem[]; search: string; setSearch: (value: string) => void; onSelect: (id: number) => void }) {
-  return <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm"><div className="flex flex-col justify-between gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center"><div><h3 className="font-black text-gray-900">Resultados de la auditoría</h3><p className="mt-1 text-xs text-gray-500">Comparación entre la cantidad del sistema y el conteo físico.</p></div><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar locación o part number..." className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-xs md:w-72" /></div></div><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3">Locación</th><th className="px-4 py-3">Número de parte</th><th className="px-4 py-3">Sistema</th><th className="px-4 py-3">Físico</th><th className="px-4 py-3">Diferencia</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Capturado</th><th className="px-4 py-3">Acción</th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-t border-gray-100"><td className="px-4 py-4 font-mono font-bold text-indigo-700">{item.location_code}</td><td className="px-4 py-4 font-mono font-bold">{item.part_number}</td><td className="px-4 py-4 font-bold">{item.expected_qty}</td><td className="px-4 py-4 font-bold">{item.found_qty ?? '—'}</td><td className={`px-4 py-4 font-black ${item.difference_qty === null ? 'text-gray-400' : item.difference_qty < 0 ? 'text-red-600' : item.difference_qty > 0 ? 'text-emerald-700' : 'text-gray-500'}`}>{item.difference_qty === null ? '—' : item.difference_qty > 0 ? `+${item.difference_qty}` : item.difference_qty}</td><td className="px-4 py-4"><StatusBadge status={itemDisplayStatus(item)} /></td><td className="px-4 py-4 text-gray-500">{formatDate(item.counted_at)}</td><td className="px-4 py-4"><button type="button" onClick={() => onSelect(item.id)} className="inline-flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1.5 font-bold text-indigo-700"> <Eye className="h-3.5 w-3.5" />Detalle</button></td></tr>)}</tbody></table></div></div>;
+function ResultsView({ items, locations, auditId, search, setSearch, onSelect }: {
+  items: PhysicalAuditSupervisorItem[];
+  locations: PhysicalAuditLocation[];
+  auditId: number | null;
+  search: string;
+  setSearch: (value: string) => void;
+  onSelect: (id: number) => void;
+}) {
+  const [sourceFilter, setSourceFilter] = useState<'all' | AuditLocationSource>('all');
+  const [page, setPage] = useState(1);
+  const sourceByLocationId = useMemo(() => new Map<number, AuditLocationSource>(
+    locations.map(location => [location.id, location.source] as const),
+  ), [locations]);
+  const sourceCounts = useMemo(() => {
+    const counts: Record<AuditLocationSource, number> = { normal: 0, kitto: 0 };
+    items.forEach(item => {
+      const source = sourceByLocationId.get(item.audit_location_id);
+      if (source) counts[source] += 1;
+    });
+    return counts;
+  }, [items, sourceByLocationId]);
+  const sourceOptions: Array<{ value: 'all' | AuditLocationSource; label: string; count: number }> = [
+    { value: 'all', label: 'Todas', count: items.length },
+    { value: 'normal', label: 'Almacén', count: sourceCounts.normal },
+    { value: 'kitto', label: 'Kitto', count: sourceCounts.kitto },
+  ];
+  const orderedItems = useMemo(() => [...items].sort((a, b) => {
+    const sourceRank = (item: PhysicalAuditSupervisorItem) => sourceByLocationId.get(item.audit_location_id) === 'normal' ? 0 : 1;
+    const sourceOrder = sourceRank(a) - sourceRank(b);
+    if (sourceOrder !== 0) return sourceOrder;
+    return a.rack.localeCompare(b.rack, undefined, { numeric: true })
+      || a.location_code.localeCompare(b.location_code, 'es', { numeric: true })
+      || a.part_number.localeCompare(b.part_number, 'es', { numeric: true });
+  }), [items, sourceByLocationId]);
+  const filteredItems = useMemo(() => sourceFilter === 'all'
+    ? orderedItems
+    : orderedItems.filter(item => sourceByLocationId.get(item.audit_location_id) === sourceFilter),
+  [orderedItems, sourceByLocationId, sourceFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / RESULTS_PAGE_SIZE));
+  const pageItems = useMemo(() => {
+    const start = (page - 1) * RESULTS_PAGE_SIZE;
+    return filteredItems.slice(start, start + RESULTS_PAGE_SIZE);
+  }, [filteredItems, page]);
+
+  useEffect(() => {
+    setSourceFilter('all');
+    setPage(1);
+  }, [auditId]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const firstResult = filteredItems.length === 0 ? 0 : (page - 1) * RESULTS_PAGE_SIZE + 1;
+  const lastResult = Math.min(page * RESULTS_PAGE_SIZE, filteredItems.length);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+      <div className="flex flex-col justify-between gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center">
+        <div>
+          <h3 className="font-black text-gray-900">Resultados de la auditoría</h3>
+          <p className="mt-1 text-xs text-gray-500">Comparación entre la cantidad del sistema y el conteo físico.</p>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search}
+            onChange={event => { setSearch(event.target.value); setPage(1); }}
+            placeholder="Buscar locación o part number..."
+            className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-3 text-xs md:w-72"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col justify-between gap-3 border-b border-gray-100 bg-white px-5 py-3 sm:flex-row sm:items-center">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wide text-gray-500">Ver resultados por origen</p>
+          <p className="mt-1 text-xs text-gray-500">{filteredItems.length.toLocaleString()} registros visibles</p>
+        </div>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar resultados por origen">
+          {sourceOptions.map(option => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={sourceFilter === option.value}
+              disabled={option.count === 0}
+              onClick={() => { setSourceFilter(option.value); setPage(1); }}
+              className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${sourceFilter === option.value ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
+            >
+              {option.label}
+              <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px]">{option.count.toLocaleString()}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1100px] text-left text-xs">
+          <thead className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
+            <tr>
+              <th className="px-4 py-3">Locación</th>
+              <th className="px-4 py-3">Origen</th>
+              <th className="px-4 py-3">Número de parte</th>
+              <th className="px-4 py-3">Sistema</th>
+              <th className="px-4 py-3">Físico</th>
+              <th className="px-4 py-3">Diferencia</th>
+              <th className="px-4 py-3">Estado</th>
+              <th className="px-4 py-3">Capturado</th>
+              <th className="px-4 py-3">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageItems.length === 0 ? (
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">No hay resultados para este origen y búsqueda.</td></tr>
+            ) : pageItems.map(item => {
+              const source = sourceByLocationId.get(item.audit_location_id);
+              const sourceLabel = source === 'kitto' ? 'Kitto' : source === 'normal' ? 'Almacén' : '—';
+              return (
+                <tr key={item.id} className="border-t border-gray-100">
+                  <td className="px-4 py-4 font-mono font-bold text-indigo-700">{item.location_code}</td>
+                  <td className="px-4 py-4"><span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${source === 'kitto' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-700'}`}>{sourceLabel}</span></td>
+                  <td className="px-4 py-4 font-mono font-bold">{item.part_number}</td>
+                  <td className="px-4 py-4 font-bold">{item.expected_qty}</td>
+                  <td className="px-4 py-4 font-bold">{item.found_qty ?? '—'}</td>
+                  <td className={`px-4 py-4 font-black ${item.difference_qty === null ? 'text-gray-400' : item.difference_qty < 0 ? 'text-red-600' : item.difference_qty > 0 ? 'text-emerald-700' : 'text-gray-500'}`}>{item.difference_qty === null ? '—' : item.difference_qty > 0 ? `+${item.difference_qty}` : item.difference_qty}</td>
+                  <td className="px-4 py-4"><StatusBadge status={itemDisplayStatus(item)} /></td>
+                  <td className="px-4 py-4 text-gray-500">{formatDate(item.counted_at)}</td>
+                  <td className="px-4 py-4"><button type="button" onClick={() => onSelect(item.id)} className="inline-flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1.5 font-bold text-indigo-700"><Eye className="h-3.5 w-3.5" />Detalle</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex flex-col justify-between gap-3 border-t border-gray-100 px-5 py-4 text-sm sm:flex-row sm:items-center">
+        <p className="text-xs text-gray-500">Mostrando <strong className="text-gray-800">{firstResult}–{lastResult}</strong> de <strong className="text-gray-800">{filteredItems.length.toLocaleString()}</strong> resultados · 50 por página</p>
+        <div className="flex items-center gap-2">
+          <button type="button" disabled={page === 1} onClick={() => setPage(Math.max(1, page - 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">← Anterior</button>
+          <span className="min-w-24 text-center text-xs font-bold text-gray-600">Página {page} de {totalPages}</span>
+          <button type="button" disabled={page === totalPages} onClick={() => setPage(Math.min(totalPages, page + 1))} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40">Siguiente →</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AuditResultDetailModal({ item, location, audit, profiles, saving, onClose, onRequestRecount }: { item: PhysicalAuditSupervisorItem; location: PhysicalAuditLocation; audit: PhysicalAudit | null; profiles: CounterProfile[]; saving: boolean; onClose: () => void; onRequestRecount: (item: PhysicalAuditSupervisorItem) => Promise<void> }) {
