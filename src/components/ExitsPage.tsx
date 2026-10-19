@@ -832,7 +832,79 @@ export function ExitsPage() {
           <p className="text-gray-400 text-sm mt-1">Usa el botón <span className="text-red-500 font-medium">Nueva Transferencia</span> para registrar</p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-gray-200 overflow-hidden">
+        <>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:hidden">
+            {pageExits.map(exit => {
+              const selected = bulkSelectedIds.includes(exit.id);
+              return (
+                <article key={exit.id} className={`rounded-2xl border p-4 shadow-sm transition-colors ${selected ? 'border-red-300 bg-red-50/50' : 'border-gray-200 bg-white'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <label className="flex min-h-10 cursor-pointer items-center gap-2">
+                      <input type="checkbox" checked={selected}
+                        aria-label={`Seleccionar transferencia ${exit.part_number}`}
+                        onChange={() => setBulkSelectedIds(current => current.includes(exit.id) ? current.filter(id => id !== exit.id) : [...current, exit.id])}
+                        className="h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Seleccionar</span>
+                    </label>
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-red-100 bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600">
+                      <LogOut className="h-3.5 w-3.5" />{exit.destination}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Part Number</p>
+                    <p className="mt-1 break-all rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1.5 font-mono text-sm font-bold text-indigo-700">
+                      {exit.part_number}
+                    </p>
+                    {exit.description && <p className="mt-1 text-xs text-gray-500">{exit.description}</p>}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2.5">
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">QTY</p>
+                      <p className="mt-1 text-lg font-black text-blue-700">{exit.qty.toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-xl border border-purple-100 bg-purple-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Cajas</p>
+                      <p className="mt-1 text-lg font-black text-purple-700">{(exit.boxes ?? 0) > 0 ? (exit.boxes ?? 0).toLocaleString() : '—'}</p>
+                    </div>
+                    <div className="min-w-0 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">PO</p>
+                      <p className="mt-1 break-all font-mono text-sm font-semibold text-gray-700">{exit.po || '—'}</p>
+                    </div>
+                    <div className="rounded-xl border border-violet-100 bg-violet-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">FIFO</p>
+                      <p className="mt-1 font-mono text-sm font-bold text-violet-700">{exit.fifo_number != null ? `#${exit.fifo_number}` : '—'}</p>
+                    </div>
+                    <div className="min-w-0 rounded-xl border border-amber-100 bg-amber-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Locación</p>
+                      <p className="mt-1 truncate text-sm font-semibold text-amber-700">{exit.location_code || '—'}</p>
+                    </div>
+                    <div className="min-w-0 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Registrado por</p>
+                      <p className="mt-1 truncate text-sm font-medium text-gray-700">{exit.registered_by || 'Sin registro'}</p>
+                    </div>
+                    <div className="col-span-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Fecha</p>
+                      <p className="mt-1 text-sm font-medium text-gray-700">
+                        {new Date(exit.exited_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        <span className="ml-2 text-xs font-normal text-gray-500">
+                          {new Date(exit.exited_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <button type="button" onClick={() => openKitteoModal(exit)}
+                    className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-bold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 active:scale-[0.99]">
+                    <ArrowRightFromLine className="h-4 w-4" />Salida a KITTEO
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-hidden rounded-2xl border border-gray-200 xl:block">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1180px] border-collapse">
               <thead>
@@ -976,10 +1048,11 @@ export function ExitsPage() {
               )}
             </table>
           </div>
+          </div>
 
           {/* Paginación */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50/60">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3 sm:px-5">
               <p className="text-xs text-gray-500">
                 Mostrando <strong>{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, exitsCount)}</strong> de <strong>{exitsCount}</strong>
               </p>
@@ -998,7 +1071,7 @@ export function ExitsPage() {
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
 
       {bulkKitteoOpen && (
