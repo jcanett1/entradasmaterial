@@ -78,10 +78,16 @@ const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) =>
 
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, isManager, userRol } = useAuth();
+  const isOperator = userRol === 'operador';
 
   // ── Tabs ──
-  const [mainTab, setMainTab] = useState<MainTab>('inventario');
+  const [mainTab, setMainTab] = useState<MainTab>(isOperator ? 'racks' : 'inventario');
+  const visibleMainTab: MainTab = isOperator && mainTab !== 'racks' && mainTab !== 'kitteo' ? 'racks' : mainTab;
   const [rackSubTab, setRackSubTab] = useState<RackSubTab>('locaciones');
+
+  useEffect(() => {
+    if (isOperator && mainTab !== 'racks' && mainTab !== 'kitteo') setMainTab('racks');
+  }, [isOperator, mainTab]);
 
   // ── Inventario ──
   const [records, setRecords] = useState<Entry[]>([]);
@@ -547,44 +553,50 @@ export function Dashboard() {
 
         {/* ── Pestañas principales ── */}
         <div className="flex gap-2 mb-6 bg-white rounded-2xl p-1.5 shadow-sm border border-gray-100 w-fit">
+          {!isOperator && (
+            <>
+              <TabBtn
+                active={visibleMainTab === 'dashboard'}
+                onClick={() => setMainTab('dashboard')}
+                icon={<LayoutDashboard className="h-4 w-4" />}
+                label="Dashboard"
+                color="indigo"
+              />
+              <TabBtn
+                active={visibleMainTab === 'inventario'}
+                onClick={() => setMainTab('inventario')}
+                icon={<ClipboardList className="h-4 w-4" />}
+                label="Inventario"
+                color="indigo"
+              />
+            </>
+          )}
           <TabBtn
-            active={mainTab === 'dashboard'}
-            onClick={() => setMainTab('dashboard')}
-            icon={<LayoutDashboard className="h-4 w-4" />}
-            label="Dashboard"
-            color="indigo"
-          />
-          <TabBtn
-            active={mainTab === 'inventario'}
-            onClick={() => setMainTab('inventario')}
-            icon={<ClipboardList className="h-4 w-4" />}
-            label="Inventario"
-            color="indigo"
-          />
-          <TabBtn
-            active={mainTab === 'racks'}
+            active={visibleMainTab === 'racks'}
             onClick={() => setMainTab('racks')}
             icon={<MapPin className="h-4 w-4" />}
             label="Racks / Locaciones"
             color="emerald"
           />
           <TabBtn
-            active={mainTab === 'kitteo'}
+            active={visibleMainTab === 'kitteo'}
             onClick={() => setMainTab('kitteo')}
             icon={<ArrowRightFromLine className="h-4 w-4" />}
             label="Salidas KITTEO"
             color="orange"
           />
-          <TabBtn
-            active={mainTab === 'reportes'}
-            onClick={() => setMainTab('reportes')}
-            icon={<FileText className="h-4 w-4" />}
-            label="Reportes"
-            color="violet"
-          />
+          {!isOperator && (
+            <TabBtn
+              active={visibleMainTab === 'reportes'}
+              onClick={() => setMainTab('reportes')}
+              icon={<FileText className="h-4 w-4" />}
+              label="Reportes"
+              color="violet"
+            />
+          )}
           {isManager && (
             <TabBtn
-              active={mainTab === 'auditoria'}
+              active={visibleMainTab === 'auditoria'}
               onClick={() => setMainTab('auditoria')}
               icon={<ClipboardCheck className="h-4 w-4" />}
               label="Auditoría Física"
@@ -593,7 +605,7 @@ export function Dashboard() {
           )}
           {isManager && (
             <TabBtn
-              active={mainTab === 'comparacion'}
+              active={visibleMainTab === 'comparacion'}
               onClick={() => setMainTab('comparacion')}
               icon={<ArrowLeftRight className="h-4 w-4" />}
               label="Comparación"
@@ -605,21 +617,21 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: DASHBOARD
         ══════════════════════════════ */}
-        {mainTab === 'dashboard' && <OperationsDashboard />}
+        {!isOperator && visibleMainTab === 'dashboard' && <OperationsDashboard />}
 
         {/* ══════════════════════════════
             PESTAÑA: REPORTES
         ══════════════════════════════ */}
-        {mainTab === 'reportes' && <LocationReports />}
+        {!isOperator && visibleMainTab === 'reportes' && <LocationReports />}
 
-        {mainTab === 'auditoria' && isManager && <PhysicalAuditPage />}
+        {visibleMainTab === 'auditoria' && isManager && <PhysicalAuditPage />}
 
-        {mainTab === 'comparacion' && isManager && <InventoryComparisonPage />}
+        {visibleMainTab === 'comparacion' && isManager && <InventoryComparisonPage />}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO
         ══════════════════════════════ */}
-        {mainTab === 'inventario' && (
+        {!isOperator && visibleMainTab === 'inventario' && (
           <>
             {assignedEntriesError && (
               <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -798,7 +810,7 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: SALIDAS KITTEO
         ══════════════════════════════ */}
-        {mainTab === 'kitteo' && (
+        {visibleMainTab === 'kitteo' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6">
               <KitteoPage />
@@ -809,7 +821,7 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: RACKS / LOCACIONES
         ══════════════════════════════ */}
-        {mainTab === 'racks' && (
+        {visibleMainTab === 'racks' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             {/* Sub-pestañas */}
             <div className="flex gap-0 border-b border-gray-100">
