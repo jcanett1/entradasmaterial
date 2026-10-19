@@ -232,9 +232,12 @@ export function KitteoPage() {
   const [histLoading, setHistLoading] = useState(false);
   const [histRefreshing, setHistRefreshing] = useState(false);
   const [histSearch, setHistSearch] = useState('');
+  const [histSearchQuery, setHistSearchQuery] = useState('');
   const [histFromDate, setHistFromDate] = useState('');
   const [histToDate, setHistToDate] = useState('');
   const [histPage, setHistPage] = useState(1);
+  const [histTotalCount, setHistTotalCount] = useState(0);
+  const histRequestId = useRef(0);
 
   const racks = ['ALL', '1', '2', '3', '4', '5', '6'];
 
@@ -662,14 +665,56 @@ export function KitteoPage() {
   };
 
   /* ── Fetch historial ── */
-  const fetchHistorial = useCallback(async () => {
+  const fetchHistorial = useCallback(async (page = histPage) => {
+    const requestId = ++histRequestId.current;
     setHistRefreshing(true);
     setHistLoading(true);
-    const { data } = await supabase
-      .from('kitteo_exits')
-      .select('*')
-      .order('exited_at', { ascending: false });
+    if (histFromDate && histToDate && histFromDate > histToDate) {
+      setHistorial([]);
+      setHistTotalCount(0);
+      setHistLoading(false);
+      setHistRefreshing(false);
+      return;
+    }
+
+    const term = histSearchQuery.trim();
+    let fifoEntryIds: number[] = [];
+    // FIFO se almacena aparte; buscar referencias cuyos números coincidan.
+    if (term && /^\d+$/.test(term)) {
+      const { data: fifoMatches, error: fifoMatchError } = await supabase
+        .from('fifo_labels').select('entry_id').eq('fifo_number', Number(term));
+      if (fifoMatchError) console.warn('No se pudieron buscar FIFO del historial KITTEO:', fifoMatchError);
+      fifoEntryIds = [...new Set(((fifoMatches ?? []) as { entry_id: unknown }[])
+        .map(row => toNumberOrNull(row.entry_id)).filter((id): id is number => id !== null))];
+    }
+
+    let query = supabase.from('kitteo_exits').select('*', { count: 'exact' });
+    if (histFromDate) query = query.gte('exited_at', new Date(`${histFromDate}T00:00:00`).toISOString());
+    if (histToDate) {
+      const dayAfterTo = new Date(`${histToDate}T00:00:00`);
+      dayAfterTo.setDate(dayAfterTo.getDate() + 1);
+      query = query.lt('exited_at', dayAfterTo.toISOString());
+    }
+    if (term) {
+      const escaped = term.replace(/[(),]/g, ' ');
+      const textOr = `part_number.ilike.%${escaped}%,location_code.ilike.%${escaped}%,po.ilike.%${escaped}%,description.ilike.%${escaped}%,rack.ilike.%${escaped}%`;
+      query = query.or(fifoEntryIds.length ? `${textOr},entry_id.in.(${fifoEntryIds.join(',')})` : textOr);
+    }
+    const from = (page - 1) * HIST_PAGE_SIZE;
+    const { data, count, error } = await query
+      .order('exited_at', { ascending: false }).order('id', { ascending: false })
+      .range(from, from + HIST_PAGE_SIZE - 1);
+    if (requestId !== histRequestId.current) return;
+    if (error) {
+      console.error('Error cargando historial KITTEO:', error);
+      setHistorial([]);
+      setHistTotalCount(0);
+      setHistLoading(false);
+      setHistRefreshing(false);
+      return;
+    }
     const exits = (data as KitteoExit[]) ?? [];
+    setHistTotalCount(count ?? 0);
     const entryIds = Array.from(new Set(exits.flatMap(exit => {
       const entryId = toNumberOrNull(exit.entry_id);
       return entryId === null ? [] : [entryId];
@@ -677,9 +722,7 @@ export function KitteoPage() {
     const fifoByEntryId = new Map<number, number | null>();
     if (entryIds.length > 0) {
       const { data: fifoData, error: fifoError } = await supabase
-        .from('fifo_labels')
-        .select('entry_id, fifo_number')
-        .in('entry_id', entryIds);
+        .from('fifo_labels').select('entry_id, fifo_number').in('entry_id', entryIds);
       if (fifoError) console.warn('No se pudieron cargar los FIFO del historial KITTEO:', fifoError);
       ((fifoData ?? []) as { entry_id: unknown; fifo_number: unknown }[]).forEach(row => {
         const entryId = toNumberOrNull(row.entry_id);
@@ -687,22 +730,28 @@ export function KitteoPage() {
         fifoByEntryId.set(entryId, toNumberOrNull(row.fifo_number));
       });
     }
+    if (requestId !== histRequestId.current) return;
     setHistorial(exits.map(exit => {
       const entryId = toNumberOrNull(exit.entry_id);
-      return {
-        ...exit,
-        fifo_number: entryId === null ? null : (fifoByEntryId.get(entryId) ?? null),
-      };
+      return { ...exit, fifo_number: entryId === null ? null : (fifoByEntryId.get(entryId) ?? null) };
     }));
     setHistLoading(false);
-    setTimeout(() => setHistRefreshing(false), 500);
-  }, []);
+    setTimeout(() => { if (requestId === histRequestId.current) setHistRefreshing(false); }, 500);
+  }, [histPage, histSearchQuery, histFromDate, histToDate]);
 
   useEffect(() => { fetchLocations(); }, [fetchLocations]);
 
   useEffect(() => {
-    if (activeView === 'historial') fetchHistorial();
-  }, [activeView, fetchHistorial]);
+    const timeout = window.setTimeout(() => {
+      setHistSearchQuery(histSearch);
+      setHistPage(1);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [histSearch]);
+
+  useEffect(() => {
+    if (activeView === 'historial') void fetchHistorial(histPage);
+  }, [activeView, fetchHistorial, histPage]);
 
   /* ── Cerrar dropdown al click afuera ── */
   useEffect(() => {
@@ -1134,25 +1183,9 @@ export function KitteoPage() {
     return matchRack && matchStatus && matchSearch;
   });
 
-  /* ── Filtrar historial ── */
+  /* El historial ya llega filtrado y paginado desde Supabase. */
   const histDateRangeValid = !histFromDate || !histToDate || histFromDate <= histToDate;
-  const histFromTimestamp = histFromDate ? new Date(`${histFromDate}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY;
-  const histToTimestamp = histToDate ? new Date(`${histToDate}T23:59:59.999`).getTime() : Number.POSITIVE_INFINITY;
-  const filteredHist = historial.filter(h => {
-    const term = histSearch.toLowerCase();
-    const exitedTimestamp = new Date(h.exited_at).getTime();
-    const matchDate = histDateRangeValid
-      && exitedTimestamp >= histFromTimestamp
-      && exitedTimestamp <= histToTimestamp;
-    const matchText = !term ||
-      h.part_number.toLowerCase().includes(term) ||
-      (h.fifo_number?.toString() ?? '').includes(term) ||
-      h.location_code.toLowerCase().includes(term) ||
-      (h.po ?? '').toLowerCase().includes(term) ||
-      (h.description ?? '').toLowerCase().includes(term) ||
-      h.rack.toLowerCase().includes(term);
-    return matchDate && matchText;
-  });
+  const filteredHist = historial;
 
   /* ── Paginación locaciones ── */
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
@@ -1161,9 +1194,9 @@ export function KitteoPage() {
   const goTo = (p: number) => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
 
   /* ── Paginación historial ── */
-  const histTotalPages = Math.ceil(filteredHist.length / HIST_PAGE_SIZE);
+  const histTotalPages = Math.ceil(histTotalCount / HIST_PAGE_SIZE);
   const histSafePage = Math.min(histPage, Math.max(1, histTotalPages));
-  const pageHist = filteredHist.slice((histSafePage - 1) * HIST_PAGE_SIZE, histSafePage * HIST_PAGE_SIZE);
+  const pageHist = filteredHist;
   const goToHist = (p: number) => setHistPage(Math.max(1, Math.min(p, histTotalPages)));
 
   /* ── Stats ── */
@@ -1553,14 +1586,14 @@ export function KitteoPage() {
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Salidas</p>
-              <p className="text-3xl font-black text-red-600">{filteredHist.length}</p>
+              <p className="text-3xl font-black text-red-600">{histTotalCount}</p>
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY Total</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY de esta página</p>
               <p className="text-3xl font-black text-blue-700">{filteredHist.reduce((s, h) => s + (h.qty ?? 0), 0).toLocaleString()}</p>
             </div>
             <div className="bg-purple-50 border border-purple-200 rounded-2xl px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas Total</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas de esta página</p>
               <p className="text-3xl font-black text-purple-700">{filteredHist.reduce((s, h) => s + (h.boxes ?? 0), 0).toLocaleString()}</p>
             </div>
           </div>
@@ -1569,7 +1602,7 @@ export function KitteoPage() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-              <input type="text" value={histSearch} onChange={e => { setHistSearch(e.target.value); setHistPage(1); }}
+              <input type="text" value={histSearch} onChange={e => setHistSearch(e.target.value)}
                 placeholder="Buscar part number, FIFO o locación..."
                 className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white w-full" />
             </div>
@@ -1741,7 +1774,7 @@ export function KitteoPage() {
               {histTotalPages > 1 && (
                 <div className="flex items-center justify-between px-2">
                   <p className="text-sm text-gray-500">
-                    Mostrando <strong>{(histSafePage - 1) * HIST_PAGE_SIZE + 1}–{Math.min(histSafePage * HIST_PAGE_SIZE, filteredHist.length)}</strong> de <strong>{filteredHist.length}</strong>
+                    Mostrando <strong>{(histSafePage - 1) * HIST_PAGE_SIZE + 1}–{Math.min(histSafePage * HIST_PAGE_SIZE, histTotalCount)}</strong> de <strong>{histTotalCount}</strong>
                   </p>
                   <div className="flex items-center gap-1">
                     <button onClick={() => goToHist(1)} disabled={histSafePage === 1} className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40 transition-all"><ChevronsLeft className="h-4 w-4" /></button>

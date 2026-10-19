@@ -113,6 +113,7 @@ export function ExitsPage() {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [exitsCount, setExitsCount] = useState(0);
 
   // Formulario nueva transferencia
   const [selectedEntry, setSelectedEntry] = useState<EntryOption | null>(null);
@@ -163,11 +164,14 @@ export function ExitsPage() {
   const [shippingDirectHistoryLoading, setShippingDirectHistoryLoading] = useState(false);
   const [shippingDirectHistoryRefreshing, setShippingDirectHistoryRefreshing] = useState(false);
   const [shippingDirectHistorySearch, setShippingDirectHistorySearch] = useState('');
+  const [shippingDirectHistorySearchQuery, setShippingDirectHistorySearchQuery] = useState('');
+  const [shippingDirectHistoryPage, setShippingDirectHistoryPage] = useState(1);
+  const [shippingDirectHistoryCount, setShippingDirectHistoryCount] = useState(0);
   const [shippingDirectHistoryError, setShippingDirectHistoryError] = useState<string | null>(null);
   const [shippingDirectReturnSavingId, setShippingDirectReturnSavingId] = useState<number | null>(null);
   const [shippingDirectReviewSavingId, setShippingDirectReviewSavingId] = useState<number | null>(null);
-
-  useEffect(() => { fetchExits(); }, []);
+  const shippingDirectHistoryRequestId = useRef(0);
+  const exitsRequestId = useRef(0);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -178,40 +182,89 @@ export function ExitsPage() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const fetchExits = async () => {
+  const fetchExits = useCallback(async () => {
+    const requestId = ++exitsRequestId.current;
     setRefreshing(true);
-    const { data } = await supabase
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const { data, count, error } = await supabase
       .from('transferes')
-      .select('*')
-      .order('exited_at', { ascending: false });
+      .select('*', { count: 'exact' })
+      .order('exited_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(start, start + PAGE_SIZE - 1);
+    if (requestId !== exitsRequestId.current) return;
+    if (error) {
+      console.error('Error cargando transferencias:', error);
+      setExits([]);
+      setExitsCount(0);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    const pageCount = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
+    if (count !== null && currentPage > pageCount) {
+      setExitsCount(count);
+      setCurrentPage(pageCount);
+      return;
+    }
+    setExitsCount(count ?? 0);
     const transferRows = (data as Exit[]) ?? [];
     const entryIds = Array.from(new Set(transferRows.flatMap(exit => typeof exit.entry_id === 'number' ? [exit.entry_id] : [])));
     const fifoByEntryId = await fetchFifoByEntryIds(entryIds);
+    if (requestId !== exitsRequestId.current) return;
     setExits(transferRows.map(exit => ({
       ...exit,
       fifo_number: exit.fifo_number ?? (typeof exit.entry_id === 'number' ? (fifoByEntryId.get(exit.entry_id) ?? null) : null),
     })));
     setLoading(false);
-    setTimeout(() => setRefreshing(false), 500);
-  };
+    setTimeout(() => {
+      if (requestId === exitsRequestId.current) setRefreshing(false);
+    }, 500);
+  }, [currentPage]);
 
-  const fetchShippingDirectHistory = async () => {
+  useEffect(() => { void fetchExits(); }, [fetchExits]);
+
+  const fetchShippingDirectHistory = useCallback(async () => {
+    const requestId = ++shippingDirectHistoryRequestId.current;
     setShippingDirectHistoryLoading(true);
     setShippingDirectHistoryRefreshing(true);
     setShippingDirectHistoryError(null);
-    const { data, error } = await supabase
-      .from('shipping_direct')
-      .select('id, source_transfer_id, entry_id, part_number, description, qty, boxes, fifo_number, po, location_code, location_id, destination, registered_by, exited_at, reviewed_at, reviewed_by, returned_at, returned_by')
-      .order('exited_at', { ascending: false });
+    const start = (shippingDirectHistoryPage - 1) * PAGE_SIZE;
+    const term = shippingDirectHistorySearchQuery.trim();
+    let query = supabase.from('shipping_direct')
+      .select('id, source_transfer_id, entry_id, part_number, description, qty, boxes, fifo_number, po, location_code, location_id, destination, registered_by, exited_at, reviewed_at, reviewed_by, returned_at, returned_by', { count: 'exact' });
+    if (term) {
+      const escapedTerm = term.replace(/[(),]/g, ' ');
+      const filters = [
+        `part_number.ilike.%${escapedTerm}%`,
+        `description.ilike.%${escapedTerm}%`,
+        `po.ilike.%${escapedTerm}%`,
+        `location_code.ilike.%${escapedTerm}%`,
+        `registered_by.ilike.%${escapedTerm}%`,
+        `reviewed_by.ilike.%${escapedTerm}%`,
+        `returned_by.ilike.%${escapedTerm}%`,
+        `destination.ilike.%${escapedTerm}%`,
+      ];
+      const fifoTerm = term.replace(/^#/, '').trim();
+      if (/^\d+$/.test(fifoTerm)) filters.push(`fifo_number.eq.${Number(fifoTerm)}`);
+      query = query.or(filters.join(','));
+    }
+    const { data, error, count } = await query
+      .order('exited_at', { ascending: false }).order('id', { ascending: false })
+      .range(start, start + PAGE_SIZE - 1);
 
+    if (requestId !== shippingDirectHistoryRequestId.current) return;
     if (error) {
       console.error('Error cargando historial Shipping Direct:', error);
       setShippingDirectHistoryError(`No se pudo cargar el historial: ${error.message}`);
       setShippingDirectHistory([]);
+      setShippingDirectHistoryCount(0);
     } else {
       const historyRows = (data as ShippingDirectRecord[]) ?? [];
       const entryIds = Array.from(new Set(historyRows.flatMap(record => record.entry_id === null ? [] : [record.entry_id])));
       const fifoByEntryId = await fetchFifoByEntryIds(entryIds);
+      if (requestId !== shippingDirectHistoryRequestId.current) return;
+      setShippingDirectHistoryCount(count ?? 0);
       setShippingDirectHistory(historyRows.map(record => ({
         ...record,
         fifo_number: record.fifo_number ?? (record.entry_id === null ? null : (fifoByEntryId.get(record.entry_id) ?? null)),
@@ -219,14 +272,30 @@ export function ExitsPage() {
     }
 
     setShippingDirectHistoryLoading(false);
-    setTimeout(() => setShippingDirectHistoryRefreshing(false), 500);
-  };
+    setTimeout(() => {
+      if (requestId === shippingDirectHistoryRequestId.current) setShippingDirectHistoryRefreshing(false);
+    }, 500);
+  }, [shippingDirectHistoryPage, shippingDirectHistorySearchQuery]);
 
   const openShippingDirectHistory = () => {
     setShippingDirectHistorySearch('');
+    setShippingDirectHistorySearchQuery('');
+    setShippingDirectHistoryPage(1);
     setShippingDirectHistoryOpen(true);
-    void fetchShippingDirectHistory();
+    setShippingDirectHistoryLoading(true);
   };
+
+  useEffect(() => {
+    if (shippingDirectHistoryOpen) void fetchShippingDirectHistory();
+  }, [shippingDirectHistoryOpen, fetchShippingDirectHistory]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setShippingDirectHistorySearchQuery(shippingDirectHistorySearch);
+      setShippingDirectHistoryPage(1);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [shippingDirectHistorySearch]);
 
   const handleReturnShippingDirect = async (record: ShippingDirectRecord) => {
     if (record.returned_at || (record.location_id === null && !record.location_code)) return;
@@ -598,20 +667,7 @@ export function ExitsPage() {
     ].join(' ').toLowerCase().includes(term);
   });
 
-  const filteredShippingDirectHistory = shippingDirectHistory.filter(record => {
-    const term = shippingDirectHistorySearch.trim().toLowerCase();
-    return !term || [
-      record.part_number,
-      record.description ?? '',
-      record.po ?? '',
-      record.fifo_number?.toString() ?? '',
-      record.location_code ?? '',
-      record.registered_by ?? '',
-      record.reviewed_by ?? '',
-      record.returned_by ?? '',
-      record.destination,
-    ].join(' ').toLowerCase().includes(term);
-  });
+  const filteredShippingDirectHistory = shippingDirectHistory;
   const shippingDirectHistoryQty = filteredShippingDirectHistory.reduce((sum, record) => sum + (record.qty ?? 0), 0);
   const shippingDirectHistoryBoxes = filteredShippingDirectHistory.reduce((sum, record) => sum + (record.boxes ?? 0), 0);
 
@@ -695,9 +751,9 @@ export function ExitsPage() {
   const totalBoxesAll = exits.reduce((s, e) => s + (e.boxes ?? 0), 0);
 
   // Paginación
-  const totalPages = Math.ceil(exits.length / PAGE_SIZE);
+  const totalPages = Math.ceil(exitsCount / PAGE_SIZE);
   const safePage = Math.min(currentPage, Math.max(1, totalPages));
-  const pageExits = exits.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageExits = exits;
   const goTo = (p: number) => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
 
   return (
@@ -744,7 +800,7 @@ export function ExitsPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Transferencias</p>
-          <p className="text-3xl font-black text-red-600">{exits.length}</p>
+          <p className="text-3xl font-black text-red-600">{exitsCount.toLocaleString()}</p>
         </div>
         <div className="bg-orange-50 border border-orange-200 rounded-2xl px-5 py-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Destino</p>
@@ -753,14 +809,14 @@ export function ExitsPage() {
         <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4">
           <div className="flex items-center gap-1.5 mb-1">
             <Boxes className="h-3.5 w-3.5 text-blue-500" />
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY Total Transferencia</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY en página</p>
           </div>
           <p className="text-3xl font-black text-blue-700">{totalQtyAll.toLocaleString()}</p>
         </div>
         <div className="bg-purple-50 border border-purple-200 rounded-2xl px-5 py-4">
           <div className="flex items-center gap-1.5 mb-1">
             <Archive className="h-3.5 w-3.5 text-purple-500" />
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas Total Transferencia</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas en página</p>
           </div>
           <p className="text-3xl font-black text-purple-700">{totalBoxesAll.toLocaleString()}</p>
         </div>
@@ -925,7 +981,7 @@ export function ExitsPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50/60">
               <p className="text-xs text-gray-500">
-                Mostrando <strong>{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, exits.length)}</strong> de <strong>{exits.length}</strong>
+                Mostrando <strong>{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, exitsCount)}</strong> de <strong>{exitsCount}</strong>
               </p>
               <div className="flex items-center gap-1">
                 {[
@@ -1166,14 +1222,14 @@ export function ExitsPage() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total salidas</p>
-                  <p className="text-2xl font-black text-indigo-700">{filteredShippingDirectHistory.length.toLocaleString()}</p>
+                  <p className="text-2xl font-black text-indigo-700">{shippingDirectHistoryCount.toLocaleString()}</p>
                 </div>
                 <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">QTY total</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">QTY en página</p>
                   <p className="text-2xl font-black text-blue-700">{shippingDirectHistoryQty.toLocaleString()}</p>
                 </div>
                 <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Cajas totales</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Cajas en página</p>
                   <p className="text-2xl font-black text-purple-700">{shippingDirectHistoryBoxes.toLocaleString()}</p>
                 </div>
               </div>
@@ -1195,7 +1251,7 @@ export function ExitsPage() {
                 </div>
               ) : shippingDirectHistoryLoading ? (
                 <div className="flex justify-center py-16"><Loader2 className="h-10 w-10 animate-spin text-indigo-500" /></div>
-              ) : filteredShippingDirectHistory.length === 0 ? (
+              ) : shippingDirectHistoryCount === 0 ? (
                 <div className="rounded-xl border border-gray-200 bg-gray-50 px-6 py-14 text-center">
                   <History className="mx-auto mb-3 h-10 w-10 text-gray-300" />
                   <p className="font-semibold text-gray-600">Sin salidas a Shipping Direct</p>
@@ -1229,7 +1285,7 @@ export function ExitsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredShippingDirectHistory.map((record, index) => (
+                      {shippingDirectHistory.map((record, index) => (
                         <tr key={record.id} className="border-b border-gray-100 last:border-0" style={{ background: index % 2 === 0 ? '#ffffff' : '#fafafa' }}>
                           <td className="px-4 py-3">
                             <span className="inline-flex rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700">{record.part_number}</span>
@@ -1310,6 +1366,15 @@ export function ExitsPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {!shippingDirectHistoryLoading && shippingDirectHistoryCount > PAGE_SIZE && (
+                <div className="flex items-center justify-between border-t border-gray-100 px-2 py-3 text-xs text-gray-500">
+                  <span>Mostrando {(shippingDirectHistoryPage - 1) * PAGE_SIZE + 1}–{Math.min(shippingDirectHistoryPage * PAGE_SIZE, shippingDirectHistoryCount)} de {shippingDirectHistoryCount}</span>
+                  <div className="flex gap-1">
+                    <button type="button" disabled={shippingDirectHistoryPage <= 1} onClick={() => setShippingDirectHistoryPage(page => Math.max(1, page - 1))} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Anterior</button>
+                    <button type="button" disabled={shippingDirectHistoryPage * PAGE_SIZE >= shippingDirectHistoryCount} onClick={() => setShippingDirectHistoryPage(page => page + 1)} className="rounded-lg border px-3 py-1.5 disabled:opacity-40">Siguiente</button>
+                  </div>
                 </div>
               )}
             </div>

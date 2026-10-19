@@ -85,6 +85,18 @@ export function Dashboard() {
   const visibleMainTab: MainTab = isOperator && mainTab !== 'racks' && mainTab !== 'kitteo' ? 'racks' : mainTab;
   const [rackSubTab, setRackSubTab] = useState<RackSubTab>(isOperator ? 'salidas' : 'locaciones');
   const visibleRackSubTab: RackSubTab = isOperator ? 'salidas' : rackSubTab;
+  const [visitedMainTabs, setVisitedMainTabs] = useState<Set<MainTab>>(() => new Set([isOperator ? 'racks' : 'inventario']));
+  const [visitedRackSubTabs, setVisitedRackSubTabs] = useState<Set<RackSubTab>>(() => new Set([isOperator ? 'salidas' : 'locaciones']));
+
+  useEffect(() => {
+    setVisitedMainTabs(previous => new Set(previous).add(visibleMainTab));
+  }, [visibleMainTab]);
+
+  useEffect(() => {
+    if (visibleMainTab === 'racks') {
+      setVisitedRackSubTabs(previous => new Set(previous).add(visibleRackSubTab));
+    }
+  }, [visibleMainTab, visibleRackSubTab]);
 
   useEffect(() => {
     if (isOperator && mainTab !== 'racks' && mainTab !== 'kitteo') setMainTab('racks');
@@ -336,16 +348,22 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    fetchRecords();
-    fetchAssignedEntries();
-  }, [fetchAssignedEntries]);
-
-  // Refrescar asignaciones cuando se cambia a la pestaña de inventario
-  useEffect(() => {
-    if (mainTab === 'inventario') {
+    if (!isOperator) {
+      fetchRecords();
       fetchAssignedEntries();
     }
-  }, [mainTab, fetchAssignedEntries]);
+  }, [fetchAssignedEntries, isOperator]);
+
+  // Refrescar asignaciones cuando se cambia a la pestaña de inventario
+  const hasLoadedInventoryInitially = React.useRef(false);
+  useEffect(() => {
+    if (isOperator || visibleMainTab !== 'inventario') return;
+    if (!hasLoadedInventoryInitially.current) {
+      hasLoadedInventoryInitially.current = true;
+      return;
+    }
+    fetchAssignedEntries();
+  }, [isOperator, visibleMainTab, fetchAssignedEntries]);
 
   /* =======================
      FILTER + STATS
@@ -619,21 +637,21 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: DASHBOARD
         ══════════════════════════════ */}
-        {!isOperator && visibleMainTab === 'dashboard' && <OperationsDashboard />}
+        {!isOperator && visitedMainTabs.has('dashboard') && <div hidden={visibleMainTab !== 'dashboard'}><OperationsDashboard /></div>}
 
         {/* ══════════════════════════════
             PESTAÑA: REPORTES
         ══════════════════════════════ */}
-        {!isOperator && visibleMainTab === 'reportes' && <LocationReports />}
+        {!isOperator && visitedMainTabs.has('reportes') && <div hidden={visibleMainTab !== 'reportes'}><LocationReports /></div>}
 
-        {visibleMainTab === 'auditoria' && isManager && <PhysicalAuditPage />}
+        {isManager && visitedMainTabs.has('auditoria') && <div hidden={visibleMainTab !== 'auditoria'}><PhysicalAuditPage /></div>}
 
-        {visibleMainTab === 'comparacion' && isManager && <InventoryComparisonPage />}
+        {isManager && visitedMainTabs.has('comparacion') && <div hidden={visibleMainTab !== 'comparacion'}><InventoryComparisonPage /></div>}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO
         ══════════════════════════════ */}
-        {!isOperator && visibleMainTab === 'inventario' && (
+        {!isOperator && visitedMainTabs.has('inventario') && <div hidden={visibleMainTab !== 'inventario'}>
           <>
             {assignedEntriesError && (
               <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -807,13 +825,13 @@ export function Dashboard() {
               />
             </div>
           </>
-        )}
+        </div>}
 
         {/* ══════════════════════════════
             PESTAÑA: SALIDAS KITTEO
         ══════════════════════════════ */}
-        {visibleMainTab === 'kitteo' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        {visitedMainTabs.has('kitteo') && (
+          <div hidden={visibleMainTab !== 'kitteo'} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6">
               <KitteoPage />
             </div>
@@ -823,8 +841,8 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: RACKS / LOCACIONES
         ══════════════════════════════ */}
-        {visibleMainTab === 'racks' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        {visitedMainTabs.has('racks') && (
+          <div hidden={visibleMainTab !== 'racks'} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             {/* Sub-pestañas */}
             <div className="flex gap-0 border-b border-gray-100">
               {!isOperator && (
@@ -846,8 +864,8 @@ export function Dashboard() {
             </div>
 
             <div className="p-6">
-              {visibleRackSubTab === 'locaciones' && <RacksPage onAssignmentsChange={fetchAssignedEntries} />}
-              {visibleRackSubTab === 'salidas' && <ExitsPage />}
+              {visitedRackSubTabs.has('locaciones') && <div hidden={visibleRackSubTab !== 'locaciones'}><RacksPage onAssignmentsChange={fetchAssignedEntries} /></div>}
+              {visitedRackSubTabs.has('salidas') && <div hidden={visibleRackSubTab !== 'salidas'}><ExitsPage /></div>}
             </div>
           </div>
         )}
