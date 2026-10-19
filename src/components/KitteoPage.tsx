@@ -1286,9 +1286,9 @@ export function KitteoPage() {
           }`}>
           <History className="h-4 w-4" />
           Historial de Salidas
-          {historial.length > 0 && (
+          {histTotalCount > 0 && (
             <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-xs font-bold">
-              {historial.length}
+              {histTotalCount}
             </span>
           )}
         </button>
@@ -1383,7 +1383,145 @@ export function KitteoPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:hidden">
+                {pageLocs.map(loc => {
+                  const c = RACK_COLORS[loc.rack] ?? RACK_COLORS['1'];
+                  const isOcupado = loc.status === 'ocupado';
+                  const hasAssignedItems = (loc.items?.length ?? 0) > 0 || Boolean(loc.part_number);
+                  const primaryItem = loc.items?.[0];
+                  const assignedBy = loc.registered_by ?? primaryItem?.registered_by;
+                  const assignedAt = primaryItem?.assigned_at ?? loc.assigned_at;
+                  const qty = loc.items?.length
+                    ? loc.items.reduce((sum, item) => sum + (item.qty ?? 0), 0)
+                    : (loc.qty ?? 0);
+                  const boxes = loc.items?.length
+                    ? loc.items.reduce((sum, item) => sum + (item.boxes ?? 0), 0)
+                    : (loc.boxes ?? 0);
+
+                  return (
+                    <article key={loc.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">Locación · Rack</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-bold ${c.bg} ${c.text} ${c.border}`}>
+                              <MapPin className="h-3 w-3" />{loc.location_code}
+                            </span>
+                            <span className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-xs font-bold text-white ${c.badge}`}>
+                              Rack {loc.rack}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Estado</p>
+                          {canManageKitteoLocationStatus ? (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={loc.status}
+                                onChange={event => void handleLocationStatusChange(loc, event.target.value as KitteoLocation['status'])}
+                                disabled={statusSavingLocationId === loc.id}
+                                aria-label={`Cambiar estado de ${loc.location_code}`}
+                                className={`max-w-[132px] rounded-full border px-2.5 py-1.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-300 disabled:cursor-wait disabled:opacity-60 ${
+                                  isOcupado
+                                    ? 'border-orange-200 bg-orange-100 text-orange-700'
+                                    : 'border-emerald-200 bg-emerald-100 text-emerald-700'
+                                }`}
+                              >
+                                <option value="disponible">Disponible</option>
+                                <option value="ocupado">Ocupada</option>
+                              </select>
+                              {statusSavingLocationId === loc.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
+                            </div>
+                          ) : isOcupado ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-100 px-2.5 py-1.5 text-xs font-bold text-orange-700">
+                              <AlertCircle className="h-3 w-3" />Ocupada
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1.5 text-xs font-bold text-emerald-700">
+                              <CheckCircle2 className="h-3 w-3" />Disponible
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2.5">
+                        <div className="col-span-2 min-w-0 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">Part Number</p>
+                          {loc.items && loc.items.length > 0 ? (
+                            <>
+                              <p className="truncate font-mono text-sm font-semibold text-indigo-700">{loc.items[0].part_number}</p>
+                              <p className="mt-0.5 text-xs text-gray-500">
+                                {loc.items.length === 1 ? '1 número de parte' : `${loc.items.length} números de parte`}
+                              </p>
+                            </>
+                          ) : loc.part_number ? (
+                            <p className="truncate font-mono text-sm font-semibold text-gray-600">{loc.part_number}</p>
+                          ) : (
+                            <p className="text-sm italic text-gray-400">Sin partes asignadas</p>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">QTY</p>
+                          <p className="mt-1 text-lg font-black text-blue-700">{hasAssignedItems || loc.qty != null ? qty.toLocaleString() : '—'}</p>
+                        </div>
+                        <div className="rounded-xl border border-purple-100 bg-purple-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Cajas</p>
+                          <p className="mt-1 text-lg font-black text-purple-700">{boxes > 0 ? boxes.toLocaleString() : '—'}</p>
+                        </div>
+
+                        <div className="min-w-0 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Registrado por</p>
+                          <p className="mt-1 truncate text-sm font-medium text-gray-700">{assignedBy || '—'}</p>
+                        </div>
+                        <div className="min-w-0 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Asignado</p>
+                          {assignedAt ? (
+                            <div className="mt-1 flex flex-col">
+                              <span className="text-sm font-medium text-gray-700">
+                                {new Date(assignedAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                {new Date(assignedAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          ) : <p className="mt-1 text-sm text-gray-400">—</p>}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {isOcupado || hasAssignedItems ? (
+                          <>
+                            <button type="button" onClick={() => setDetailModal(loc)}
+                              className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700 transition-colors hover:bg-orange-100">
+                              <ClipboardList className="h-4 w-4" />Ver partes
+                            </button>
+                            {canManageKitteoLocationStatus && (
+                              <>
+                                <button type="button" onClick={() => void openPrecountModal(loc)}
+                                  className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100">
+                                  <ClipboardCheck className="h-4 w-4" />Preconteo
+                                </button>
+                                <button type="button" onClick={() => void openAdjustmentModal(loc)}
+                                  className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2 text-xs font-semibold text-purple-700 transition-colors hover:bg-purple-100">
+                                  <CheckCircle2 className="h-4 w-4" />Revisar ajuste
+                                </button>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <button type="button" onClick={() => openAssignModal(loc)}
+                            className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100">
+                            <Package className="h-4 w-4" />Asignar
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-hidden rounded-2xl border border-gray-200 xl:block">
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse">
                     <thead>
@@ -1651,7 +1789,62 @@ export function KitteoPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:hidden">
+                {pageHist.map(h => {
+                  const c = RACK_COLORS[h.rack] ?? RACK_COLORS['1'];
+                  return (
+                    <article key={h.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Part Number</p>
+                          <p className="mt-1 break-words font-mono text-sm font-bold text-indigo-700">{h.part_number}</p>
+                          {h.description && <p className="mt-1 text-xs text-gray-500">{h.description}</p>}
+                        </div>
+                        {h.fifo_number !== null && (
+                          <span className="inline-flex shrink-0 rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-1 font-mono text-xs font-bold text-violet-700">
+                            FIFO #{h.fifo_number}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${c.bg} ${c.text} ${c.border}`}>
+                          <MapPin className="h-3 w-3" />{h.location_code}
+                        </span>
+                        <span className={`inline-flex h-7 items-center justify-center rounded-lg px-2.5 text-xs font-bold text-white ${c.badge}`}>
+                          Rack {h.rack}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2.5">
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">QTY</p>
+                          <p className="mt-1 text-lg font-black text-blue-700">{(h.qty ?? 0).toLocaleString()}</p>
+                        </div>
+                        <div className="rounded-xl border border-purple-100 bg-purple-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Cajas</p>
+                          <p className="mt-1 text-lg font-black text-purple-700">{(h.boxes ?? 0) > 0 ? (h.boxes ?? 0).toLocaleString() : '—'}</p>
+                        </div>
+                        <div className="min-w-0 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Registrado por</p>
+                          <p className="mt-1 truncate text-sm font-medium text-gray-700">{h.registered_by || '—'}</p>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Fecha de salida</p>
+                          <p className="mt-1 text-sm font-medium text-gray-700">
+                            {new Date(h.exited_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {new Date(h.exited_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-hidden rounded-2xl border border-gray-200 xl:block">
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[980px] border-collapse">
                     <thead>
