@@ -83,11 +83,13 @@ export function Dashboard() {
   // ── Tabs ──
   const [mainTab, setMainTab] = useState<MainTab>(isOperator ? 'racks' : 'inventario');
   const visibleMainTab: MainTab = isOperator && mainTab !== 'racks' && mainTab !== 'kitteo' ? 'racks' : mainTab;
-  const [rackSubTab, setRackSubTab] = useState<RackSubTab>('locaciones');
+  const [rackSubTab, setRackSubTab] = useState<RackSubTab>(isOperator ? 'salidas' : 'locaciones');
+  const visibleRackSubTab: RackSubTab = isOperator ? 'salidas' : rackSubTab;
 
   useEffect(() => {
     if (isOperator && mainTab !== 'racks' && mainTab !== 'kitteo') setMainTab('racks');
-  }, [isOperator, mainTab]);
+    if (isOperator && rackSubTab !== 'salidas') setRackSubTab('salidas');
+  }, [isOperator, mainTab, rackSubTab]);
 
   // ── Inventario ──
   const [records, setRecords] = useState<Entry[]>([]);
@@ -825,15 +827,17 @@ export function Dashboard() {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             {/* Sub-pestañas */}
             <div className="flex gap-0 border-b border-gray-100">
+              {!isOperator && (
+                <SubTabBtn
+                  active={visibleRackSubTab === 'locaciones'}
+                  onClick={() => setRackSubTab('locaciones')}
+                  icon={<MapPin className="h-4 w-4" />}
+                  label="Racks / Locaciones"
+                  color="emerald"
+                />
+              )}
               <SubTabBtn
-                active={rackSubTab === 'locaciones'}
-                onClick={() => setRackSubTab('locaciones')}
-                icon={<MapPin className="h-4 w-4" />}
-                label="Racks / Locaciones"
-                color="emerald"
-              />
-              <SubTabBtn
-                active={rackSubTab === 'salidas'}
+                active={visibleRackSubTab === 'salidas'}
                 onClick={() => setRackSubTab('salidas')}
                 icon={<LogOut className="h-4 w-4" />}
                 label="Transferencia Kitteo"
@@ -842,8 +846,8 @@ export function Dashboard() {
             </div>
 
             <div className="p-6">
-              {rackSubTab === 'locaciones' && <RacksPage onAssignmentsChange={fetchAssignedEntries} />}
-              {rackSubTab === 'salidas' && <ExitsPage />}
+              {visibleRackSubTab === 'locaciones' && <RacksPage onAssignmentsChange={fetchAssignedEntries} />}
+              {visibleRackSubTab === 'salidas' && <ExitsPage />}
             </div>
           </div>
         )}
