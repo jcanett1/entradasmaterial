@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PartsCatalogModal } from './PartsCatalogModal';
 import {
   MapPin, Package, Search, Loader2, X, Save,
-  RefreshCw, LogOut, Hash, Boxes, ClipboardList, Calendar,
+  RefreshCw, LogOut, Hash, LockKeyhole, Boxes, ClipboardList, Calendar,
   User, Archive, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, CheckCircle2, AlertCircle,
   History, ArrowRightFromLine, Trash2, ListChecks, ClipboardCheck, Tag,
@@ -157,7 +157,7 @@ const PAGE_SIZE = 30;
 const HIST_PAGE_SIZE = 25;
 
 export function KitteoPage() {
-  const { userProfile, userRol } = useAuth();
+  const { userProfile, userRol, isAdmin } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const canManageKitteoLocationStatus = userRol === 'admin' || userRol === 'supervisor';
 
@@ -1207,16 +1207,17 @@ export function KitteoPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-          {canManageKitteoLocationStatus && (
-            <button
-              type="button"
-              onClick={() => setShowPartsCatalog(true)}
-              className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition-colors hover:bg-indigo-100"
-            >
-              <Hash className="h-4 w-4" />
-              Nuevo número de parte
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowPartsCatalog(true)}
+            disabled={!isAdmin}
+            title={isAdmin ? undefined : 'Solo usuarios con permisos de administrador pueden agregar números de parte.'}
+            aria-label={isAdmin ? 'Nuevo número de parte' : 'Nuevo número de parte bloqueado: solo admin'}
+            className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold shadow-sm transition-colors ${isAdmin ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 opacity-70'}`}
+          >
+            {isAdmin ? <Hash className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
+            Nuevo número de parte
+          </button>
           <button
             onClick={() => { setBulkExitOpen(true); setBulkSelectedIds([]); setBulkSearch(''); }}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white text-sm font-bold shadow-sm hover:bg-red-700 transition-all">
@@ -2577,7 +2578,7 @@ export function KitteoPage() {
         </div>
       )}
 
-      {showPartsCatalog && canManageKitteoLocationStatus && (
+      {showPartsCatalog && isAdmin && (
         <PartsCatalogModal onClose={() => setShowPartsCatalog(false)} />
       )}
 

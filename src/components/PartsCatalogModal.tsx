@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, Hash, Loader2, Save, X } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
 interface PartsCatalogModalProps {
@@ -7,6 +8,7 @@ interface PartsCatalogModalProps {
 }
 
 export function PartsCatalogModal({ onClose }: PartsCatalogModalProps) {
+  const { isAdmin } = useAuth();
   const [inventoryId, setInventoryId] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
@@ -36,12 +38,23 @@ export function PartsCatalogModal({ onClose }: PartsCatalogModalProps) {
       return;
     }
 
+    const normalizedDescription = description.trim();
+    if (!normalizedDescription) {
+      setError('La descripción es obligatoria.');
+      return;
+    }
+
+    if (!isAdmin) {
+      setError('Solo los usuarios con permisos de administrador pueden agregar números de parte.');
+      return;
+    }
+
     setError('');
     setSaving(true);
 
     const { error: insertError } = await supabase.from('parts_catalog').insert({
       inventory_id: normalizedInventoryId,
-      description: description.trim() || null,
+      description: normalizedDescription,
     });
 
     if (insertError) {
@@ -60,6 +73,8 @@ export function PartsCatalogModal({ onClose }: PartsCatalogModalProps) {
     setSaving(false);
     setSaved(true);
   };
+
+  if (!isAdmin) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" role="presentation">
@@ -121,6 +136,7 @@ export function PartsCatalogModal({ onClose }: PartsCatalogModalProps) {
                 id="parts-catalog-inventory-id"
                 name="inventory_id"
                 type="text"
+                required
                 value={inventoryId}
                 onChange={(event) => {
                   setInventoryId(event.target.value);
@@ -138,16 +154,21 @@ export function PartsCatalogModal({ onClose }: PartsCatalogModalProps) {
             <div>
               <label htmlFor="parts-catalog-description" className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-600">
                 <FileText className="h-3.5 w-3.5 text-indigo-400" />
-                Descripción
+                Descripción <span className="text-red-400">*</span>
               </label>
               <textarea
                 id="parts-catalog-description"
                 name="description"
                 value={description}
-                onChange={(event) => setDescription(event.target.value)}
+                onChange={(event) => {
+                  setDescription(event.target.value);
+                  if (error) setError('');
+                }}
+                required
+                aria-invalid={Boolean(error) && !description.trim()}
                 rows={3}
-                placeholder="Describe el material (opcional)..."
-                className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400 hover:border-gray-300"
+                placeholder="Describe el material..."
+                className={`w-full resize-none rounded-xl border bg-gray-50 px-4 py-2.5 text-sm transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400 hover:border-gray-300 ${Boolean(error) && !description.trim() ? 'border-red-400 bg-red-50' : 'border-gray-200'}`}
               />
             </div>
 
@@ -169,7 +190,7 @@ export function PartsCatalogModal({ onClose }: PartsCatalogModalProps) {
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || !inventoryId.trim() || !description.trim()}
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}
               >

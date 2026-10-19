@@ -19,7 +19,7 @@ import { InventoryComparisonPage } from './InventoryComparisonPage';
 import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
-  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, ArrowLeftRight, AlertTriangle, Hash,
+  MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, ArrowLeftRight, AlertTriangle, Hash, LockKeyhole,
   CheckCircle2, CalendarDays, FileText, ClipboardCheck,
 } from 'lucide-react';
 import Papa from 'papaparse';
@@ -78,7 +78,6 @@ const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) =>
 
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, isManager, userRol } = useAuth();
-  const canManagePartsCatalog = userRol === 'admin' || userRol === 'supervisor';
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState<MainTab>('inventario');
@@ -708,16 +707,17 @@ export function Dashboard() {
                     className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
                   />
                 </label>
-                {canManagePartsCatalog && (
-                  <button
-                    type="button"
-                    onClick={() => setShowPartsCatalog(true)}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold uppercase tracking-wide text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 active:scale-95 md:ml-1"
-                  >
-                    <Hash className="h-4 w-4" />
-                    Nuevo número de parte
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowPartsCatalog(true)}
+                  disabled={!isAdmin}
+                  title={isAdmin ? undefined : 'Solo usuarios con permisos de administrador pueden agregar números de parte.'}
+                  aria-label={isAdmin ? 'Nuevo número de parte' : 'Nuevo número de parte bloqueado: solo admin'}
+                  className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold uppercase tracking-wide shadow-sm transition-all md:ml-1 ${isAdmin ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 active:scale-95' : 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 opacity-70'}`}
+                >
+                  {isAdmin ? <Hash className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
+                  Nuevo número de parte
+                </button>
                 {(searchTerm || availableOnly || dateFrom || dateTo) && (
                   <button
                     type="button"
@@ -848,8 +848,8 @@ export function Dashboard() {
         />
       )}
 
-      {/* Modal Nuevo número de parte — disponible para admin y supervisor */}
-      {showPartsCatalog && canManagePartsCatalog && (
+      {/* Solo los administradores pueden abrir el modal de alta del catálogo. */}
+      {showPartsCatalog && isAdmin && (
         <PartsCatalogModal onClose={() => setShowPartsCatalog(false)} />
       )}
 
