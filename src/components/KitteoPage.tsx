@@ -160,19 +160,24 @@ export function KitteoPage() {
   const { userProfile, userRol, isAdmin } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const canManageKitteoLocationStatus = userRol === 'admin' || userRol === 'supervisor';
+  const canLimitedUserChangeLocationStatus = userRol === 'contador' || userRol === 'operador';
+  const locationHasAssignedParts = (location: KitteoLocation) =>
+    (location.items?.length ?? 0) > 0 || Boolean(location.part_number?.trim());
   const canEditLocationStatus = (location: KitteoLocation) =>
     canManageKitteoLocationStatus || (
-      (userRol === 'contador' || userRol === 'operador') && location.status === 'ocupado'
+      canLimitedUserChangeLocationStatus && (
+        location.status === 'ocupado' || locationHasAssignedParts(location)
+      )
     );
-  const renderLocationStatusOptions = () => canManageKitteoLocationStatus ? (
+  const renderLocationStatusOptions = (location: KitteoLocation) => canManageKitteoLocationStatus ? (
     <>
       <option value="disponible">Disponible</option>
       <option value="ocupado">Ocupada</option>
     </>
   ) : (
     <>
-      <option value="ocupado" disabled>Ocupada</option>
       <option value="disponible">Disponible</option>
+      <option value="ocupado" disabled={!locationHasAssignedParts(location)}>Ocupada</option>
     </>
   );
 
@@ -651,20 +656,24 @@ export function KitteoPage() {
     await fetchLocations();
   };
 
-  /* Admin/supervisor pueden cambiar ambos estados; contador y operador solo liberan ocupada para agregar material. */
+  /* Admin/supervisor cambian ambos estados; contador/operador solo cambian estados si hay material asignado. */
   const handleLocationStatusChange = async (
     location: KitteoLocation,
     nextStatus: KitteoLocation['status'],
   ) => {
     const canSetNextStatus = canManageKitteoLocationStatus || (
-      (userRol === 'contador' || userRol === 'operador')
-      && location.status === 'ocupado'
-      && nextStatus === 'disponible'
+      canLimitedUserChangeLocationStatus && (
+        (location.status === 'ocupado' && nextStatus === 'disponible')
+        || (location.status === 'disponible' && nextStatus === 'ocupado' && locationHasAssignedParts(location))
+      )
     );
     if (!canSetNextStatus || location.status === nextStatus) return;
-    if ((userRol === 'contador' || userRol === 'operador') && nextStatus === 'disponible' && !confirm(
-      `¿Cambiar ${location.location_code} a Disponible para agregar otro número de parte? Las partes actuales se conservarán; al agregar la nueva, la locación volverá a aparecer como Ocupada.`
-    )) return;
+    if (canLimitedUserChangeLocationStatus) {
+      const confirmationMessage = nextStatus === 'disponible'
+        ? `¿Cambiar ${location.location_code} a Disponible para agregar otro número de parte? Las partes actuales se conservarán.`
+        : `¿Cambiar ${location.location_code} a Ocupada? Las partes actuales se conservarán y la locación dejará de aparecer disponible.`;
+      if (!confirm(confirmationMessage)) return;
+    }
 
     setStatusSavingLocationId(location.id);
     const error = await touchKitteoLocation(location.id, { status: nextStatus });
@@ -1450,7 +1459,7 @@ export function KitteoPage() {
                                     : 'border-emerald-200 bg-emerald-100 text-emerald-700'
                                 }`}
                               >
-                                {renderLocationStatusOptions()}
+                                {renderLocationStatusOptions(loc)}
                               </select>
                               {statusSavingLocationId === loc.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
                             </div>
@@ -1603,7 +1612,7 @@ export function KitteoPage() {
                                         : 'border-emerald-200 bg-emerald-100 text-emerald-700'
                                     }`}
                                   >
-                                    {renderLocationStatusOptions()}
+                                    {renderLocationStatusOptions(loc)}
                                   </select>
                                   {statusSavingLocationId === loc.id && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
                                 </label>
@@ -2644,7 +2653,7 @@ export function KitteoPage() {
                             : 'border-emerald-200 bg-emerald-100 text-emerald-700'
                         }`}
                       >
-                        {renderLocationStatusOptions()}
+                        {renderLocationStatusOptions(detailModal)}
                       </select>
                       {statusSavingLocationId === detailModal.id && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
                     </label>
