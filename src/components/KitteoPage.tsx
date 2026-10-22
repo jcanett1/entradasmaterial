@@ -161,7 +161,9 @@ export function KitteoPage() {
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const canManageKitteoLocationStatus = userRol === 'admin' || userRol === 'supervisor';
   const canEditLocationStatus = (location: KitteoLocation) =>
-    canManageKitteoLocationStatus || (userRol === 'contador' && location.status === 'ocupado');
+    canManageKitteoLocationStatus || (
+      (userRol === 'contador' || userRol === 'operador') && location.status === 'ocupado'
+    );
   const renderLocationStatusOptions = () => canManageKitteoLocationStatus ? (
     <>
       <option value="disponible">Disponible</option>
@@ -649,16 +651,18 @@ export function KitteoPage() {
     await fetchLocations();
   };
 
-  /* Admin/supervisor pueden cambiar ambos estados; contador solo puede liberar ocupada para agregar material. */
+  /* Admin/supervisor pueden cambiar ambos estados; contador y operador solo liberan ocupada para agregar material. */
   const handleLocationStatusChange = async (
     location: KitteoLocation,
     nextStatus: KitteoLocation['status'],
   ) => {
     const canSetNextStatus = canManageKitteoLocationStatus || (
-      userRol === 'contador' && location.status === 'ocupado' && nextStatus === 'disponible'
+      (userRol === 'contador' || userRol === 'operador')
+      && location.status === 'ocupado'
+      && nextStatus === 'disponible'
     );
     if (!canSetNextStatus || location.status === nextStatus) return;
-    if (userRol === 'contador' && nextStatus === 'disponible' && !confirm(
+    if ((userRol === 'contador' || userRol === 'operador') && nextStatus === 'disponible' && !confirm(
       `¿Cambiar ${location.location_code} a Disponible para agregar otro número de parte? Las partes actuales se conservarán; al agregar la nueva, la locación volverá a aparecer como Ocupada.`
     )) return;
 
