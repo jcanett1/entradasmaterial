@@ -160,6 +160,19 @@ export function KitteoPage() {
   const { userProfile, userRol, isAdmin } = useAuth();
   const userDisplayName = userProfile?.nombre_completo || userProfile?.email || '';
   const canManageKitteoLocationStatus = userRol === 'admin' || userRol === 'supervisor';
+  const canEditLocationStatus = (location: KitteoLocation) =>
+    canManageKitteoLocationStatus || (userRol === 'contador' && location.status === 'ocupado');
+  const renderLocationStatusOptions = () => canManageKitteoLocationStatus ? (
+    <>
+      <option value="disponible">Disponible</option>
+      <option value="ocupado">Ocupada</option>
+    </>
+  ) : (
+    <>
+      <option value="ocupado" disabled>Ocupada</option>
+      <option value="disponible">Disponible</option>
+    </>
+  );
 
   /* ── Vista activa: locaciones | historial ── */
   const [activeView, setActiveView] = useState<'locaciones' | 'historial'>('locaciones');
@@ -636,12 +649,18 @@ export function KitteoPage() {
     await fetchLocations();
   };
 
-  /* ── Cambio manual de estado: solo admin y supervisor ── */
+  /* Admin/supervisor pueden cambiar ambos estados; contador solo puede liberar ocupada para agregar material. */
   const handleLocationStatusChange = async (
     location: KitteoLocation,
     nextStatus: KitteoLocation['status'],
   ) => {
-    if (!canManageKitteoLocationStatus || location.status === nextStatus) return;
+    const canSetNextStatus = canManageKitteoLocationStatus || (
+      userRol === 'contador' && location.status === 'ocupado' && nextStatus === 'disponible'
+    );
+    if (!canSetNextStatus || location.status === nextStatus) return;
+    if (userRol === 'contador' && nextStatus === 'disponible' && !confirm(
+      `¿Cambiar ${location.location_code} a Disponible para agregar otro número de parte? Las partes actuales se conservarán; al agregar la nueva, la locación volverá a aparecer como Ocupada.`
+    )) return;
 
     setStatusSavingLocationId(location.id);
     const error = await touchKitteoLocation(location.id, { status: nextStatus });
@@ -1414,7 +1433,7 @@ export function KitteoPage() {
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Estado</p>
-                          {canManageKitteoLocationStatus ? (
+                          {canEditLocationStatus(loc) ? (
                             <div className="flex items-center gap-1.5">
                               <select
                                 value={loc.status}
@@ -1427,8 +1446,7 @@ export function KitteoPage() {
                                     : 'border-emerald-200 bg-emerald-100 text-emerald-700'
                                 }`}
                               >
-                                <option value="disponible">Disponible</option>
-                                <option value="ocupado">Ocupada</option>
+                                {renderLocationStatusOptions()}
                               </select>
                               {statusSavingLocationId === loc.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
                             </div>
@@ -1568,7 +1586,7 @@ export function KitteoPage() {
                             </td>
                             {/* Estado */}
                             <td className="px-4 py-3 text-center">
-                              {canManageKitteoLocationStatus ? (
+                              {canEditLocationStatus(loc) ? (
                                 <label className="inline-flex items-center gap-1.5">
                                   <select
                                     value={loc.status}
@@ -1581,8 +1599,7 @@ export function KitteoPage() {
                                         : 'border-emerald-200 bg-emerald-100 text-emerald-700'
                                     }`}
                                   >
-                                    <option value="disponible">Disponible</option>
-                                    <option value="ocupado">Ocupada</option>
+                                    {renderLocationStatusOptions()}
                                   </select>
                                   {statusSavingLocationId === loc.id && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
                                 </label>
@@ -2609,7 +2626,7 @@ export function KitteoPage() {
                   <p className="text-sm text-gray-400 mt-0.5">Selecciona una acción para un artículo específico.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {canManageKitteoLocationStatus ? (
+                  {canEditLocationStatus(detailModal) ? (
                     <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500">
                       Estado
                       <select
@@ -2623,8 +2640,7 @@ export function KitteoPage() {
                             : 'border-emerald-200 bg-emerald-100 text-emerald-700'
                         }`}
                       >
-                        <option value="disponible">Disponible</option>
-                        <option value="ocupado">Ocupada</option>
+                        {renderLocationStatusOptions()}
                       </select>
                       {statusSavingLocationId === detailModal.id && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
                     </label>

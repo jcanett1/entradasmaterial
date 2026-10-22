@@ -58,7 +58,7 @@ export function CounterDashboard() {
             </button>
           </nav>
           <p className="mt-3 px-1 text-xs leading-5 text-gray-500">
-            En KITTEO puedes asignar números de parte existentes del catálogo a locaciones disponibles y registrar salidas definitivas. El alta de nuevos números en el catálogo maestro permanece restringida a los perfiles autorizados.
+            En KITTEO puedes cambiar una locación ocupada a disponible para agregar otro número de parte; las partes actuales se conservan y al guardar la nueva, vuelve a ocupada. También puedes registrar salidas definitivas. El alta de nuevos números en el catálogo maestro permanece restringida a los perfiles autorizados.
           </p>
         </section>
 
