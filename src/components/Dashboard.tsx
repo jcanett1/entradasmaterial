@@ -77,7 +77,7 @@ const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) =>
 };
 
 export function Dashboard() {
-  const { userProfile, signOut, isAdmin, isManager, userRol } = useAuth();
+  const { userProfile, signOut, isAdmin, userRol } = useAuth();
   const isOperator = userRol === 'operador';
 
   // ── Tabs ──
@@ -614,7 +614,7 @@ export function Dashboard() {
               color="violet"
             />
           )}
-          {isManager && (
+          {isAdmin && (
             <TabBtn
               active={visibleMainTab === 'auditoria'}
               onClick={() => setMainTab('auditoria')}
@@ -623,7 +623,7 @@ export function Dashboard() {
               color="indigo"
             />
           )}
-          {isManager && (
+          {isAdmin && (
             <TabBtn
               active={visibleMainTab === 'comparacion'}
               onClick={() => setMainTab('comparacion')}
@@ -644,9 +644,9 @@ export function Dashboard() {
         ══════════════════════════════ */}
         {!isOperator && visitedMainTabs.has('reportes') && <div hidden={visibleMainTab !== 'reportes'}><LocationReports /></div>}
 
-        {isManager && visitedMainTabs.has('auditoria') && <div hidden={visibleMainTab !== 'auditoria'}><PhysicalAuditPage /></div>}
+        {isAdmin && visitedMainTabs.has('auditoria') && <div hidden={visibleMainTab !== 'auditoria'}><PhysicalAuditPage /></div>}
 
-        {isManager && visitedMainTabs.has('comparacion') && <div hidden={visibleMainTab !== 'comparacion'}><InventoryComparisonPage /></div>}
+        {isAdmin && visitedMainTabs.has('comparacion') && <div hidden={visibleMainTab !== 'comparacion'}><InventoryComparisonPage /></div>}
 
         {/* ══════════════════════════════
             PESTAÑA: INVENTARIO
