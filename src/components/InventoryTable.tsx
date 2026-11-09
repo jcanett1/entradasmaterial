@@ -4,7 +4,7 @@ import {
   Edit2, Trash2, Package, Loader2, Hash, AlignLeft, Boxes,
   Archive, Ruler, User, Calendar, Settings2, ClipboardList, Tag,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  MapPin, Lock, Printer,
+  MapPin, Lock, Printer, RotateCcw,
 } from 'lucide-react';
 
 const PAGE_SIZE = 25;
@@ -24,6 +24,9 @@ interface InventoryTableProps {
   assignedEntryLocations?: Record<number, string>;
   /** Mapa de entry_id → FIFO de la etiqueta existente */
   fifoNumbersByEntryId?: Record<number, number>;
+  /** Entradas con al menos una salida definitiva activa que puede regresarse. */
+  returnableEntryIds?: Set<number>;
+  onReturnToInventory?: (record: Entry) => void;
 }
 
 export function InventoryTable({
@@ -38,6 +41,8 @@ export function InventoryTable({
   assignedEntryIds = new Set(),
   assignedEntryLocations = {},
   fifoNumbersByEntryId = {},
+  returnableEntryIds = new Set(),
+  onReturnToInventory,
 }: InventoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -277,7 +282,7 @@ export function InventoryTable({
                   {/* Acciones */}
                   <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                     {isAssigned ? (
-                      /* Se conserva el bloqueo; solo se habilita reimprimir la etiqueta existente. */
+                      /* El regreso no edita ni duplica la entrada; revierte la salida seleccionada. */
                       <div className="flex flex-wrap items-center justify-center gap-1.5">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-100 border border-amber-300 text-amber-700">
                           <Lock className="h-3 w-3" />
@@ -293,6 +298,13 @@ export function InventoryTable({
                           <Printer className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline">Reimprimir</span>
                         </button>
+                        {returnableEntryIds.has(record.id) && onReturnToInventory && (
+                          <button type="button" onClick={() => onReturnToInventory(record)}
+                            aria-label={`Regresar a inventario la entrada ${record.id} de ${record.part_number}`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-all hover:bg-emerald-100">
+                            <RotateCcw className="h-3.5 w-3.5" />Regresar a inventario
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <div className="flex justify-center items-center gap-1.5 flex-wrap">

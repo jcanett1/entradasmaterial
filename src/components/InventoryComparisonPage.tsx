@@ -182,7 +182,7 @@ type FinalReviewRow = {
 const PAGE_SIZE = 1000;
 const INSERT_BATCH_SIZE = 300;
 const RESULT_PAGE_SIZE = 25;
-const SYSTEM_QUANTITY_RULE = 'Saldo neto por número de parte: suma de entries.total_units menos salidas definitivas de shipping_direct (excluye devoluciones) y kitteo_exits. No se restan transferes porque son movimientos internos. El saldo mostrado tiene piso 0 cuando las salidas superan lo registrado. Almacén y KITTEO guardan las cantidades asignadas a sus locaciones al momento de la comparación.';
+const SYSTEM_QUANTITY_RULE = 'Saldo neto por número de parte: suma de entries.total_units menos salidas definitivas no devueltas de shipping_direct y kitteo_exits (ambas fuentes excluyen devoluciones). No se restan transferes porque son movimientos internos. El saldo mostrado tiene piso 0 cuando las salidas superan lo registrado. Almacén y KITTEO guardan las cantidades asignadas a sus locaciones al momento de la comparación.';
 const numberFormat = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 });
 const formatNumber = (value: number) => numberFormat.format(value);
 const formatDifference = (value: number) => value > 0 ? `+${formatNumber(value)}` : formatNumber(value);
@@ -826,7 +826,7 @@ export function InventoryComparisonPage() {
         }),
         fetchAllPages<SystemSource>(async (from, to) => {
           const { data, error } = await supabase.from('kitteo_exits')
-            .select('part_number, qty').order('id', { ascending: true }).range(from, to);
+            .select('part_number, qty, returned_at').is('returned_at', null).order('id', { ascending: true }).range(from, to);
           return { data: (data ?? []) as SystemSource[], error };
         }),
         selectedAuditId ? loadAuditItems(Number(selectedAuditId)) : Promise.resolve([] as PhysicalSource[]),
@@ -1124,7 +1124,7 @@ export function InventoryComparisonPage() {
         <span className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700"><Database className="h-4 w-4" /></span>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-extrabold text-amber-900">Unidades / Sistema · saldo actual neto</p>
-          <p className="mt-0.5 text-[11px] leading-5 text-amber-800">Sistema-Neto sigue siendo el total: suma <code>entries.total_units</code> y resta salidas no devueltas de <code>shipping_direct.qty</code> y salidas de <code>kitteo_exits.qty</code>; las transferencias internas no se descuentan. Almacén y KITTEO muestran por separado lo asignado a sus locaciones al guardar la comparación; pueden no sumar el total si hay material sin ubicación o movimientos pendientes.</p>
+          <p className="mt-0.5 text-[11px] leading-5 text-amber-800">Sistema-Neto sigue siendo el total: suma <code>entries.total_units</code> y resta salidas no devueltas de <code>shipping_direct.qty</code> y <code>kitteo_exits.qty</code>; ambas fuentes excluyen las devoluciones y las transferencias internas no se descuentan. Almacén y KITTEO muestran por separado lo asignado a sus locaciones al guardar la comparación; pueden no sumar el total si hay material sin ubicación o movimientos pendientes.</p>
         </div>
       </section>
 
