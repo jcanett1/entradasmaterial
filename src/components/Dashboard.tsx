@@ -776,12 +776,14 @@ export function Dashboard() {
                     <Download className="h-4 w-4" />
                     Descargar CSV
                   </button>
-                  <button type="button" onClick={() => setShowForm(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
-                    style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', boxShadow: '0 4px 14px 0 rgba(79,70,229,0.35)' }}>
-                    <Plus className="h-4 w-4" />
-                    Agregar Nuevo
-                  </button>
+                  {inventorySubTab === 'registro' && (
+                    <button type="button" onClick={() => setShowForm(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md transition-all active:scale-95"
+                      style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', boxShadow: '0 4px 14px 0 rgba(79,70,229,0.35)' }}>
+                      <Plus className="h-4 w-4" />
+                      Agregar Nuevo
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -816,17 +818,19 @@ export function Dashboard() {
                     </label>
                   </>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setShowPartsCatalog(true)}
-                  disabled={!isAdmin}
-                  title={isAdmin ? undefined : 'Solo usuarios con permisos de administrador pueden agregar números de parte.'}
-                  aria-label={isAdmin ? 'Nuevo número de parte' : 'Nuevo número de parte bloqueado: solo admin'}
-                  className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold uppercase tracking-wide shadow-sm transition-all md:ml-1 ${isAdmin ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 active:scale-95' : 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 opacity-70'}`}
-                >
-                  {isAdmin ? <Hash className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
-                  Nuevo número de parte
-                </button>
+                {inventorySubTab === 'registro' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPartsCatalog(true)}
+                    disabled={!isAdmin}
+                    title={isAdmin ? undefined : 'Solo usuarios con permisos de administrador pueden agregar números de parte.'}
+                    aria-label={isAdmin ? 'Nuevo número de parte' : 'Nuevo número de parte bloqueado: solo admin'}
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold uppercase tracking-wide shadow-sm transition-all md:ml-1 ${isAdmin ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 active:scale-95' : 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 opacity-70'}`}
+                  >
+                    {isAdmin ? <Hash className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
+                    Nuevo número de parte
+                  </button>
+                )}
                 {(searchTerm || availableOnly || dateFrom || dateTo) && (
                   <button
                     type="button"
