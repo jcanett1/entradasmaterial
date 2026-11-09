@@ -18,13 +18,14 @@ import {
   Package, Plus, X, RefreshCw, Download,
   LayoutDashboard, ClipboardList, Search,
   MapPin, LogOut, Tags, XCircle, ArrowRightFromLine, ArrowLeftRight, AlertTriangle, Hash, LockKeyhole,
-  CheckCircle2, CalendarDays, FileText, ClipboardCheck,
+  CheckCircle2, CalendarDays, FileText, ClipboardCheck, History,
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 
 type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes' | 'auditoria' | 'comparacion';
 type RackSubTab = 'locaciones' | 'salidas';
+type InventorySubTab = 'registro' | 'historial';
 
 const OperationsDashboard = lazy(() => import('./dashboard/OperationsDashboard').then(module => ({ default: module.OperationsDashboard })));
 const LocationReports = lazy(() => import('./dashboard/LocationReports').then(module => ({ default: module.LocationReports })));
@@ -111,9 +112,15 @@ export function Dashboard() {
   }, [isOperator, canViewDashboardAndReports, mainTab, rackSubTab]);
 
   // ── Inventario ──
-  const [records, setRecords] = useState<Entry[]>([]);
+  const [inventorySubTab, setInventorySubTab] = useState<InventorySubTab>('registro');
+  const [dailyRecords, setDailyRecords] = useState<Entry[]>([]);
+  const [historyRecords, setHistoryRecords] = useState<Entry[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [dailyLoading, setDailyLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const records = inventorySubTab === 'registro' ? dailyRecords : historyRecords;
+  const loading = inventorySubTab === 'registro' ? dailyLoading : historyLoading;
   const [filteredRecords, setFilteredRecords] = useState<Entry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<Entry | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -145,17 +152,27 @@ export function Dashboard() {
   /* =======================
      FETCH
   ======================= */
-  const fetchRecords = async () => {
+  const fetchRecords = useCallback(async (view: InventorySubTab) => {
+    const setViewLoading = view === 'registro' ? setDailyLoading : setHistoryLoading;
+    const setViewRecords = view === 'registro' ? setDailyRecords : setHistoryRecords;
+    setViewLoading(true);
     setRefreshing(true);
-    setLoading(true);
     const pageSize = 1000;
     const recordsData: unknown[] = [];
     let recordsError: { message: string } | null = null;
+    const queryStart = new Date();
+    queryStart.setHours(0, 0, 0, 0);
+    const queryEnd = new Date(queryStart);
+    queryEnd.setDate(queryEnd.getDate() + 1);
 
     for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabase
-        .from('entries')
-        .select('*')
+      let query = supabase.from('entries').select('*');
+      if (view === 'registro') {
+        query = query
+          .gte('registered_at', queryStart.toISOString())
+          .lt('registered_at', queryEnd.toISOString());
+      }
+      const { data, error } = await query
         .order('registered_at', { ascending: false })
         .range(from, from + pageSize - 1);
 
@@ -177,10 +194,17 @@ export function Dashboard() {
           id: toEntryId(entry.id) ?? entry.id,
         };
       });
-      setRecords(normalizedRecords);
+      setViewRecords(normalizedRecords);
+      if (view === 'historial') setHistoryLoaded(true);
     }
-    setLoading(false);
+    setViewLoading(false);
     setTimeout(() => setRefreshing(false), 600);
+  }, []);
+
+  const refreshInventoryRecords = async () => {
+    const refreshes = [fetchRecords('registro')];
+    if (historyLoaded || inventorySubTab === 'historial') refreshes.push(fetchRecords('historial'));
+    await Promise.all(refreshes);
   };
 
   /* Fetch de entries asignados, transferidos o salidos definitivamente */
@@ -356,21 +380,22 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!isOperator) {
-      fetchRecords();
+      fetchRecords('registro');
       fetchAssignedEntries();
     }
-  }, [fetchAssignedEntries, isOperator]);
+  }, [fetchAssignedEntries, fetchRecords, isOperator]);
 
   // Refrescar asignaciones cuando se cambia a la pestaña de inventario
   const hasLoadedInventoryInitially = React.useRef(false);
   useEffect(() => {
-    if (isOperator || visibleMainTab !== 'inventario') return;
+    if (isOperator || visibleMainTab !== 'inventario' || inventorySubTab !== 'registro') return;
     if (!hasLoadedInventoryInitially.current) {
       hasLoadedInventoryInitially.current = true;
       return;
     }
     fetchAssignedEntries();
-  }, [isOperator, visibleMainTab, fetchAssignedEntries]);
+    fetchRecords('registro');
+  }, [isOperator, visibleMainTab, inventorySubTab, fetchAssignedEntries, fetchRecords]);
 
   /* =======================
      FILTER + STATS
@@ -482,7 +507,7 @@ export function Dashboard() {
     }
     setShowForm(false);
     setEditingRecord(null);
-    fetchRecords();
+    await refreshInventoryRecords();
   };
 
   /* =======================
@@ -494,7 +519,7 @@ export function Dashboard() {
     if (!confirm('¿Estás seguro de eliminar este registro?')) return;
     const { error } = await supabase.from('entries').delete().eq('id', id);
     if (error) { alert('Error al eliminar el registro'); return; }
-    fetchRecords();
+    await refreshInventoryRecords();
   };
 
   /* =======================
@@ -546,6 +571,17 @@ export function Dashboard() {
   };
 
   const closeForm = () => { setShowForm(false); setEditingRecord(null); };
+
+  const changeInventorySubTab = (view: InventorySubTab) => {
+    if (view === inventorySubTab) return;
+    setInventorySubTab(view);
+    setSearchTerm('');
+    setAvailableOnly(false);
+    setDateFrom('');
+    setDateTo('');
+    clearSelection();
+    if (view === 'historial' && !historyLoaded) fetchRecords('historial');
+  };
 
   /* =======================
      UI
@@ -660,6 +696,36 @@ export function Dashboard() {
         ══════════════════════════════ */}
         {!isOperator && visitedMainTabs.has('inventario') && <div hidden={visibleMainTab !== 'inventario'}>
           <>
+            <div className="mb-6 space-y-2">
+              <div className="flex w-fit flex-wrap gap-1 rounded-xl border border-gray-100 bg-white p-1 shadow-sm" role="tablist" aria-label="Vistas de inventario">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inventorySubTab === 'registro'}
+                  onClick={() => changeInventorySubTab('registro')}
+                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${inventorySubTab === 'registro' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  Registro de inventario
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inventorySubTab === 'historial'}
+                  onClick={() => changeInventorySubTab('historial')}
+                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${inventorySubTab === 'historial' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  <History className="h-4 w-4" />
+                  Historial de entradas
+                </button>
+              </div>
+              <p className="text-xs text-gray-500">
+                {inventorySubTab === 'registro'
+                  ? `Entradas registradas hoy, ${new Date().toLocaleDateString('es-MX')}. El historial completo se carga al abrir su pestaña.`
+                  : 'Historial completo de entradas. La búsqueda y las fechas filtran los registros cargados.'}
+              </p>
+            </div>
+
             {assignedEntriesError && (
               <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
                 <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600 mt-0.5" />
@@ -672,9 +738,9 @@ export function Dashboard() {
 
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-              <StatCard icon={<ClipboardList className="h-6 w-6" />} label="Total Registros" value={stats.total} color="indigo" />
-              <StatCard icon={<Package className="h-6 w-6" />} label="Total Unidades" value={stats.units} color="blue" />
-              <StatCard icon={<LayoutDashboard className="h-6 w-6" />} label="Total Cajas" value={stats.boxes} color="emerald" />
+              <StatCard icon={<ClipboardList className="h-6 w-6" />} label={inventorySubTab === 'registro' ? 'Registros de Hoy' : 'Total Registros'} value={stats.total} color="indigo" />
+              <StatCard icon={<Package className="h-6 w-6" />} label={inventorySubTab === 'registro' ? 'Unidades de Hoy' : 'Total Unidades'} value={stats.units} color="blue" />
+              <StatCard icon={<LayoutDashboard className="h-6 w-6" />} label={inventorySubTab === 'registro' ? 'Cajas de Hoy' : 'Total Cajas'} value={stats.boxes} color="emerald" />
             </div>
 
             {/* Actions Bar */}
@@ -700,7 +766,7 @@ export function Dashboard() {
                     <CheckCircle2 className="h-4 w-4" />
                     Disponibles
                   </button>
-                  <button type="button" onClick={() => { fetchRecords(); fetchAssignedEntries(); }}
+                  <button type="button" onClick={() => { fetchRecords(inventorySubTab); fetchAssignedEntries(); }}
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 shadow-sm transition-all active:scale-95">
                     <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                     Actualizar
@@ -720,32 +786,36 @@ export function Dashboard() {
               </div>
 
               <div className="flex flex-col md:flex-row md:items-end gap-3 pt-3 border-t border-gray-100">
-                <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide md:mr-1">
-                  <CalendarDays className="h-4 w-4 text-indigo-400" />
-                  Fecha de registro
-                </div>
-                <label className="flex items-center gap-2 text-sm text-gray-600">
-                  <span className="text-xs font-semibold text-gray-500">Desde</span>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    max={dateTo || undefined}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    aria-label="Fecha inicial de registro"
-                    className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
-                  />
-                </label>
-                <label className="flex items-center gap-2 text-sm text-gray-600">
-                  <span className="text-xs font-semibold text-gray-500">Hasta</span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    min={dateFrom || undefined}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    aria-label="Fecha final de registro"
-                    className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
-                  />
-                </label>
+                {inventorySubTab === 'historial' && (
+                  <>
+                    <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide md:mr-1">
+                      <CalendarDays className="h-4 w-4 text-indigo-400" />
+                      Fecha de registro
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <span className="text-xs font-semibold text-gray-500">Desde</span>
+                      <input
+                        type="date"
+                        value={dateFrom}
+                        max={dateTo || undefined}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        aria-label="Fecha inicial de registro"
+                        className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <span className="text-xs font-semibold text-gray-500">Hasta</span>
+                      <input
+                        type="date"
+                        value={dateTo}
+                        min={dateFrom || undefined}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        aria-label="Fecha final de registro"
+                        className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
+                      />
+                    </label>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowPartsCatalog(true)}
@@ -809,7 +879,7 @@ export function Dashboard() {
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <ClipboardList className="h-5 w-5 text-indigo-500" />
-                  <h2 className="font-semibold text-gray-800 text-sm">Registros de Inventario</h2>
+                  <h2 className="font-semibold text-gray-800 text-sm">{inventorySubTab === 'registro' ? 'Registros de Inventario' : 'Historial de entradas'}</h2>
                 </div>
                 {filteredRecords.length > 0 && (
                   <span className="text-xs text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full font-medium">
