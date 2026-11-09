@@ -9,6 +9,13 @@ import {
 
 const PAGE_SIZE = 25;
 
+export type ServerPagination = {
+  page: number;
+  pageSize: number;
+  totalRecords: number;
+  onPageChange: (page: number) => void;
+};
+
 interface InventoryTableProps {
   records: Entry[];
   loading: boolean;
@@ -27,6 +34,8 @@ interface InventoryTableProps {
   /** Entradas con al menos una salida definitiva activa que puede regresarse. */
   returnableEntryIds?: Set<number>;
   onReturnToInventory?: (record: Entry) => void;
+  rowActionsDisabled?: boolean;
+  serverPagination?: ServerPagination;
 }
 
 export function InventoryTable({
@@ -43,13 +52,16 @@ export function InventoryTable({
   fifoNumbersByEntryId = {},
   returnableEntryIds = new Set(),
   onReturnToInventory,
+  rowActionsDisabled = false,
+  serverPagination,
 }: InventoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Reiniciar a página 1 cuando cambia la lista (búsqueda, nuevo registro, etc.)
   useEffect(() => {
+    if (serverPagination) return;
     setCurrentPage(1);
-  }, [records.length]);
+  }, [records.length, serverPagination]);
 
   if (loading) {
     return (
@@ -78,17 +90,23 @@ export function InventoryTable({
     );
   }
 
-  const totalPages = Math.ceil(records.length / PAGE_SIZE);
-  const safePage = Math.min(currentPage, totalPages);
-  const startIdx = (safePage - 1) * PAGE_SIZE;
-  const pageRecords = records.slice(startIdx, startIdx + PAGE_SIZE);
+  const totalRecords = serverPagination?.totalRecords ?? records.length;
+  const effectivePageSize = serverPagination?.pageSize ?? PAGE_SIZE;
+  const totalPages = Math.ceil(totalRecords / effectivePageSize);
+  const safePage = serverPagination?.page ?? Math.min(currentPage, Math.max(1, totalPages));
+  const startIdx = totalRecords === 0 ? 0 : (safePage - 1) * effectivePageSize;
+  const pageRecords = serverPagination ? records : records.slice(startIdx, startIdx + PAGE_SIZE);
   const pageIds = pageRecords.map((r) => r.id);
   const selectablePageIds = pageIds;
 
   const allPageSelected = selectablePageIds.length > 0 && selectablePageIds.every((id) => selectedIds.has(id));
   const somePageSelected = selectablePageIds.some((id) => selectedIds.has(id));
 
-  const goTo = (page: number) => setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  const goTo = (page: number) => {
+    const nextPage = Math.max(1, Math.min(page, totalPages));
+    if (serverPagination) serverPagination.onPageChange(nextPage);
+    else setCurrentPage(nextPage);
+  };
 
   // Rango de páginas visibles (máx 5 botones)
   const getPageRange = () => {
@@ -290,36 +308,37 @@ export function InventoryTable({
                         </span>
                         <button
                           type="button"
+                          disabled={rowActionsDisabled}
                           onClick={() => onLabel(record)}
                           title="Reimprimir etiqueta FIFO"
                           aria-label={`Reimprimir etiqueta FIFO de ${record.part_number}`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95 disabled:cursor-wait disabled:opacity-50"
                         >
                           <Printer className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline">Reimprimir</span>
                         </button>
                         {returnableEntryIds.has(record.id) && onReturnToInventory && (
-                          <button type="button" onClick={() => onReturnToInventory(record)}
+                          <button type="button" disabled={rowActionsDisabled} onClick={() => onReturnToInventory(record)}
                             aria-label={`Regresar a inventario la entrada ${record.id} de ${record.part_number}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-all hover:bg-emerald-100">
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-all hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-50">
                             <RotateCcw className="h-3.5 w-3.5" />Regresar a inventario
                           </button>
                         )}
                       </div>
                     ) : (
                       <div className="flex justify-center items-center gap-1.5 flex-wrap">
-                        <button onClick={() => onLabel(record)} title="Imprimir etiqueta FIFO"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95">
+                        <button disabled={rowActionsDisabled} onClick={() => onLabel(record)} title="Imprimir etiqueta FIFO"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-100 hover:border-violet-200 transition-all duration-150 active:scale-95 disabled:cursor-wait disabled:opacity-50">
                           <Tag className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline">Etiqueta</span>
                         </button>
-                        <button onClick={() => onEdit(record)} title="Editar registro"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95">
+                        <button disabled={rowActionsDisabled} onClick={() => onEdit(record)} title="Editar registro"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 hover:border-blue-200 transition-all duration-150 active:scale-95 disabled:cursor-wait disabled:opacity-50">
                           <Edit2 className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline">Editar</span>
                         </button>
-                        <button onClick={() => onDelete(record.id)} title="Eliminar registro"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95">
+                        <button disabled={rowActionsDisabled} onClick={() => onDelete(record.id)} title="Eliminar registro"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 hover:border-red-200 transition-all duration-150 active:scale-95 disabled:cursor-wait disabled:opacity-50">
                           <Trash2 className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline">Eliminar</span>
                         </button>
@@ -339,9 +358,9 @@ export function InventoryTable({
           {/* Info */}
           <p className="text-xs text-gray-500 order-2 sm:order-1">
             Mostrando{' '}
-            <span className="font-semibold text-gray-700">{startIdx + 1}–{Math.min(startIdx + PAGE_SIZE, records.length)}</span>
+            <span className="font-semibold text-gray-700">{startIdx + 1}–{Math.min(startIdx + effectivePageSize, totalRecords)}</span>
             {' '}de{' '}
-            <span className="font-semibold text-gray-700">{records.length}</span> registros
+            <span className="font-semibold text-gray-700">{totalRecords}</span> registros
           </p>
 
           {/* Controles */}
