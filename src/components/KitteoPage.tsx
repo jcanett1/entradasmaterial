@@ -74,6 +74,8 @@ interface KitteoExit {
   po: string | null;
   registered_by: string | null;
   exited_at: string;
+  returned_at?: string | null;
+  returned_by?: string | null;
 }
 
 type KitteoExitWithFifo = KitteoExit & { fifo_number: number | null };
@@ -1757,11 +1759,11 @@ export function KitteoPage() {
               <p className="text-3xl font-black text-red-600">{histTotalCount}</p>
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY de esta página</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">QTY bruto de esta página</p>
               <p className="text-3xl font-black text-blue-700">{filteredHist.reduce((s, h) => s + (h.qty ?? 0), 0).toLocaleString()}</p>
             </div>
             <div className="bg-purple-50 border border-purple-200 rounded-2xl px-5 py-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas de esta página</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cajas brutas de esta página</p>
               <p className="text-3xl font-black text-purple-700">{filteredHist.reduce((s, h) => s + (h.boxes ?? 0), 0).toLocaleString()}</p>
             </div>
           </div>
@@ -1846,6 +1848,15 @@ export function KitteoPage() {
                         </span>
                       </div>
 
+                      {h.returned_at ? (
+                        <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50/80 px-3 py-2">
+                          <p className="flex items-center gap-1.5 text-xs font-extrabold text-blue-700"><CheckCircle2 className="h-3.5 w-3.5" />Devuelto</p>
+                          <p className="mt-1 text-[11px] leading-4 text-blue-700">Por {h.returned_by || 'Usuario no registrado'} · {new Date(h.returned_at).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-xs font-semibold text-gray-500">Salida vigente</p>
+                      )}
+
                       <div className="mt-3 grid grid-cols-2 gap-2.5">
                         <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
                           <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">QTY</p>
@@ -1876,7 +1887,7 @@ export function KitteoPage() {
 
               <div className="hidden overflow-hidden rounded-2xl border border-gray-200 xl:block">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[980px] border-collapse">
+                  <table className="w-full min-w-[1080px] border-collapse">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
                         {[
@@ -1888,6 +1899,7 @@ export function KitteoPage() {
                           { icon: <Archive className="h-3.5 w-3.5" />, label: 'Cajas', center: true },
                           { icon: <User className="h-3.5 w-3.5" />, label: 'Registrado Por' },
                           { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Fecha Salida' },
+                          { icon: <CheckCircle2 className="h-3.5 w-3.5" />, label: 'Estado' },
                         ].map(h => (
                           <th key={h.label} className={`px-4 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider ${h.center ? 'text-center' : 'text-left'}`}>
                             <div className={`flex items-center gap-1.5 ${h.center ? 'justify-center' : ''}`}>
@@ -1964,6 +1976,16 @@ export function KitteoPage() {
                                 </span>
                               </div>
                             </td>
+                            {/* Estado de devolución */}
+                            <td className="px-4 py-3">
+                              {h.returned_at ? (
+                                <div className="inline-flex flex-col rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-bold text-blue-700">
+                                  <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />Devuelto</span>
+                                  <span className="mt-0.5 max-w-44 truncate text-[10px] font-medium">Por {h.returned_by || 'Usuario no registrado'}</span>
+                                  <span className="mt-0.5 text-[10px] font-medium">{new Date(h.returned_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                </div>
+                              ) : <span className="inline-flex rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs font-semibold text-gray-500">Salida vigente</span>}
+                            </td>
                           </tr>
                         );
                       })}
@@ -1973,7 +1995,7 @@ export function KitteoPage() {
                       <tfoot>
                         <tr className="bg-gray-50 border-t-2 border-gray-200">
                           <td colSpan={4} className="px-4 py-3">
-                            <span className="text-xs font-bold text-gray-500 uppercase">Subtotal página</span>
+                            <span className="text-xs font-bold text-gray-500 uppercase">Subtotal bruto de página</span>
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-black text-sm border border-blue-200">

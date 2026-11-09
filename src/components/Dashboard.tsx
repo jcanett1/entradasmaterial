@@ -5,6 +5,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { InventoryForm } from './InventoryForm';
 import type { MultiEntry } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
+import { ReturnInventoryModal } from './ReturnInventoryModal';
+import { fetchTerminalExits } from '@/services/terminalExitService';
+import { isBlockedByTerminalExit, matchesTerminalExit } from '@/lib/terminalExitState';
+import type { TerminalExit } from '@/lib/terminalExitState';
 import { LabelModal } from './LabelModal';
 import { MultiLabelModal } from './MultiLabelModal';
 import { PartsCatalogModal } from './PartsCatalogModal';
@@ -51,35 +55,8 @@ const getInventoryAssignmentKey = (
   return `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}|${fifo ?? 'none'}`;
 };
 
-const getInventoryPartPoKey = (
-  partNumber: string | null | undefined,
-  po: string | null | undefined,
-) => `${normalizeInventoryPart(partNumber)}|${normalizeInventoryPo(po)}`;
-
-type HistoricalExitFingerprint = {
-  entry_id: number | null;
-  part_number: string | null;
-  po: string | null;
-  qty: number | null;
-  boxes: number | null;
-  exited_at: string | null;
-};
-
-const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) => {
-  if (exit.entry_id !== null) return entry.id === exit.entry_id;
-  if (getInventoryPartPoKey(entry.part_number, entry.po) !== getInventoryPartPoKey(exit.part_number, exit.po)) return false;
-
-  const entryTime = Date.parse(entry.registered_at);
-  const exitTime = exit.exited_at ? Date.parse(exit.exited_at) : Number.NaN;
-  if (Number.isNaN(entryTime) || Number.isNaN(exitTime) || entryTime > exitTime) return false;
-
-  const qtyMatches = exit.qty === null || entry.total_units === exit.qty;
-  const boxesMatches = exit.boxes === null || entry.total_boxes === exit.boxes;
-  return qtyMatches && boxesMatches;
-};
-
 export function Dashboard() {
-  const { userProfile, signOut, isAdmin, userRol } = useAuth();
+  const { userProfile, signOut, isAdmin, isManager, userRol } = useAuth();
   const isOperator = userRol === 'operador';
   const canViewDashboardAndReports = !isOperator && userRol !== 'supervisor';
 
@@ -141,9 +118,12 @@ export function Dashboard() {
   // Entradas que ya salieron definitivamente o están fuera del inventario principal.
   const [unavailableEntryIds, setUnavailableEntryIds] = useState<Set<number>>(new Set());
   // Respaldo para salidas históricas creadas antes de guardar entry_id.
-  const [historicalExitFingerprints, setHistoricalExitFingerprints] = useState<HistoricalExitFingerprint[]>([]);
+  const [historicalExitFingerprints, setHistoricalExitFingerprints] = useState<TerminalExit[]>([]);
   const [unavailableEntryLabels, setUnavailableEntryLabels] = useState<Record<number, string>>({});
   const [assignedEntriesError, setAssignedEntriesError] = useState<string | null>(null);
+  const [assignmentsLoading, setAssignmentsLoading] = useState(true);
+  const [returnRecord, setReturnRecord] = useState<Entry | null>(null);
+  const [inventoryRevision, setInventoryRevision] = useState(0);
 
   // ── Selección múltiple ──
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -209,173 +189,141 @@ export function Dashboard() {
 
   /* Fetch de entries asignados, transferidos o salidos definitivamente */
   const fetchAssignedEntries = useCallback(async () => {
+    setAssignmentsLoading(true);
     setAssignedEntriesError(null);
+    try {
 
-    const pageSize = 1000;
-    const loadAllPages = async (loadPage: (from: number, to: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }>) => {
-      const rows: unknown[] = [];
-      let error: { message: string } | null = null;
-      for (let from = 0; ; from += pageSize) {
-        const result = await loadPage(from, from + pageSize - 1);
-        if (result.error) {
-          error = result.error;
-          break;
+      const pageSize = 1000;
+      const loadAllPages = async (loadPage: (from: number, to: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }>) => {
+        const rows: unknown[] = [];
+        let error: { message: string } | null = null;
+        for (let from = 0; ; from += pageSize) {
+          const result = await loadPage(from, from + pageSize - 1);
+          if (result.error) {
+            error = result.error;
+            break;
+          }
+          rows.push(...(result.data ?? []));
+          if ((result.data ?? []).length < pageSize) break;
         }
-        rows.push(...(result.data ?? []));
-        if ((result.data ?? []).length < pageSize) break;
+        return { data: rows, error };
+      };
+
+      const [itemsResult, locationsResult, fifoResult, terminalExitsResult, transferesResult, kitteoItemsResult, kitteoLocationsResult] = await Promise.all([
+        loadAllPages(async (from, to) => supabase
+          .from('location_items')
+          .select('entry_id, location_code, part_number, po, fifo_number')
+          .range(from, to)),
+        loadAllPages(async (from, to) => supabase
+          .from('locations')
+          .select('entry_id, location_code')
+          .not('entry_id', 'is', null)
+          .range(from, to)),
+        loadAllPages(async (from, to) => supabase
+          .from('fifo_labels')
+          .select('entry_id, part_number, po, fifo_number')
+          .range(from, to)),
+        fetchTerminalExits(),
+        loadAllPages(async (from, to) => supabase
+          .from('transferes')
+          .select('entry_id, location_code')
+          .range(from, to)),
+        loadAllPages(async (from, to) => supabase
+          .from('kitteo_location_items')
+          .select('entry_id, location_code')
+          .range(from, to)),
+        loadAllPages(async (from, to) => supabase
+          .from('kitteo_locations')
+          .select('entry_id, location_code')
+          .eq('status', 'ocupado')
+          .not('entry_id', 'is', null)
+          .range(from, to)),
+      ]);
+
+      const requiredErrors = [
+        itemsResult.error && `location_items: ${itemsResult.error.message}`,
+        locationsResult.error && `locations: ${locationsResult.error.message}`,
+        fifoResult.error && `fifo_labels: ${fifoResult.error.message}`,
+        terminalExitsResult.error && `salidas definitivas: ${terminalExitsResult.error.message}`,
+        transferesResult.error && `transferencias KITTEO: ${transferesResult.error.message}`,
+        kitteoItemsResult.error && `artículos KITTEO: ${kitteoItemsResult.error.message}`,
+        kitteoLocationsResult.error && `locaciones KITTEO: ${kitteoLocationsResult.error.message}`,
+      ].filter((error): error is string => Boolean(error));
+      if (requiredErrors.length > 0) {
+        console.error('Error consultando datos requeridos para disponibilidad/asignaciones:', requiredErrors);
+        setAssignedEntriesError(`No se pudieron verificar los bloqueos: ${requiredErrors.join(' | ')}`);
+        return;
       }
-      return { data: rows, error };
-    };
 
-    const [itemsResult, locationsResult, fifoResult, shippingDirectResult, kitteoExitsResult, transferesResult, kitteoItemsResult, kitteoLocationsResult] = await Promise.all([
-      loadAllPages(async (from, to) => supabase
-        .from('location_items')
-        .select('entry_id, location_code, part_number, po, fifo_number')
-        .range(from, to)),
-      loadAllPages(async (from, to) => supabase
-        .from('locations')
-        .select('entry_id, location_code')
-        .not('entry_id', 'is', null)
-        .range(from, to)),
-      loadAllPages(async (from, to) => supabase
-        .from('fifo_labels')
-        .select('entry_id, part_number, po, fifo_number')
-        .range(from, to)),
-      loadAllPages(async (from, to) => supabase
-        .from('shipping_direct')
-        .select('entry_id, part_number, po, qty, boxes, exited_at')
-        .range(from, to)),
-      (async () => {
-        const currentSchema = await loadAllPages(async (from, to) => supabase
-          .from('kitteo_exits')
-          .select('entry_id, part_number, po, qty, boxes, exited_at')
-          .range(from, to));
-        if (!currentSchema.error) return currentSchema;
+      const itemRows = (itemsResult.data ?? []) as {
+        entry_id: unknown;
+        location_code: string | null;
+        part_number: string | null;
+        po: string | null;
+        fifo_number: unknown;
+      }[];
+      const legacyRows = (locationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+      const fifoRows = (fifoResult.data ?? []) as {
+        entry_id: unknown;
+        part_number: string | null;
+        po: string | null;
+        fifo_number: unknown;
+      }[];
+      const terminalExitRows = terminalExitsResult.data;
+      const activeTransferRows = (transferesResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+      const activeKitteoRows = (kitteoItemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+      const activeKitteoLocationRows = (kitteoLocationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
+      const fifoToEntryId = new Map<string, number>();
+      const fifoNumbers: Record<number, number> = {};
+      fifoRows.forEach(row => {
+        const entryId = toEntryId(row.entry_id);
+        const fifoNumber = toEntryId(row.fifo_number);
+        if (entryId !== null && fifoNumber !== null) fifoNumbers[entryId] = fifoNumber;
+        if (entryId !== null && row.part_number && row.fifo_number !== null && row.fifo_number !== undefined) {
+          fifoToEntryId.set(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number), entryId);
+        }
+      });
 
-        const legacySchema = await loadAllPages(async (from, to) => supabase
-          .from('kitteo_exits')
-          .select('part_number, po, qty, boxes, exited_at')
-          .range(from, to));
-        return {
-          data: (legacySchema.data ?? []).map(row => ({ ...row as object, entry_id: null })),
-          error: legacySchema.error,
-        };
-      })(),
-      loadAllPages(async (from, to) => supabase
-        .from('transferes')
-        .select('entry_id, location_code')
-        .range(from, to)),
-      loadAllPages(async (from, to) => supabase
-        .from('kitteo_location_items')
-        .select('entry_id, location_code')
-        .range(from, to)),
-      loadAllPages(async (from, to) => supabase
-        .from('kitteo_locations')
-        .select('entry_id, location_code')
-        .eq('status', 'ocupado')
-        .not('entry_id', 'is', null)
-        .range(from, to)),
-    ]);
+      const ids = new Set<number>();
+      const locMap: Record<number, string> = {};
+      const addAssignment = (entryId: number | null, locationCode: string | null | undefined) => {
+        if (entryId === null) return;
+        ids.add(entryId);
+        const normalizedLocation = locationCode?.trim() ?? '';
+        if (normalizedLocation) locMap[entryId] = normalizedLocation;
+      };
 
-    if (itemsResult.error && locationsResult.error && fifoResult.error) {
-      console.error('Error consultando materiales asignados:', itemsResult.error, locationsResult.error, fifoResult.error);
-      setAssignedEntriesError(`No se pudieron actualizar los bloqueos: ${itemsResult.error.message}`);
-      return;
-    }
+      itemRows.forEach(row => {
+        const directEntryId = toEntryId(row.entry_id);
+        const resolvedEntryId = directEntryId ?? fifoToEntryId.get(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number)) ?? null;
+        addAssignment(resolvedEntryId, row.location_code);
+      });
+      legacyRows.forEach(row => addAssignment(toEntryId(row.entry_id), row.location_code));
 
-    if (itemsResult.error) {
-      console.warn('No se pudo leer location_items; se usarán los datos de locations:', itemsResult.error);
-      setAssignedEntriesError(`No se pudo leer location_items: ${itemsResult.error.message}`);
-    }
-    if (locationsResult.error) {
-      console.warn('No se pudo leer locations para actualizar bloqueos:', locationsResult.error);
-    }
-    if (fifoResult.error) {
-      console.warn('No se pudo leer fifo_labels para resolver registros heredados:', fifoResult.error);
-    }
-    if (shippingDirectResult.error) {
-      console.warn('No se pudo leer el historial de Shipping Direct:', shippingDirectResult.error);
-    }
-    if (kitteoExitsResult.error) {
-      console.warn('No se pudo leer el historial de salidas definitivas KITTEO:', kitteoExitsResult.error);
-    }
-    if (transferesResult.error) {
-      console.warn('No se pudieron leer las transferencias activas de KITTEO:', transferesResult.error);
-    }
-    if (kitteoItemsResult.error) {
-      console.warn('No se pudieron leer los artículos activos de KITTEO:', kitteoItemsResult.error);
-    }
-    if (kitteoLocationsResult.error) {
-      console.warn('No se pudieron leer las locaciones activas de KITTEO:', kitteoLocationsResult.error);
-    }
+      const unavailableIds = new Set<number>();
+      const unavailableLabels: Record<number, string> = {};
+      const addUnavailable = (entryId: unknown, label: string) => {
+        const normalizedId = toEntryId(entryId);
+        if (normalizedId === null) return;
+        unavailableIds.add(normalizedId);
+        unavailableLabels[normalizedId] = label;
+      };
+      activeTransferRows.forEach(row => addUnavailable(row.entry_id, 'Transferencia KITTEO'));
+      activeKitteoRows.forEach(row => addUnavailable(row.entry_id, 'KITTEO'));
+      activeKitteoLocationRows.forEach(row => addUnavailable(row.entry_id, 'KITTEO'));
+      terminalExitRows.filter(row => !row.returned_at).forEach(row => addUnavailable(row.entry_id, 'Salida definitiva'));
 
-    const itemRows = (itemsResult.data ?? []) as {
-      entry_id: unknown;
-      location_code: string | null;
-      part_number: string | null;
-      po: string | null;
-      fifo_number: unknown;
-    }[];
-    const legacyRows = (locationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
-    const fifoRows = (fifoResult.data ?? []) as {
-      entry_id: unknown;
-      part_number: string | null;
-      po: string | null;
-      fifo_number: unknown;
-    }[];
-    const terminalExitRows = [
-      ...((shippingDirectResult.data ?? []) as HistoricalExitFingerprint[]),
-      ...((kitteoExitsResult.data ?? []) as HistoricalExitFingerprint[]),
-    ];
-    const activeTransferRows = (transferesResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
-    const activeKitteoRows = (kitteoItemsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
-    const activeKitteoLocationRows = (kitteoLocationsResult.data ?? []) as { entry_id: unknown; location_code: string | null }[];
-    const fifoToEntryId = new Map<string, number>();
-    const fifoNumbers: Record<number, number> = {};
-    fifoRows.forEach(row => {
-      const entryId = toEntryId(row.entry_id);
-      const fifoNumber = toEntryId(row.fifo_number);
-      if (entryId !== null && fifoNumber !== null) fifoNumbers[entryId] = fifoNumber;
-      if (entryId !== null && row.part_number && row.fifo_number !== null && row.fifo_number !== undefined) {
-        fifoToEntryId.set(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number), entryId);
-      }
-    });
-
-    const ids = new Set<number>();
-    const locMap: Record<number, string> = {};
-    const addAssignment = (entryId: number | null, locationCode: string | null | undefined) => {
-      if (entryId === null) return;
-      ids.add(entryId);
-      const normalizedLocation = locationCode?.trim() ?? '';
-      if (normalizedLocation) locMap[entryId] = normalizedLocation;
-    };
-
-    itemRows.forEach(row => {
-      const directEntryId = toEntryId(row.entry_id);
-      const resolvedEntryId = directEntryId ?? fifoToEntryId.get(getInventoryAssignmentKey(row.part_number, row.po, row.fifo_number)) ?? null;
-      addAssignment(resolvedEntryId, row.location_code);
-    });
-    legacyRows.forEach(row => addAssignment(toEntryId(row.entry_id), row.location_code));
-
-    const unavailableIds = new Set<number>();
-    const unavailableLabels: Record<number, string> = {};
-    const addUnavailable = (entryId: unknown, label: string) => {
-      const normalizedId = toEntryId(entryId);
-      if (normalizedId === null) return;
-      unavailableIds.add(normalizedId);
-      unavailableLabels[normalizedId] = label;
-    };
-    activeTransferRows.forEach(row => addUnavailable(row.entry_id, 'Transferencia KITTEO'));
-    activeKitteoRows.forEach(row => addUnavailable(row.entry_id, 'KITTEO'));
-    activeKitteoLocationRows.forEach(row => addUnavailable(row.entry_id, 'KITTEO'));
-    terminalExitRows.forEach(row => addUnavailable(row.entry_id, 'Salida definitiva'));
-
-    setAssignedEntryIds(ids);
-    setAssignedEntryLocations(locMap);
-    setUnavailableEntryIds(unavailableIds);
-    setHistoricalExitFingerprints(terminalExitRows);
-    setUnavailableEntryLabels(unavailableLabels);
-    setFifoNumbersByEntryId(fifoNumbers);
+      setAssignedEntryIds(ids);
+      setAssignedEntryLocations(locMap);
+      setUnavailableEntryIds(unavailableIds);
+      setHistoricalExitFingerprints(terminalExitRows);
+      setUnavailableEntryLabels(unavailableLabels);
+      setFifoNumbersByEntryId(fifoNumbers);
+    } catch (error) {
+      setAssignedEntriesError(error instanceof Error ? error.message : 'No se pudieron verificar los bloqueos.');
+    } finally {
+      setAssignmentsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -416,7 +364,7 @@ export function Dashboard() {
     const term = normalizeSearchText(searchTerm.trim());
     const inventoryUnavailableIds = new Set([...assignedEntryIds, ...unavailableEntryIds]);
     setFilteredRecords(records.filter((r) => {
-      const hasHistoricalExit = historicalExitFingerprints.some(exit => matchesHistoricalExit(r, exit));
+      const hasHistoricalExit = historicalExitFingerprints.some(exit => isBlockedByTerminalExit(r, exit));
       const isUnavailable = inventoryUnavailableIds.has(r.id) || hasHistoricalExit;
       if (availableOnly && isUnavailable) return false;
 
@@ -452,10 +400,21 @@ export function Dashboard() {
 
   const historicalUnavailableIds = new Set(
     records
-      .filter(record => historicalExitFingerprints.some(exit => matchesHistoricalExit(record, exit)))
+      .filter(record => historicalExitFingerprints.some(exit => isBlockedByTerminalExit(record, exit)))
       .map(record => record.id),
   );
-  const blockedInventoryIds = new Set([...assignedEntryIds, ...unavailableEntryIds, ...historicalUnavailableIds]);
+  const returnableEntryIds = new Set(records
+    .filter(record => historicalExitFingerprints.some(exit => !exit.returned_at && matchesTerminalExit(record, exit)))
+    .map(record => record.id));
+  const handleReturned = async () => {
+    setReturnRecord(null);
+    await fetchAssignedEntries();
+    // Refrescar módulos ya visitados sin crear entradas ni reportes nuevos.
+    setInventoryRevision(previous => previous + 1);
+  };
+  const blockedInventoryIds = assignedEntriesError
+    ? new Set(records.map(record => record.id))
+    : new Set([...assignedEntryIds, ...unavailableEntryIds, ...historicalUnavailableIds]);
   const blockedInventoryLocations = {
     ...assignedEntryLocations,
     ...Object.fromEntries(
@@ -680,12 +639,12 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: DASHBOARD
         ══════════════════════════════ */}
-        {canViewDashboardAndReports && visitedMainTabs.has('dashboard') && <div hidden={visibleMainTab !== 'dashboard'}><Suspense fallback={<div role="status" className="p-5 text-sm text-gray-500">Cargando dashboard...</div>}><OperationsDashboard /></Suspense></div>}
+        {canViewDashboardAndReports && visitedMainTabs.has('dashboard') && <div hidden={visibleMainTab !== 'dashboard'}><Suspense fallback={<div role="status" className="p-5 text-sm text-gray-500">Cargando dashboard...</div>}><OperationsDashboard key={inventoryRevision} /></Suspense></div>}
 
         {/* ══════════════════════════════
             PESTAÑA: REPORTES
         ══════════════════════════════ */}
-        {canViewDashboardAndReports && visitedMainTabs.has('reportes') && <div hidden={visibleMainTab !== 'reportes'}><Suspense fallback={<div role="status" className="p-5 text-sm text-gray-500">Cargando reportes...</div>}><LocationReports /></Suspense></div>}
+        {canViewDashboardAndReports && visitedMainTabs.has('reportes') && <div hidden={visibleMainTab !== 'reportes'}><Suspense fallback={<div role="status" className="p-5 text-sm text-gray-500">Cargando reportes...</div>}><LocationReports key={inventoryRevision} /></Suspense></div>}
 
         {isAdmin && visitedMainTabs.has('auditoria') && <div hidden={visibleMainTab !== 'auditoria'}><PhysicalAuditPage /></div>}
 
@@ -893,7 +852,7 @@ export function Dashboard() {
               </div>
               <InventoryTable
                 records={filteredRecords}
-                loading={loading}
+                loading={loading || assignmentsLoading}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
                 onLabel={handleLabel}
@@ -903,6 +862,8 @@ export function Dashboard() {
                 assignedEntryIds={blockedInventoryIds}
                 assignedEntryLocations={blockedInventoryLocations}
                 fifoNumbersByEntryId={fifoNumbersByEntryId}
+                returnableEntryIds={isManager && !assignedEntriesError ? returnableEntryIds : new Set()}
+                onReturnToInventory={setReturnRecord}
               />
             </div>
           </>
@@ -914,7 +875,7 @@ export function Dashboard() {
         {visitedMainTabs.has('kitteo') && (
           <div hidden={visibleMainTab !== 'kitteo'} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6">
-              <KitteoPage />
+              <KitteoPage key={inventoryRevision} />
             </div>
           </div>
         )}
@@ -945,8 +906,8 @@ export function Dashboard() {
             </div>
 
             <div className="p-6">
-              {visitedRackSubTabs.has('locaciones') && <div hidden={visibleRackSubTab !== 'locaciones'}><RacksPage onAssignmentsChange={fetchAssignedEntries} /></div>}
-              {visitedRackSubTabs.has('salidas') && <div hidden={visibleRackSubTab !== 'salidas'}><ExitsPage /></div>}
+              {visitedRackSubTabs.has('locaciones') && <div hidden={visibleRackSubTab !== 'locaciones'}><RacksPage key={inventoryRevision} onAssignmentsChange={fetchAssignedEntries} /></div>}
+              {visitedRackSubTabs.has('salidas') && <div hidden={visibleRackSubTab !== 'salidas'}><ExitsPage key={inventoryRevision} /></div>}
             </div>
           </div>
         )}
@@ -954,6 +915,15 @@ export function Dashboard() {
 
       {/* Modal Etiqueta FIFO (individual) */}
       {labelRecord && <LabelModal record={labelRecord} onClose={() => setLabelRecord(null)} />}
+
+      {returnRecord && isManager && (
+        <ReturnInventoryModal
+          entry={returnRecord}
+          exits={historicalExitFingerprints.filter(exit => !exit.returned_at && matchesTerminalExit(returnRecord, exit))}
+          onClose={() => setReturnRecord(null)}
+          onReturned={handleReturned}
+        />
+      )}
 
       {/* Modal Etiquetas múltiples */}
       {showMultiLabel && selectedRecords.length > 0 && (

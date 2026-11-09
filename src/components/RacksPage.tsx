@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchTerminalExits } from '@/services/terminalExitService';
+import { isBlockedByTerminalExit } from '@/lib/terminalExitState';
 import {
   MapPin, Package, CheckCircle2, Search, Loader2, X, Save,
   RefreshCw, LogOut, Unlock, Hash, Boxes, ClipboardList, Calendar,
@@ -98,9 +100,6 @@ const isSameAssignment = (left: Pick<LocationItem, 'part_number' | 'po' | 'fifo_
 const normalizePo = (po: string | null | undefined) =>
   (po ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toUpperCase();
 
-const getPartPoKey = (partNumber: string | null | undefined, po: string | null | undefined) =>
-  `${normalizePartNumber(partNumber)}|${normalizePo(po)}`;
-
 const toNumberOrNull = (value: unknown): number | null => {
   if (value === null || value === undefined || value === '') return null;
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -110,29 +109,6 @@ const toNumberOrNull = (value: unknown): number | null => {
 const ENTRY_QUERY_CHUNK_SIZE = 500;
 type EntryBoxRow = { id: unknown; total_boxes: unknown };
 type FifoLabelRow = { entry_id: unknown; fifo_number: unknown };
-type HistoricalExitRow = {
-  entry_id: unknown;
-  part_number: string | null;
-  po: string | null;
-  qty: unknown;
-  boxes: unknown;
-  exited_at: string | null;
-};
-
-const matchesHistoricalExit = (entry: EntryOption, exit: HistoricalExitRow) => {
-  const exitEntryId = toNumberOrNull(exit.entry_id);
-  if (exitEntryId !== null) return entry.id === exitEntryId;
-  if (getPartPoKey(entry.part_number, entry.po) !== getPartPoKey(exit.part_number, exit.po)) return false;
-
-  const entryTime = Date.parse(entry.registered_at);
-  const exitTime = exit.exited_at ? Date.parse(exit.exited_at) : Number.NaN;
-  if (Number.isNaN(entryTime) || Number.isNaN(exitTime) || entryTime > exitTime) return false;
-
-  const exitQty = toNumberOrNull(exit.qty);
-  const exitBoxes = toNumberOrNull(exit.boxes);
-  return (exitQty === null || entry.total_units === exitQty)
-    && (exitBoxes === null || entry.total_boxes === exitBoxes);
-};
 
 async function fetchEntryBoxesByIds(entryIds: number[]) {
   const uniqueEntryIds = [...new Set(entryIds)];
@@ -643,27 +619,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     const itemsAssignments = { data: itemAssignmentRows, error: itemsAssignmentError };
     const legacyAssignments = { data: legacyAssignmentRows, error: legacyAssignmentError };
 
-    const [shippingDirectResult, kitteoExitsResult, transferesResult, kitteoItemsResult, kitteoLocationsResult] = await Promise.all([
-      loadAllPages<HistoricalExitRow>(async (from, to) => supabase
-        .from('shipping_direct')
-        .select('entry_id, part_number, po, qty, boxes, exited_at')
-        .range(from, to)),
-      (async () => {
-        const currentSchema = await loadAllPages<HistoricalExitRow>(async (from, to) => supabase
-          .from('kitteo_exits')
-          .select('entry_id, part_number, po, qty, boxes, exited_at')
-          .range(from, to));
-        if (!currentSchema.error) return currentSchema;
-
-        const legacySchema = await loadAllPages<Omit<HistoricalExitRow, 'entry_id'>>(async (from, to) => supabase
-          .from('kitteo_exits')
-          .select('part_number, po, qty, boxes, exited_at')
-          .range(from, to));
-        return {
-          data: legacySchema.data.map(row => ({ ...row, entry_id: null })),
-          error: legacySchema.error,
-        };
-      })(),
+    const [terminalExitsResult, transferesResult, kitteoItemsResult, kitteoLocationsResult] = await Promise.all([
+      fetchTerminalExits(),
       loadAllPages<{ entry_id: unknown; location_code: string | null }>(async (from, to) => supabase
         .from('transferes')
         .select('entry_id, location_code')
@@ -680,35 +637,21 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         .range(from, to)),
     ]);
 
-    if (itemsAssignments.error && legacyAssignments.error) {
+    const requiredErrors = [
+      itemsAssignments.error && `location_items: ${itemsAssignments.error.message}`,
+      legacyAssignments.error && `locations: ${legacyAssignments.error.message}`,
+      terminalExitsResult.error && `salidas definitivas: ${terminalExitsResult.error.message}`,
+      transferesResult.error && `transferencias: ${transferesResult.error.message}`,
+      kitteoItemsResult.error && `artículos KITTEO: ${kitteoItemsResult.error.message}`,
+      kitteoLocationsResult.error && `locaciones KITTEO: ${kitteoLocationsResult.error.message}`,
+    ].filter((error): error is string => Boolean(error));
+    if (requiredErrors.length > 0) {
       if (requestId !== fetchEntriesRequest.current) return;
-      const message = `${itemsAssignments.error.message} | ${legacyAssignments.error.message}`;
-      console.error('Error consultando asignaciones existentes:', message);
+      const message = requiredErrors.join(' | ');
+      console.error('Error consultando fuentes requeridas para disponibilidad/asignaciones:', message);
       setEntries([]);
-      setEntriesLoadError(`No se pudieron consultar las asignaciones existentes: ${message}`);
+      setEntriesLoadError(`No se pudo verificar la disponibilidad: ${message}`);
       return;
-    }
-
-    if (itemsAssignments.error) {
-      console.warn('No se pudieron consultar las asignaciones de location_items:', itemsAssignments.error);
-    }
-    if (legacyAssignments.error) {
-      console.warn('No se pudieron consultar las asignaciones heredadas de locations:', legacyAssignments.error);
-    }
-    if (shippingDirectResult.error) {
-      console.warn('No se pudo consultar el historial de Shipping Direct:', shippingDirectResult.error);
-    }
-    if (kitteoExitsResult.error) {
-      console.warn('No se pudo consultar el historial de salidas definitivas KITTEO:', kitteoExitsResult.error);
-    }
-    if (transferesResult.error) {
-      console.warn('No se pudieron consultar las transferencias activas:', transferesResult.error);
-    }
-    if (kitteoItemsResult.error) {
-      console.warn('No se pudieron consultar los artículos activos de KITTEO:', kitteoItemsResult.error);
-    }
-    if (kitteoLocationsResult.error) {
-      console.warn('No se pudieron consultar las locaciones activas de KITTEO:', kitteoLocationsResult.error);
     }
 
     // Inventario considera bloqueada toda la entrada cuando alguna de sus
@@ -819,10 +762,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         };
       });
     });
-    const terminalExitRows = [
-      ...shippingDirectResult.data,
-      ...kitteoExitsResult.data,
-    ];
+    const terminalExitRows = terminalExitsResult.data;
     const searchValue = term.trim().toLowerCase();
     const availableEntries = options.filter(entry => {
       const matchesSearch = !searchValue
@@ -830,7 +770,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         || (entry.description ?? '').toLowerCase().includes(searchValue)
         || (entry.po ?? '').toLowerCase().includes(searchValue)
         || String(entry.fifo_number ?? '').includes(searchValue);
-      const hasHistoricalExit = terminalExitRows.some(exit => matchesHistoricalExit(entry, exit));
+      const hasHistoricalExit = terminalExitRows.some(exit => isBlockedByTerminalExit(entry, exit));
       // También cubre entradas asignadas con una fila heredada o con un FIFO
       // distinto al que se está mostrando en esta opción.
       return matchesSearch
