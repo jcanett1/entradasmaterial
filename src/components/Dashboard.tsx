@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,6 +9,7 @@ import { ReturnInventoryModal } from './ReturnInventoryModal';
 import { fetchTerminalExits } from '@/services/terminalExitService';
 import { isBlockedByTerminalExit, matchesTerminalExit } from '@/lib/terminalExitState';
 import type { TerminalExit } from '@/lib/terminalExitState';
+import { fetchInventoryHistoryPage, fetchInventoryHistorySummary } from '@/services/inventoryHistoryService';
 import { LabelModal } from './LabelModal';
 import { MultiLabelModal } from './MultiLabelModal';
 import { PartsCatalogModal } from './PartsCatalogModal';
@@ -30,6 +31,7 @@ import { saveAs } from 'file-saver';
 type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes' | 'auditoria' | 'comparacion';
 type RackSubTab = 'locaciones' | 'salidas';
 type InventorySubTab = 'registro' | 'historial';
+const HISTORY_PAGE_SIZE = 25;
 
 const OperationsDashboard = lazy(() => import('./dashboard/OperationsDashboard').then(module => ({ default: module.OperationsDashboard })));
 const LocationReports = lazy(() => import('./dashboard/LocationReports').then(module => ({ default: module.LocationReports })));
@@ -93,8 +95,16 @@ export function Dashboard() {
   const [dailyRecords, setDailyRecords] = useState<Entry[]>([]);
   const [historyRecords, setHistoryRecords] = useState<Entry[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [dailyLoading, setDailyLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyExporting, setHistoryExporting] = useState(false);
+  const historyRequestId = useRef(0);
+  const historySummaryLoaded = useRef(false);
+  const historySummaryLoading = useRef(false);
   const records = inventorySubTab === 'registro' ? dailyRecords : historyRecords;
   const loading = inventorySubTab === 'registro' ? dailyLoading : historyLoading;
   const [filteredRecords, setFilteredRecords] = useState<Entry[]>([]);
@@ -127,15 +137,27 @@ export function Dashboard() {
 
   // ── Selección múltiple ──
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectedRecordCache, setSelectedRecordCache] = useState<Map<number, Entry>>(new Map());
   const [showMultiLabel, setShowMultiLabel] = useState(false);
+
+  useEffect(() => {
+    setSelectedRecordCache(previous => {
+      const next = new Map(previous);
+      records.forEach(record => {
+        if (selectedIds.has(record.id)) next.set(record.id, record);
+      });
+      for (const id of next.keys()) {
+        if (!selectedIds.has(id)) next.delete(id);
+      }
+      return next;
+    });
+  }, [records, selectedIds]);
 
   /* =======================
      FETCH
   ======================= */
-  const fetchRecords = useCallback(async (view: InventorySubTab) => {
-    const setViewLoading = view === 'registro' ? setDailyLoading : setHistoryLoading;
-    const setViewRecords = view === 'registro' ? setDailyRecords : setHistoryRecords;
-    setViewLoading(true);
+  const fetchRecords = useCallback(async () => {
+    setDailyLoading(true);
     setRefreshing(true);
     const pageSize = 1000;
     const recordsData: unknown[] = [];
@@ -146,13 +168,9 @@ export function Dashboard() {
     queryEnd.setDate(queryEnd.getDate() + 1);
 
     for (let from = 0; ; from += pageSize) {
-      let query = supabase.from('entries').select('*');
-      if (view === 'registro') {
-        query = query
-          .gte('registered_at', queryStart.toISOString())
-          .lt('registered_at', queryEnd.toISOString());
-      }
-      const { data, error } = await query
+      const { data, error } = await supabase.from('entries').select('*')
+        .gte('registered_at', queryStart.toISOString())
+        .lt('registered_at', queryEnd.toISOString())
         .order('registered_at', { ascending: false })
         .range(from, from + pageSize - 1);
 
@@ -174,16 +192,68 @@ export function Dashboard() {
           id: toEntryId(entry.id) ?? entry.id,
         };
       });
-      setViewRecords(normalizedRecords);
-      if (view === 'historial') setHistoryLoaded(true);
+      setDailyRecords(normalizedRecords);
     }
-    setViewLoading(false);
+    setDailyLoading(false);
     setTimeout(() => setRefreshing(false), 600);
   }, []);
 
+  const fetchHistorySummary = useCallback(async (force = false) => {
+    if ((historySummaryLoaded.current && !force) || historySummaryLoading.current) return;
+    historySummaryLoading.current = true;
+    try {
+      const { summary, error } = await fetchInventoryHistorySummary();
+      if (error || !summary) {
+        setHistoryError(error ?? 'No se pudieron cargar los totales del historial.');
+        return;
+      }
+      setStats(summary);
+      historySummaryLoaded.current = true;
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'No se pudieron cargar los totales del historial.');
+    } finally {
+      historySummaryLoading.current = false;
+    }
+  }, []);
+
+  const fetchHistoryPage = useCallback(async (
+    page: number,
+    filters: { search: string; dateFrom: string; dateTo: string; availableOnly: boolean },
+  ) => {
+    const requestId = ++historyRequestId.current;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const result = await fetchInventoryHistoryPage(page, HISTORY_PAGE_SIZE, filters);
+      if (requestId !== historyRequestId.current) return;
+      if (result.error) {
+        setHistoryRecords([]);
+        setHistoryTotalCount(0);
+        setHistoryError(result.error);
+        return;
+      }
+      setHistoryRecords(result.rows);
+      setHistoryTotalCount(result.totalCount);
+      setHistoryLoaded(true);
+      const lastPage = Math.max(1, Math.ceil(result.totalCount / HISTORY_PAGE_SIZE));
+      if (page > lastPage) setHistoryPage(lastPage);
+    } catch (error) {
+      if (requestId === historyRequestId.current) {
+        setHistoryRecords([]);
+        setHistoryTotalCount(0);
+        setHistoryError(error instanceof Error ? error.message : 'No se pudo cargar el historial.');
+      }
+    } finally {
+      if (requestId === historyRequestId.current) setHistoryLoading(false);
+    }
+  }, []);
+
   const refreshInventoryRecords = async () => {
-    const refreshes = [fetchRecords('registro')];
-    if (historyLoaded || inventorySubTab === 'historial') refreshes.push(fetchRecords('historial'));
+    const refreshes: Promise<void>[] = [fetchRecords()];
+    if (historyLoaded || inventorySubTab === 'historial') {
+      refreshes.push(fetchHistoryPage(historyPage, { search: searchTerm, dateFrom, dateTo, availableOnly }));
+      refreshes.push(fetchHistorySummary(true));
+    }
     await Promise.all(refreshes);
   };
 
@@ -328,7 +398,7 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!isOperator) {
-      fetchRecords('registro');
+      fetchRecords();
       fetchAssignedEntries();
     }
   }, [fetchAssignedEntries, fetchRecords, isOperator]);
@@ -342,8 +412,24 @@ export function Dashboard() {
       return;
     }
     fetchAssignedEntries();
-    fetchRecords('registro');
+    fetchRecords();
   }, [isOperator, visibleMainTab, inventorySubTab, fetchAssignedEntries, fetchRecords]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedSearchTerm(searchTerm), 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (isOperator || inventorySubTab !== 'historial') return;
+    void fetchHistoryPage(historyPage, {
+      search: debouncedSearchTerm,
+      dateFrom,
+      dateTo,
+      availableOnly,
+    });
+    void fetchHistorySummary();
+  }, [isOperator, inventorySubTab, historyPage, debouncedSearchTerm, dateFrom, dateTo, availableOnly, fetchHistoryPage, fetchHistorySummary]);
 
   /* =======================
      FILTER + STATS
@@ -361,6 +447,10 @@ export function Dashboard() {
   };
 
   const filterRecords = useCallback(() => {
+    if (inventorySubTab === 'historial') {
+      setFilteredRecords(historyRecords);
+      return;
+    }
     const term = normalizeSearchText(searchTerm.trim());
     const inventoryUnavailableIds = new Set([...assignedEntryIds, ...unavailableEntryIds]);
     setFilteredRecords(records.filter((r) => {
@@ -383,7 +473,7 @@ export function Dashboard() {
 
       return searchableFields.some(field => normalizeSearchText(field).includes(term));
     }));
-  }, [records, searchTerm, availableOnly, dateFrom, dateTo, assignedEntryIds, unavailableEntryIds, historicalExitFingerprints]);
+  }, [inventorySubTab, historyRecords, records, searchTerm, availableOnly, dateFrom, dateTo, assignedEntryIds, unavailableEntryIds, historicalExitFingerprints]);
 
   const calculateStats = useCallback(() => {
     setStats({
@@ -395,11 +485,10 @@ export function Dashboard() {
 
   useEffect(() => {
     filterRecords();
-    calculateStats();
-  }, [filterRecords, calculateStats]);
+    if (inventorySubTab === 'registro') calculateStats();
+  }, [filterRecords, calculateStats, inventorySubTab]);
 
-  const historicalUnavailableIds = new Set(
-    records
+  const historicalUnavailableIds = new Set(records
       .filter(record => historicalExitFingerprints.some(exit => isBlockedByTerminalExit(record, exit)))
       .map(record => record.id),
   );
@@ -408,7 +497,11 @@ export function Dashboard() {
     .map(record => record.id));
   const handleReturned = async () => {
     setReturnRecord(null);
-    await fetchAssignedEntries();
+    const refreshes: Promise<void>[] = [fetchAssignedEntries()];
+    if (inventorySubTab === 'historial') {
+      refreshes.push(fetchHistoryPage(historyPage, { search: debouncedSearchTerm, dateFrom, dateTo, availableOnly }));
+    }
+    await Promise.all(refreshes);
     // Refrescar módulos ya visitados sin crear entradas ni reportes nuevos.
     setInventoryRevision(previous => previous + 1);
   };
@@ -507,23 +600,52 @@ export function Dashboard() {
     });
   };
 
-  const clearSelection = () => setSelectedIds(new Set());
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectedRecordCache(new Map());
+  };
 
-  const selectedRecords = filteredRecords.filter((r) => selectedIds.has(r.id));
+  const selectedRecords = [...selectedIds]
+    .map(id => selectedRecordCache.get(id))
+    .filter((record): record is Entry => Boolean(record));
 
   /* =======================
      EXPORT CSV
   ======================= */
-  const handleExportCSV = () => {
-    const exportData = filteredRecords.map((r) => ({
-      'Part Number': r.part_number,
-      'Descripción': r.description ?? '',
-      'PO': r.po ?? '',
-      'QTY': r.total_units,
-      'Cajas Totales': r.total_boxes,
-      'Unidad de Medida': r.unit_of_measure ?? '',
-      'Registrado Por': r.registered_by ?? '',
-      'Fecha de Registro': new Date(r.registered_at).toLocaleString('es-ES'),
+  const handleExportCSV = async () => {
+    let exportRecords: Entry[] = filteredRecords;
+    if (inventorySubTab === 'historial') {
+      setHistoryExporting(true);
+      exportRecords = [];
+      try {
+        const exportPageSize = 1000;
+        for (let page = 1; ; page += 1) {
+          const result = await fetchInventoryHistoryPage(page, exportPageSize, {
+            search: searchTerm,
+            dateFrom,
+            dateTo,
+            availableOnly,
+          });
+          if (result.error) throw new Error(result.error);
+          exportRecords.push(...result.rows);
+          if (result.rows.length < exportPageSize) break;
+        }
+      } catch (error) {
+        alert(error instanceof Error ? `No se pudo exportar el historial: ${error.message}` : 'No se pudo exportar el historial.');
+        setHistoryExporting(false);
+        return;
+      }
+      setHistoryExporting(false);
+    }
+    const exportData = exportRecords.map(record => ({
+      'Part Number': record.part_number,
+      'Descripción': record.description ?? '',
+      'PO': record.po ?? '',
+      'QTY': record.total_units,
+      'Cajas Totales': record.total_boxes,
+      'Unidad de Medida': record.unit_of_measure ?? '',
+      'Registrado Por': record.registered_by ?? '',
+      'Fecha de Registro': new Date(record.registered_at).toLocaleString('es-ES'),
     }));
     const csv = Papa.unparse(exportData);
     saveAs(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `inventario_${new Date().toISOString().split('T')[0]}.csv`);
@@ -535,11 +657,12 @@ export function Dashboard() {
     if (view === inventorySubTab) return;
     setInventorySubTab(view);
     setSearchTerm('');
+    setDebouncedSearchTerm('');
+    setHistoryPage(1);
     setAvailableOnly(false);
     setDateFrom('');
     setDateTo('');
     clearSelection();
-    if (view === 'historial' && !historyLoaded) fetchRecords('historial');
   };
 
   /* =======================
@@ -681,9 +804,15 @@ export function Dashboard() {
               <p className="text-xs text-gray-500">
                 {inventorySubTab === 'registro'
                   ? `Entradas registradas hoy, ${new Date().toLocaleDateString('es-MX')}. El historial completo se carga al abrir su pestaña.`
-                  : 'Historial completo de entradas. La búsqueda y las fechas filtran los registros cargados.'}
+                  : 'Historial completo. La búsqueda, las fechas y la paginación se consultan en Supabase.'}
               </p>
             </div>
+
+            {historyError && inventorySubTab === 'historial' && (
+              <div role="alert" className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                No se pudo consultar el historial: {historyError}
+              </div>
+            )}
 
             {assignedEntriesError && (
               <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -708,13 +837,13 @@ export function Dashboard() {
                 <div className="relative w-full lg:max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input type="text" placeholder="Buscar por Part Number, descripción, usuario o PO..." value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={(e) => { setSearchTerm(e.target.value); setHistoryPage(1); }}
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all bg-gray-50" />
                 </div>
                 <div className="flex gap-2.5 flex-wrap justify-start lg:justify-end">
                   <button
                     type="button"
-                    onClick={() => setAvailableOnly(prev => !prev)}
+                    onClick={() => { setAvailableOnly(prev => !prev); setHistoryPage(1); }}
                     aria-pressed={availableOnly}
                     className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-all active:scale-95 border ${
                       availableOnly
@@ -725,15 +854,24 @@ export function Dashboard() {
                     <CheckCircle2 className="h-4 w-4" />
                     Disponibles
                   </button>
-                  <button type="button" onClick={() => { fetchRecords(inventorySubTab); fetchAssignedEntries(); }}
+                  <button type="button" onClick={() => {
+                    if (inventorySubTab === 'historial') {
+                      void fetchHistoryPage(historyPage, { search: searchTerm, dateFrom, dateTo, availableOnly });
+                      void fetchHistorySummary(true);
+                    } else {
+                      void fetchRecords();
+                    }
+                    void fetchAssignedEntries();
+                  }}
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 shadow-sm transition-all active:scale-95">
                     <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                     Actualizar
                   </button>
-                  <button type="button" onClick={handleExportCSV} disabled={!filteredRecords.length}
+                  <button type="button" onClick={() => void handleExportCSV()}
+                    disabled={inventorySubTab === 'historial' ? historyTotalCount === 0 || historyExporting : !filteredRecords.length}
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 shadow-sm transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <Download className="h-4 w-4" />
-                    Descargar CSV
+                    {historyExporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    {historyExporting ? 'Exportando…' : 'Descargar CSV'}
                   </button>
                   {inventorySubTab === 'registro' && (
                     <button type="button" onClick={() => setShowForm(true)}
@@ -759,7 +897,7 @@ export function Dashboard() {
                         type="date"
                         value={dateFrom}
                         max={dateTo || undefined}
-                        onChange={(e) => setDateFrom(e.target.value)}
+                        onChange={(e) => { setDateFrom(e.target.value); setHistoryPage(1); }}
                         aria-label="Fecha inicial de registro"
                         className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
                       />
@@ -770,7 +908,7 @@ export function Dashboard() {
                         type="date"
                         value={dateTo}
                         min={dateFrom || undefined}
-                        onChange={(e) => setDateTo(e.target.value)}
+                        onChange={(e) => { setDateTo(e.target.value); setHistoryPage(1); }}
                         aria-label="Fecha final de registro"
                         className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50"
                       />
@@ -793,7 +931,14 @@ export function Dashboard() {
                 {(searchTerm || availableOnly || dateFrom || dateTo) && (
                   <button
                     type="button"
-                    onClick={() => { setSearchTerm(''); setAvailableOnly(false); setDateFrom(''); setDateTo(''); }}
+                    onClick={() => {
+                      setSearchTerm('');
+                      setDebouncedSearchTerm('');
+                      setAvailableOnly(false);
+                      setDateFrom('');
+                      setDateTo('');
+                      setHistoryPage(1);
+                    }}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 bg-white hover:bg-gray-50 transition-all md:ml-auto"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -844,15 +989,16 @@ export function Dashboard() {
                   <ClipboardList className="h-5 w-5 text-indigo-500" />
                   <h2 className="font-semibold text-gray-800 text-sm">{inventorySubTab === 'registro' ? 'Registros de Inventario' : 'Historial de entradas'}</h2>
                 </div>
-                {filteredRecords.length > 0 && (
+                {(inventorySubTab === 'historial' ? historyTotalCount : filteredRecords.length) > 0 && (
                   <span className="text-xs text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full font-medium">
-                    {filteredRecords.length} {filteredRecords.length === 1 ? 'registro' : 'registros'}
+                    {inventorySubTab === 'historial' ? historyTotalCount : filteredRecords.length}{' '}
+                    {(inventorySubTab === 'historial' ? historyTotalCount : filteredRecords.length) === 1 ? 'registro' : 'registros'}
                   </span>
                 )}
               </div>
               <InventoryTable
                 records={filteredRecords}
-                loading={loading || assignmentsLoading}
+                loading={loading || (inventorySubTab === 'registro' && assignmentsLoading)}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
                 onLabel={handleLabel}
@@ -864,6 +1010,13 @@ export function Dashboard() {
                 fifoNumbersByEntryId={fifoNumbersByEntryId}
                 returnableEntryIds={isManager && !assignedEntriesError ? returnableEntryIds : new Set()}
                 onReturnToInventory={setReturnRecord}
+                rowActionsDisabled={inventorySubTab === 'historial' && assignmentsLoading}
+                serverPagination={inventorySubTab === 'historial' ? {
+                  page: historyPage,
+                  pageSize: HISTORY_PAGE_SIZE,
+                  totalRecords: historyTotalCount,
+                  onPageChange: setHistoryPage,
+                } : undefined}
               />
             </div>
           </>
