@@ -581,22 +581,22 @@ export function Dashboard() {
         {/* ── Pestañas principales ── */}
         <div className="flex gap-2 mb-6 bg-white rounded-2xl p-1.5 shadow-sm border border-gray-100 w-fit">
           {canViewDashboardAndReports && (
-            <>
-              <TabBtn
-                active={visibleMainTab === 'dashboard'}
-                onClick={() => setMainTab('dashboard')}
-                icon={<LayoutDashboard className="h-4 w-4" />}
-                label="Dashboard"
-                color="indigo"
-              />
-              <TabBtn
-                active={visibleMainTab === 'inventario'}
-                onClick={() => setMainTab('inventario')}
-                icon={<ClipboardList className="h-4 w-4" />}
-                label="Inventario"
-                color="indigo"
-              />
-            </>
+            <TabBtn
+              active={visibleMainTab === 'dashboard'}
+              onClick={() => setMainTab('dashboard')}
+              icon={<LayoutDashboard className="h-4 w-4" />}
+              label="Dashboard"
+              color="indigo"
+            />
+          )}
+          {!isOperator && (
+            <TabBtn
+              active={visibleMainTab === 'inventario'}
+              onClick={() => setMainTab('inventario')}
+              icon={<ClipboardList className="h-4 w-4" />}
+              label="Inventario"
+              color="indigo"
+            />
           )}
           <TabBtn
             active={visibleMainTab === 'racks'}
