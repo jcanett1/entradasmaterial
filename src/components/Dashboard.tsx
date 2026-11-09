@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Entry, NewEntry } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,8 +9,6 @@ import { LabelModal } from './LabelModal';
 import { MultiLabelModal } from './MultiLabelModal';
 import { PartsCatalogModal } from './PartsCatalogModal';
 import { UserManagementDropdown } from './UserManagementDropdown';
-import { OperationsDashboard } from './dashboard/OperationsDashboard';
-import { LocationReports } from './dashboard/LocationReports';
 import { RacksPage } from './RacksPage';
 import { ExitsPage } from './ExitsPage';
 import { KitteoPage } from './KitteoPage';
@@ -27,6 +25,9 @@ import { saveAs } from 'file-saver';
 
 type MainTab = 'dashboard' | 'inventario' | 'racks' | 'kitteo' | 'reportes' | 'auditoria' | 'comparacion';
 type RackSubTab = 'locaciones' | 'salidas';
+
+const OperationsDashboard = lazy(() => import('./dashboard/OperationsDashboard').then(module => ({ default: module.OperationsDashboard })));
+const LocationReports = lazy(() => import('./dashboard/LocationReports').then(module => ({ default: module.LocationReports })));
 
 const toEntryId = (value: unknown): number | null => {
   if (value === null || value === undefined || value === '') return null;
@@ -79,10 +80,15 @@ const matchesHistoricalExit = (entry: Entry, exit: HistoricalExitFingerprint) =>
 export function Dashboard() {
   const { userProfile, signOut, isAdmin, userRol } = useAuth();
   const isOperator = userRol === 'operador';
+  const canViewDashboardAndReports = !isOperator && userRol !== 'supervisor';
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState<MainTab>(isOperator ? 'racks' : 'inventario');
-  const visibleMainTab: MainTab = isOperator && mainTab !== 'racks' && mainTab !== 'kitteo' ? 'racks' : mainTab;
+  const visibleMainTab: MainTab = isOperator && mainTab !== 'racks' && mainTab !== 'kitteo'
+    ? 'racks'
+    : !canViewDashboardAndReports && (mainTab === 'dashboard' || mainTab === 'reportes')
+      ? 'inventario'
+      : mainTab;
   const [rackSubTab, setRackSubTab] = useState<RackSubTab>(isOperator ? 'salidas' : 'locaciones');
   const visibleRackSubTab: RackSubTab = isOperator ? 'salidas' : rackSubTab;
   const [visitedMainTabs, setVisitedMainTabs] = useState<Set<MainTab>>(() => new Set([isOperator ? 'racks' : 'inventario']));
@@ -100,8 +106,9 @@ export function Dashboard() {
 
   useEffect(() => {
     if (isOperator && mainTab !== 'racks' && mainTab !== 'kitteo') setMainTab('racks');
+    if (!canViewDashboardAndReports && (mainTab === 'dashboard' || mainTab === 'reportes')) setMainTab('inventario');
     if (isOperator && rackSubTab !== 'salidas') setRackSubTab('salidas');
-  }, [isOperator, mainTab, rackSubTab]);
+  }, [isOperator, canViewDashboardAndReports, mainTab, rackSubTab]);
 
   // ── Inventario ──
   const [records, setRecords] = useState<Entry[]>([]);
@@ -573,7 +580,7 @@ export function Dashboard() {
 
         {/* ── Pestañas principales ── */}
         <div className="flex gap-2 mb-6 bg-white rounded-2xl p-1.5 shadow-sm border border-gray-100 w-fit">
-          {!isOperator && (
+          {canViewDashboardAndReports && (
             <>
               <TabBtn
                 active={visibleMainTab === 'dashboard'}
@@ -605,7 +612,7 @@ export function Dashboard() {
             label="Salidas KITTEO"
             color="orange"
           />
-          {!isOperator && (
+          {canViewDashboardAndReports && (
             <TabBtn
               active={visibleMainTab === 'reportes'}
               onClick={() => setMainTab('reportes')}
@@ -637,12 +644,12 @@ export function Dashboard() {
         {/* ══════════════════════════════
             PESTAÑA: DASHBOARD
         ══════════════════════════════ */}
-        {!isOperator && visitedMainTabs.has('dashboard') && <div hidden={visibleMainTab !== 'dashboard'}><OperationsDashboard /></div>}
+        {canViewDashboardAndReports && visitedMainTabs.has('dashboard') && <div hidden={visibleMainTab !== 'dashboard'}><Suspense fallback={<div role="status" className="p-5 text-sm text-gray-500">Cargando dashboard...</div>}><OperationsDashboard /></Suspense></div>}
 
         {/* ══════════════════════════════
             PESTAÑA: REPORTES
         ══════════════════════════════ */}
-        {!isOperator && visitedMainTabs.has('reportes') && <div hidden={visibleMainTab !== 'reportes'}><LocationReports /></div>}
+        {canViewDashboardAndReports && visitedMainTabs.has('reportes') && <div hidden={visibleMainTab !== 'reportes'}><Suspense fallback={<div role="status" className="p-5 text-sm text-gray-500">Cargando reportes...</div>}><LocationReports /></Suspense></div>}
 
         {isAdmin && visitedMainTabs.has('auditoria') && <div hidden={visibleMainTab !== 'auditoria'}><PhysicalAuditPage /></div>}
 
