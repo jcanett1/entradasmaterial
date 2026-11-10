@@ -40,11 +40,27 @@ export function matchesTerminalExit(entry: InventoryEntryFingerprint, exit: Term
     && (exit.boxes === null || entry.total_boxes === Number(exit.boxes));
 }
 
+/**
+ * Una salida definitiva mantiene bloqueada su entrada mientras no haya sido
+ * regresada. Cuando la salida ya está devuelta el bloqueo se retira por
+ * completo, incluso si la salida histórica no tenía entry_id y su devolución
+ * fue ambigua: las demás entradas que coincidían por parte/PO/cantidades nunca
+ * tuvieron una salida activa propia, así que conservar el bloqueo las dejaba
+ * como "Ya asignado a Salida definitiva" sin ninguna acción posible para
+ * regresarlas, porque la única salida que las relacionaba ya estaba devuelta.
+ */
 export function isBlockedByTerminalExit(entry: InventoryEntryFingerprint, exit: TerminalExit): boolean {
-  if (!matchesTerminalExit(entry, exit)) return false;
-  if (!exit.returned_at) return true;
-  // Una devolución heredada ambigua libera solo la entrada elegida. Las otras
-  // coincidencias conservan su bloqueo hasta aclarar su vínculo con la salida.
-  return exit.entry_id === null && exit.source_match_is_ambiguous === true
-    && exit.returned_entry_id !== entry.id;
+  return !exit.returned_at && matchesTerminalExit(entry, exit);
+}
+
+/**
+ * Salidas definitivas vigentes de una entrada. Son exactamente las que pueden
+ * regresarse a inventario: el bloqueo y el botón usan el mismo criterio para
+ * que nunca exista una entrada bloqueada sin forma de liberarla.
+ */
+export function activeTerminalExits(
+  entry: InventoryEntryFingerprint,
+  exits: TerminalExit[],
+): TerminalExit[] {
+  return exits.filter(exit => isBlockedByTerminalExit(entry, exit));
 }

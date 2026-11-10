@@ -7,7 +7,7 @@ import type { MultiEntry } from './InventoryForm';
 import { InventoryTable } from './InventoryTable';
 import { ReturnInventoryModal } from './ReturnInventoryModal';
 import { fetchTerminalExits } from '@/services/terminalExitService';
-import { isBlockedByTerminalExit, matchesTerminalExit } from '@/lib/terminalExitState';
+import { activeTerminalExits, isBlockedByTerminalExit } from '@/lib/terminalExitState';
 import type { TerminalExit } from '@/lib/terminalExitState';
 import { fetchInventoryHistoryPage, fetchInventoryHistorySummary } from '@/services/inventoryHistoryService';
 import { LabelModal } from './LabelModal';
@@ -489,12 +489,13 @@ export function Dashboard() {
   }, [filterRecords, calculateStats, inventorySubTab]);
 
   const historicalUnavailableIds = new Set(records
-      .filter(record => historicalExitFingerprints.some(exit => isBlockedByTerminalExit(record, exit)))
+      .filter(record => activeTerminalExits(record, historicalExitFingerprints).length > 0)
       .map(record => record.id),
   );
-  const returnableEntryIds = new Set(records
-    .filter(record => historicalExitFingerprints.some(exit => !exit.returned_at && matchesTerminalExit(record, exit)))
-    .map(record => record.id));
+  /* El bloqueo por “Salida definitiva” y el botón de regreso usan exactamente el
+     mismo criterio: mientras la entrada aparezca bloqueada siempre existirá una
+     salida vigente que la libere. */
+  const returnableEntryIds = historicalUnavailableIds;
   const handleReturned = async () => {
     setReturnRecord(null);
     const refreshes: Promise<void>[] = [fetchAssignedEntries()];
@@ -1072,7 +1073,7 @@ export function Dashboard() {
       {returnRecord && isManager && (
         <ReturnInventoryModal
           entry={returnRecord}
-          exits={historicalExitFingerprints.filter(exit => !exit.returned_at && matchesTerminalExit(returnRecord, exit))}
+          exits={activeTerminalExits(returnRecord, historicalExitFingerprints)}
           onClose={() => setReturnRecord(null)}
           onReturned={handleReturned}
         />

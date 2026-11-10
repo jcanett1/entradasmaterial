@@ -6,7 +6,7 @@ import ts from 'typescript';
 const code = ts.transpileModule(readFileSync(new URL('../src/lib/terminalExitState.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const { matchesTerminalExit, isBlockedByTerminalExit } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+const { matchesTerminalExit, isBlockedByTerminalExit, activeTerminalExits } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const entry = { id: 1, part_number: 'PART-01', po: 'PO1', total_units: 10, total_boxes: 1, registered_at: '2026-11-08T10:00:00Z' };
 const exit = { id: 10, source: 'kitteo_exits', entry_id: 1, part_number: 'PART-01', po: 'PO1', qty: 10, boxes: 1, exited_at: '2026-11-08T12:00:00Z', returned_at: null };
 
@@ -32,13 +32,40 @@ test('legacy coincide por parte, PO, cantidades y fecha válida', () => {
   assert.equal(matchesTerminalExit({ ...entry, registered_at: '2026-11-09T10:00:00Z' }, legacy), false);
   assert.equal(matchesTerminalExit({ ...entry, registered_at: 'invalid' }, legacy), false);
 });
-test('legacy ambiguo devuelto libera solo la entrada elegida', () => {
+test('legacy ambiguo vigente bloquea a las entradas candidatas', () => {
+  const legacy = { ...exit, entry_id: null, source_match_is_ambiguous: true };
+  assert.equal(isBlockedByTerminalExit(entry, legacy), true);
+  assert.equal(isBlockedByTerminalExit({ ...entry, id: 1418 }, legacy), true);
+});
+test('legacy ambiguo devuelto libera a todas las entradas que coincidían', () => {
+  // Regresar la salida histórica sin entry_id ya no deja bloqueadas de forma
+  // permanente al resto de las entradas candidatas: al no quedar una salida
+  // vigente no existía acción posible para liberarlas desde la tabla.
   const ambiguous = { ...exit, entry_id: null, returned_at: '2026-11-09T13:00:00Z', returned_entry_id: 1, source_match_is_ambiguous: true };
-  assert.equal(isBlockedByTerminalExit(entry, ambiguous), false);
-  assert.equal(isBlockedByTerminalExit({ ...entry, id: 2 }, ambiguous), true);
+  for (const candidate of [entry, { ...entry, id: 2 }, { ...entry, id: 1418 }]) {
+    assert.equal(isBlockedByTerminalExit(candidate, ambiguous), false);
+    assert.deepEqual(activeTerminalExits(candidate, [ambiguous]), []);
+  }
 });
 test('devolución legacy inequívoca no conserva el bloqueo histórico', () => {
   assert.equal(isBlockedByTerminalExit(entry, { ...exit, entry_id: null, returned_at: '2026-11-09T13:00:00Z', returned_entry_id: 1, source_match_is_ambiguous: false }), false);
+});
+test('toda entrada bloqueada por salida definitiva tiene una salida regresable', () => {
+  const rows = [
+    { ...exit, entry_id: null, returned_at: null },             // salida histórica vigente
+    { ...exit, id: 12, returned_at: '2026-11-09T13:00:00Z' },   // salida propia ya devuelta
+    { ...exit, id: 13, entry_id: 2, returned_at: null },        // salida vigente de otra entrada
+  ];
+  assert.deepEqual(activeTerminalExits(entry, rows).map(row => row.id), [10]);
+  assert.deepEqual(activeTerminalExits({ ...entry, id: 2 }, rows).map(row => row.id), [10, 13]);
+  // Otra PO no coincide con la salida histórica, así que queda libre.
+  const otherPo = { ...entry, id: 3, po: 'PO9' };
+  assert.deepEqual(activeTerminalExits(otherPo, rows), []);
+  assert.equal(rows.some(row => isBlockedByTerminalExit(otherPo, row)), false);
+  for (const candidate of [entry, { ...entry, id: 2 }, otherPo, { ...entry, id: 1418 }]) {
+    const blocked = rows.some(row => isBlockedByTerminalExit(candidate, row));
+    assert.equal(blocked, activeTerminalExits(candidate, rows).length > 0);
+  }
 });
 test('normalización conserva equivalencia con búsqueda de inventario', () => {
   assert.equal(matchesTerminalExit({ ...entry, part_number: ' part – 01 ', po: ' po1 ' }, { ...exit, entry_id: null }), true);
