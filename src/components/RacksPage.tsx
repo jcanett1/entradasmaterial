@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchTerminalExits } from '@/services/terminalExitService';
@@ -211,6 +211,13 @@ const filterLocationGroups = (groups: PartNumberGroup[], searchTerm: string): Pa
   });
 };
 
+// Orden histórico de los racks principales. Cualquier rack que exista además en
+// la tabla locations (por ejemplo TIENDAS) se anexa automáticamente a la lista.
+const MAIN_RACK_ORDER = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+
+// Color de respaldo para racks definidos en base de datos sin estilo propio.
+const DEFAULT_RACK_COLOR = { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700', badge: 'bg-gray-600' };
+
 const RACK_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   A: { bg: 'bg-blue-50',    border: 'border-blue-200',    text: 'text-blue-700',    badge: 'bg-blue-600' },
   B: { bg: 'bg-indigo-50',  border: 'border-indigo-200',  text: 'text-indigo-700',  badge: 'bg-indigo-600' },
@@ -224,6 +231,7 @@ const RACK_COLORS: Record<string, { bg: string; border: string; text: string; ba
   J: { bg: 'bg-lime-50',     border: 'border-lime-200',    text: 'text-lime-700',    badge: 'bg-lime-600' },
   K: { bg: 'bg-orange-50',  border: 'border-orange-200',  text: 'text-orange-700',  badge: 'bg-orange-600' },
   L: { bg: 'bg-sky-50',     border: 'border-sky-200',     text: 'text-sky-700',     badge: 'bg-sky-600' },
+  TIENDAS: { bg: 'bg-pink-50', border: 'border-pink-200', text: 'text-pink-700', badge: 'bg-pink-600' },
 };
 
 /* ════════════════════════════════════════════════════
@@ -265,7 +273,15 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [selectedDetailItemIds, setSelectedDetailItemIds] = useState<Set<number>>(new Set());
   const [detailSearchTerm, setDetailSearchTerm] = useState('');
 
-  const racks = ['ALL', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+  // Racks disponibles: conserva el orden histórico A-L y agrega los que existan
+  // en base de datos, para no volver a hardcodear una locación nueva.
+  const racks = useMemo(() => {
+    const fromData = Array.from(new Set(locations.map(loc => (loc.rack ?? '').trim()).filter(Boolean)));
+    const extras = fromData
+      .filter(rack => !MAIN_RACK_ORDER.includes(rack))
+      .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+    return ['ALL', ...MAIN_RACK_ORDER, ...extras];
+  }, [locations]);
 
   /* ── Fetch ── */
   const hydrateLocationBoxes = useCallback(async (sourceLocations: Location[]) => {
@@ -1268,7 +1284,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex gap-1 flex-wrap">
           {racks.map(r => {
-            const c = r !== 'ALL' ? RACK_COLORS[r] : null;
+            const c = r !== 'ALL' ? (RACK_COLORS[r] ?? DEFAULT_RACK_COLOR) : null;
             const isActive = selectedRack === r;
             return (
               <button key={r} onClick={() => setSelectedRack(r)}
@@ -1302,10 +1318,10 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       {/* Grid de locaciones */}
       {selectedRack === 'ALL' ? (
         <div className="space-y-6">
-          {['A','B','C','D','E','F','G','H','I','J','K','L'].map(rack => {
+          {racks.filter(r => r !== 'ALL').map(rack => {
             const rackLocs = filtered.filter(l => l.rack === rack);
             if (rackLocs.length === 0) return null;
-            const c = RACK_COLORS[rack];
+            const c = RACK_COLORS[rack] ?? DEFAULT_RACK_COLOR;
             const occ = rackLocs.filter(l => (l.items?.length ?? 0) > 0).length;
             const allItems = rackLocs.flatMap(l => l.items ?? []);
             const totalQty = allItems.reduce((s, i) => s + i.qty, 0);
@@ -1342,7 +1358,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
       ) : (
         (() => {
           const rackLocs = filtered;
-          const c = RACK_COLORS[selectedRack];
+          const c = RACK_COLORS[selectedRack] ?? DEFAULT_RACK_COLOR;
           const allItems = rackLocs.flatMap(l => l.items ?? []);
           const totalQty = allItems.reduce((s, i) => s + i.qty, 0);
           const totalBoxes = allItems.reduce((s, i) => s + i.boxes, 0);
