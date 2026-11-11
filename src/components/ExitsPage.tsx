@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { allowsKitteoTransfer } from '@/lib/locationFlowPolicy';
 import {
   LogOut, Search, Loader2, Save, X, Hash, Boxes, ClipboardList,
   MapPin, RefreshCw, Calendar, User, Package, ChevronLeft, ChevronRight,
@@ -26,7 +27,8 @@ interface Exit {
 
 interface ShippingDirectRecord {
   id: number;
-  source_transfer_id: number;
+  /* NULL en salidas definitivas registradas directo desde una locación de tienda. */
+  source_transfer_id: number | null;
   part_number: string;
   description: string | null;
   qty: number;
@@ -360,7 +362,11 @@ export function ExitsPage() {
       .ilike('location_code', `%${term}%`)
       .order('location_code', { ascending: true })
       .limit(15);
-    setLocationSuggestions((data as LocationOption[]) ?? []);
+    // Las locaciones de tienda (rack TIENDAS) solo admiten salida definitiva, nunca
+    // transferencia a KITTEO, así que se descartan de las sugerencias.
+    setLocationSuggestions(
+      ((data as LocationOption[]) ?? []).filter(location => allowsKitteoTransfer(location.rack, location.location_code)),
+    );
     setShowLocDrop(true);
   }, []);
 
@@ -1388,7 +1394,9 @@ export function ExitsPage() {
                               <span className="mt-0.5 text-xs text-gray-400">{new Date(record.exited_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-3 font-mono text-xs text-gray-500">#{record.source_transfer_id}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-500">
+                            {record.source_transfer_id === null ? 'Directo' : `#${record.source_transfer_id}`}
+                          </td>
                           <td className="px-4 py-3 text-center">
                             {record.reviewed_at ? (
                               <span

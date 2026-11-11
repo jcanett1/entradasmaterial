@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchTerminalExits } from '@/services/terminalExitService';
 import { isBlockedByTerminalExit } from '@/lib/terminalExitState';
+import { allowsFinalExit, allowsKitteoTransfer, getStoreLabel } from '@/lib/locationFlowPolicy';
 import {
   MapPin, Package, CheckCircle2, Search, Loader2, X, Save,
   RefreshCw, LogOut, Unlock, Hash, Boxes, ClipboardList, Calendar,
@@ -25,6 +26,19 @@ interface LocationItem {
   fifo_number: number | null;
   assigned_at: string;
 }
+
+/* Fila tal como se guarda en location_items; boxes es derivado y no es columna. */
+type AssignmentRow = {
+  id: number;
+  location_id: number;
+  location_code: string;
+  entry_id: number | null;
+  part_number: string;
+  po: string | null;
+  qty: number;
+  fifo_number: number | null;
+  assigned_at: string;
+};
 
 type SupabaseLocationItemRow = Omit<LocationItem, 'boxes'> & {
   entry?: { total_boxes: unknown } | null;
@@ -1137,6 +1151,102 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     }
   };
 
+  /* ── Salida definitiva (racks de tienda) ──
+     Retira la partida de la locación y la registra directo en shipping_direct,
+     sin crear fila en transferes: esas locaciones nunca van a transferencia ni
+     a KITTEO. Si el alta de la salida falla, se restauran las filas retiradas,
+     porque el historial registrado no se puede borrar (trigger de integridad). */
+  const selectAssignmentRows = async (loc: Location, item: LocationItem): Promise<AssignmentRow[]> => {
+    let query = supabase
+      .from('location_items')
+      .select('id, location_id, location_code, entry_id, part_number, po, qty, fifo_number, assigned_at')
+      .eq('location_id', loc.id)
+      .eq('part_number', item.part_number);
+
+    query = item.po === null ? query.is('po', null) : query.eq('po', item.po);
+    query = item.fifo_number === null ? query.is('fifo_number', null) : query.eq('fifo_number', item.fifo_number);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`No se pudo leer la asignación: ${error.message}`);
+    return (data as AssignmentRow[] | null) ?? [];
+  };
+
+  const handleFinalExitItems = async (loc: Location, items: LocationItem[]) => {
+    if (items.length === 0) return;
+    const storeLabel = getStoreLabel(loc.location_code);
+    const storeSuffix = storeLabel ? ` (${storeLabel})` : '';
+    if (!confirm(
+      `¿Registrar SALIDA DEFINITIVA de ${items.length} registro(s) de ${loc.location_code}${storeSuffix}? `
+      + 'El material sale del almacén y queda en el historial de Shipping Direct. '
+      + 'Si fue un error, usa "Liberar" para devolverlo al inventario.',
+    )) return;
+
+    setActionSaving(true);
+    try {
+      const rowsById = new Map<number, AssignmentRow>();
+      for (const item of items) {
+        const rows = await selectAssignmentRows(loc, item);
+        rows.forEach(row => rowsById.set(row.id, row));
+      }
+      const rowsToRemove = [...rowsById.values()];
+      if (rowsToRemove.length === 0) {
+        throw new Error('La asignación ya no existe en la locación. Actualiza la pantalla e intenta de nuevo.');
+      }
+
+      for (const item of items) {
+        await deleteAssignmentRows(loc, item);
+      }
+
+      const boxesById = new Map((loc.items ?? []).map(i => [i.id, i.boxes]));
+      const remaining = (loc.items ?? []).filter(i => !rowsById.has(i.id));
+      await updateLocationAfterItemsChange(loc, remaining);
+
+      const { error: exitError } = await supabase.from('shipping_direct').insert(
+        rowsToRemove.map(row => ({
+          source_transfer_id: null,
+          part_number: row.part_number,
+          description: null,
+          qty: row.qty,
+          boxes: boxesById.get(row.id) ?? null,
+          fifo_number: row.fifo_number,
+          po: row.po,
+          location_code: loc.location_code,
+          location_id: loc.id,
+          entry_id: row.entry_id,
+          destination: 'SHIPPING DIRECT',
+          registered_by: userDisplayName || null,
+          exited_at: new Date().toISOString(),
+        })),
+      );
+
+      if (exitError) {
+        const restored = rowsToRemove.map(row => ({ ...row, boxes: boxesById.get(row.id) ?? 0 }));
+        const { error: restoreError } = await supabase
+          .from('location_items')
+          .insert(rowsToRemove.map(({ id: _id, ...row }) => row));
+        if (!restoreError) {
+          await updateLocationAfterItemsChange(loc, [...remaining, ...restored]);
+        }
+        throw new Error(`No se pudo registrar la salida definitiva: ${exitError.message}`);
+      }
+
+      setSelectedDetailItemIds(new Set());
+      setDetailModal(null);
+      await fetchLocations();
+      await onAssignmentsChange?.();
+    } catch (error) {
+      console.error('Error registrando salida definitiva:', error);
+      setLocationsLoadError(error instanceof Error ? error.message : 'No se pudo registrar la salida definitiva.');
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleFinalExitSelected = () => {
+    if (!detailModal) return;
+    void handleFinalExitItems(detailModal, getUniqueSelectedAssignments(getSelectedDetailItems(detailModal)));
+  };
+
   const handleReleaseSelected = async () => {
     if (!detailModal) return;
     const selectedItems = getSelectedDetailItems(detailModal);
@@ -1595,6 +1705,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                     onToggleItem={toggleDetailItemSelection}
                     onRelease={item => handleReleaseItem(detailModal, item)}
                     onExit={item => handleExitItem(detailModal, item)}
+                    onFinalExit={item => handleFinalExitItems(detailModal, [item])}
                   />
                 ))
               )}
@@ -1629,15 +1740,21 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={handleExitSelected}
+                      onClick={allowsFinalExit(detailModal.rack, detailModal.location_code) ? handleFinalExitSelected : handleExitSelected}
                       disabled={actionSaving}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-bold text-red-600 hover:bg-red-100 transition-all disabled:opacity-50"
                     >
                       {actionSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
-                      Transferencia KITTEO
+                      {allowsFinalExit(detailModal.rack, detailModal.location_code) ? 'Salida definitiva' : 'Transferencia KITTEO'}
                     </button>
                   </div>
                 </>
+              )}
+              {!allowsKitteoTransfer(detailModal.rack, detailModal.location_code) && (
+                <p className="text-center text-[10px] font-semibold text-amber-600">
+                  Locación de tienda: no genera transferencia ni KITTEO. «Liberar» devuelve el material al inventario y
+                  «Salida definitiva» lo registra en el historial de Shipping Direct.
+                </p>
               )}
               <button
                 onClick={() => { setAssignModal(detailModal); setDetailModal(null); }}
@@ -1992,7 +2109,7 @@ function LocationCell({
    GRUPO DE NÚMERO DE PARTE dentro del modal de detalle
 ════════════════════════════════════════════════════ */
 function PartNumberGroupCard({
-  group, groupIndex, loc, actionSaving, selectedItemIds, onToggleItem, onRelease, onExit,
+  group, groupIndex, loc, actionSaving, selectedItemIds, onToggleItem, onRelease, onExit, onFinalExit,
 }: {
   group: PartNumberGroup;
   groupIndex: number;
@@ -2002,6 +2119,7 @@ function PartNumberGroupCard({
   onToggleItem: (itemId: number) => void;
   onRelease: (item: LocationItem) => void;
   onExit: (item: LocationItem) => void;
+  onFinalExit: (item: LocationItem) => void;
 }) {
   const [expanded, setExpanded] = useState(group.count === 1);
   const colors = [
@@ -2071,6 +2189,7 @@ function PartNumberGroupCard({
               onToggle={() => onToggleItem(item.id)}
               onRelease={() => onRelease(item)}
               onExit={() => onExit(item)}
+              onFinalExit={() => onFinalExit(item)}
             />
           ))}
         </div>
@@ -2083,7 +2202,7 @@ function PartNumberGroupCard({
    TARJETA DE ITEM dentro del modal de detalle
 ════════════════════════════════════════════════════ */
 function ItemCard({
-  item, index, loc, actionSaving, selected, onToggle, onRelease, onExit,
+  item, index, loc, actionSaving, selected, onToggle, onRelease, onExit, onFinalExit,
 }: {
   item: LocationItem;
   index: number;
@@ -2093,6 +2212,7 @@ function ItemCard({
   onToggle: () => void;
   onRelease: () => void;
   onExit: () => void;
+  onFinalExit: () => void;
 }) {
   const colors = [
     { bg: 'bg-indigo-50', border: 'border-indigo-200', text: 'text-indigo-800', badge: 'bg-indigo-600' },
@@ -2191,11 +2311,11 @@ function ItemCard({
           Liberar
         </button>
         <button
-          onClick={onExit}
+          onClick={allowsFinalExit(loc.rack, loc.location_code) ? onFinalExit : onExit}
           disabled={actionSaving}
           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-all disabled:opacity-50">
           {actionSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
-          Transferencia Kitteo
+          {allowsFinalExit(loc.rack, loc.location_code) ? 'Salida definitiva' : 'Transferencia Kitteo'}
         </button>
       </div>
     </div>
