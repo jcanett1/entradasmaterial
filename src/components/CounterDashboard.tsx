@@ -1,14 +1,9 @@
-import { useState } from 'react';
-import { Boxes, ClipboardCheck, LogOut, Package } from 'lucide-react';
+import { ClipboardCheck, LogOut, Package } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { KitteoPage } from '@/components/KitteoPage';
 import { PhysicalAuditPage } from '@/components/PhysicalAuditPage';
-
-type CounterView = 'auditoria' | 'kitteo';
 
 export function CounterDashboard() {
   const { userProfile, signOut } = useAuth();
-  const [activeView, setActiveView] = useState<CounterView>('auditoria');
   const userName = userProfile?.nombre_completo || userProfile?.email || 'Contador';
 
   return (
@@ -38,31 +33,17 @@ export function CounterDashboard() {
       <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 sm:py-8">
         <section className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm sm:p-4">
           <nav aria-label="Secciones de contador" className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              aria-pressed={activeView === 'auditoria'}
-              onClick={() => setActiveView('auditoria')}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeView === 'auditoria' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-gray-50 text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'}`}
+            <div
+              aria-current="page"
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm"
             >
               <ClipboardCheck className="h-4 w-4" />
               Auditoría física
-            </button>
-            <button
-              type="button"
-              aria-pressed={activeView === 'kitteo'}
-              onClick={() => setActiveView('kitteo')}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeView === 'kitteo' ? 'bg-orange-600 text-white shadow-sm' : 'bg-gray-50 text-gray-600 hover:bg-orange-50 hover:text-orange-700'}`}
-            >
-              <Boxes className="h-4 w-4" />
-              KITTEO
-            </button>
+            </div>
           </nav>
-          <p className="mt-3 px-1 text-xs leading-5 text-gray-500">
-            En KITTEO puedes cambiar una locación ocupada a disponible para agregar otro número de parte; las partes actuales se conservan y al guardar la nueva, vuelve a ocupada. También puedes registrar salidas definitivas. El alta de nuevos números en el catálogo maestro permanece restringida a los perfiles autorizados.
-          </p>
         </section>
 
-        {activeView === 'auditoria' ? <PhysicalAuditPage counterOnly /> : <KitteoPage />}
+        <PhysicalAuditPage counterOnly />
       </main>
     </div>
   );
