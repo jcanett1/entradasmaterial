@@ -248,6 +248,12 @@ export function KitteoPage() {
   const [bulkSearch, setBulkSearch] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const [showPartsCatalog, setShowPartsCatalog] = useState(false);
+  const [createKitteoLocationOpen, setCreateKitteoLocationOpen] = useState(false);
+  const [newKitteoLocationRack, setNewKitteoLocationRack] = useState('');
+  const [newKitteoLocationCode, setNewKitteoLocationCode] = useState('');
+  const [newKitteoLocationDescription, setNewKitteoLocationDescription] = useState('');
+  const [createKitteoLocationError, setCreateKitteoLocationError] = useState<string | null>(null);
+  const [savingKitteoLocation, setSavingKitteoLocation] = useState(false);
 
   /* ── Estado historial ── */
   const [historial, setHistorial] = useState<KitteoExitWithFifo[]>([]);
@@ -418,6 +424,75 @@ export function KitteoPage() {
     setLoading(false);
     setTimeout(() => setRefreshing(false), 500);
   }, []);
+
+  const openCreateKitteoLocation = () => {
+    setNewKitteoLocationRack(selectedRack === 'ALL' ? '' : selectedRack);
+    setNewKitteoLocationCode('');
+    setNewKitteoLocationDescription('');
+    setCreateKitteoLocationError(null);
+    setCreateKitteoLocationOpen(true);
+  };
+
+  const handleCreateKitteoLocation = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const rack = newKitteoLocationRack.trim();
+    const locationCode = normalizeLocationCode(newKitteoLocationCode);
+
+    if (!rack || !locationCode) {
+      setCreateKitteoLocationError('Selecciona un rack e indica el código de la locación.');
+      return;
+    }
+
+    if (locations.some(location => normalizeLocationCode(location.location_code) === locationCode)) {
+      setCreateKitteoLocationError(`El código ${locationCode} ya existe. Ingresa otro código de locación.`);
+      return;
+    }
+
+    setSavingKitteoLocation(true);
+    setCreateKitteoLocationError(null);
+
+    try {
+      const { data, error } = await supabase
+        .from('kitteo_locations')
+        .insert({
+          rack,
+          location_code: locationCode,
+          description: newKitteoLocationDescription.trim() || null,
+        })
+        .select('*')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          setCreateKitteoLocationError(`El código ${locationCode} ya existe. Ingresa otro código de locación.`);
+          return;
+        }
+        throw new Error(`No se pudo guardar la locación KITTEO: ${error.message}`);
+      }
+      if (!data) throw new Error('No se recibió la locación creada desde la base de datos.');
+
+      const createdLocation = {
+        ...(data as KitteoLocation),
+        id: toNumberOrNull(data.id) ?? data.id,
+        items: [],
+      };
+      setLocations(current => [...current, createdLocation].sort((left, right) => (
+        left.rack.localeCompare(right.rack, 'es', { numeric: true })
+        || left.location_code.localeCompare(right.location_code, 'es', { numeric: true })
+      )));
+      setSelectedRack(rack);
+      setSelectedStatus('ALL');
+      setSearchTerm('');
+      setCurrentPage(1);
+      setActiveView('locaciones');
+      setCreateKitteoLocationOpen(false);
+    } catch (error) {
+      console.error('Error creando locación KITTEO:', error);
+      setCreateKitteoLocationError(error instanceof Error ? error.message : 'No se pudo guardar la locación KITTEO.');
+    } finally {
+      setSavingKitteoLocation(false);
+    }
+  };
 
   const touchKitteoLocation = async (locationId: number, updates: Record<string, unknown> = {}) => {
     const modifier = userDisplayName || 'Usuario autenticado';
@@ -1284,6 +1359,14 @@ export function KitteoPage() {
           >
             {isAdmin ? <Hash className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
             Nuevo número de parte
+          </button>
+          <button
+            type="button"
+            onClick={openCreateKitteoLocation}
+            className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-orange-300 focus:ring-offset-2"
+          >
+            <MapPin className="h-4 w-4" />
+            Agregar locación
           </button>
           <button
             onClick={() => { setBulkExitOpen(true); setBulkSelectedIds([]); setBulkSearch(''); }}
@@ -2857,6 +2940,118 @@ export function KitteoPage() {
 
       {showPartsCatalog && isAdmin && (
         <PartsCatalogModal onClose={() => setShowPartsCatalog(false)} />
+      )}
+      {createKitteoLocationOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          onKeyDown={event => {
+            if (event.key === 'Escape' && !savingKitteoLocation) setCreateKitteoLocationOpen(false);
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-kitteo-location-title"
+            onSubmit={event => void handleCreateKitteoLocation(event)}
+            className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-orange-100 p-2">
+                  <MapPin className="h-4 w-4 text-orange-600" />
+                </div>
+                <div>
+                  <h2 id="create-kitteo-location-title" className="text-base font-bold text-gray-900">Agregar locación KITTEO</h2>
+                  <p className="mt-0.5 text-xs text-gray-500">Se guardará en las locaciones de KITTEO.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateKitteoLocationOpen(false)}
+                disabled={savingKitteoLocation}
+                aria-label="Cerrar formulario"
+                className="rounded-xl p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-6">
+              <div>
+                <label htmlFor="new-kitteo-location-rack" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-600">Rack</label>
+                <select
+                  id="new-kitteo-location-rack"
+                  name="new_kitteo_location_rack"
+                  required
+                  autoFocus
+                  value={newKitteoLocationRack}
+                  onChange={event => setNewKitteoLocationRack(event.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-2 focus:ring-orange-100"
+                >
+                  <option value="">Seleccionar rack</option>
+                  {racks.filter(rack => rack !== 'ALL').map(rack => <option key={rack} value={rack}>Rack {rack}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="new-kitteo-location-code" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-600">Código de locación</label>
+                <input
+                  id="new-kitteo-location-code"
+                  name="new_kitteo_location_code"
+                  type="text"
+                  required
+                  maxLength={20}
+                  autoComplete="off"
+                  value={newKitteoLocationCode}
+                  onChange={event => setNewKitteoLocationCode(event.target.value.toUpperCase())}
+                  placeholder="Ej. 1-A6"
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm uppercase text-gray-800 outline-none transition placeholder:normal-case placeholder:text-gray-400 focus:border-orange-400 focus:bg-white focus:ring-2 focus:ring-orange-100"
+                />
+                <p className="mt-1 text-xs text-gray-400">El código debe ser único y tener máximo 20 caracteres.</p>
+              </div>
+
+              <div>
+                <label htmlFor="new-kitteo-location-description" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-600">Descripción <span className="font-normal normal-case text-gray-400">(opcional)</span></label>
+                <textarea
+                  id="new-kitteo-location-description"
+                  name="new_kitteo_location_description"
+                  maxLength={500}
+                  rows={3}
+                  value={newKitteoLocationDescription}
+                  onChange={event => setNewKitteoLocationDescription(event.target.value)}
+                  placeholder="Agrega una referencia para esta locación..."
+                  className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-orange-400 focus:bg-white focus:ring-2 focus:ring-orange-100"
+                />
+              </div>
+
+              {createKitteoLocationError && (
+                <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+                  <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>{createKitteoLocationError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setCreateKitteoLocationOpen(false)}
+                disabled={savingKitteoLocation}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={savingKitteoLocation}
+                className="inline-flex items-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingKitteoLocation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {savingKitteoLocation ? 'Guardando...' : 'Crear locación'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
     </div>
