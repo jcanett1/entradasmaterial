@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PartsCatalogModal } from './PartsCatalogModal';
 import {
   MapPin, Package, Search, Loader2, X, Save,
-  RefreshCw, LogOut, Hash, LockKeyhole, Boxes, ClipboardList, Calendar,
+  RefreshCw, LogOut, Hash, Boxes, ClipboardList, Calendar,
   User, Archive, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, CheckCircle2, AlertCircle,
   History, ArrowRightFromLine, Trash2, ListChecks, ClipboardCheck, Tag,
@@ -435,6 +435,11 @@ export function KitteoPage() {
 
   const handleCreateKitteoLocation = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!isAdmin) {
+      setCreateKitteoLocationError('Solo los usuarios admin pueden agregar locaciones KITTEO.');
+      return;
+    }
+
     const rack = newKitteoLocationRack.trim();
     const locationCode = normalizeLocationCode(newKitteoLocationCode);
 
@@ -1349,25 +1354,27 @@ export function KitteoPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-          <button
-            type="button"
-            onClick={() => setShowPartsCatalog(true)}
-            disabled={!isAdmin}
-            title={isAdmin ? undefined : 'Solo usuarios con permisos de administrador pueden agregar números de parte.'}
-            aria-label={isAdmin ? 'Nuevo número de parte' : 'Nuevo número de parte bloqueado: solo admin'}
-            className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold shadow-sm transition-colors ${isAdmin ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400 opacity-70'}`}
-          >
-            {isAdmin ? <Hash className="h-4 w-4" /> : <LockKeyhole className="h-4 w-4" />}
-            Nuevo número de parte
-          </button>
-          <button
-            type="button"
-            onClick={openCreateKitteoLocation}
-            className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-orange-300 focus:ring-offset-2"
-          >
-            <MapPin className="h-4 w-4" />
-            Agregar locación
-          </button>
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowPartsCatalog(true)}
+                aria-label="Nuevo número de parte"
+                className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition-colors hover:bg-indigo-100"
+              >
+                <Hash className="h-4 w-4" />
+                Nuevo número de parte
+              </button>
+              <button
+                type="button"
+                onClick={openCreateKitteoLocation}
+                className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700 shadow-sm transition-colors hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-orange-300 focus:ring-offset-2"
+              >
+                <MapPin className="h-4 w-4" />
+                Agregar locación
+              </button>
+            </>
+          )}
           <button
             onClick={() => { setBulkExitOpen(true); setBulkSelectedIds([]); setBulkSearch(''); }}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white text-sm font-bold shadow-sm hover:bg-red-700 transition-all">
@@ -2941,7 +2948,7 @@ export function KitteoPage() {
       {showPartsCatalog && isAdmin && (
         <PartsCatalogModal onClose={() => setShowPartsCatalog(false)} />
       )}
-      {createKitteoLocationOpen && (
+      {isAdmin && createKitteoLocationOpen && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
           onKeyDown={event => {
