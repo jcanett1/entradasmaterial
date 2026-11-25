@@ -263,6 +263,12 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedRack, setSelectedRack] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [createLocationOpen, setCreateLocationOpen] = useState(false);
+  const [newLocationRack, setNewLocationRack] = useState('');
+  const [newLocationCode, setNewLocationCode] = useState('');
+  const [newLocationDescription, setNewLocationDescription] = useState('');
+  const [createLocationError, setCreateLocationError] = useState<string | null>(null);
+  const [savingNewLocation, setSavingNewLocation] = useState(false);
 
   // Modal asignar / agregar item
   const [assignModal, setAssignModal] = useState<Location | null>(null);
@@ -826,6 +832,68 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     const t = setTimeout(() => { if (assignModal) fetchEntries(entrySearch); }, 250);
     return () => clearTimeout(t);
   }, [entrySearch, assignModal, fetchEntries]);
+
+  const openCreateLocation = () => {
+    setNewLocationRack(selectedRack === 'ALL' ? '' : selectedRack);
+    setNewLocationCode('');
+    setNewLocationDescription('');
+    setCreateLocationError(null);
+    setCreateLocationOpen(true);
+  };
+
+  const handleCreateLocation = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const rack = newLocationRack.trim().toUpperCase();
+    const locationCode = normalizeLocationCode(newLocationCode);
+
+    if (!rack || !locationCode) {
+      setCreateLocationError('Indica el rack y el código de la locación.');
+      return;
+    }
+
+    if (locations.some(location => normalizeLocationCode(location.location_code) === locationCode)) {
+      setCreateLocationError(`El código ${locationCode} ya existe. Ingresa otro código de locación.`);
+      return;
+    }
+
+    setSavingNewLocation(true);
+    setCreateLocationError(null);
+
+    try {
+      const { data, error } = await supabase
+        .from('locations')
+        .insert({
+          rack,
+          location_code: locationCode,
+          description: newLocationDescription.trim() || null,
+        })
+        .select('*')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          setCreateLocationError(`El código ${locationCode} ya existe. Ingresa otro código de locación.`);
+          return;
+        }
+        throw new Error(`No se pudo guardar la locación: ${error.message}`);
+      }
+      if (!data) throw new Error('No se recibió la locación creada desde la base de datos.');
+
+      const createdLocation = { ...(data as Location), items: [] };
+      setLocations(current => [...current, createdLocation].sort((left, right) => (
+        left.rack.localeCompare(right.rack, 'es', { numeric: true })
+        || left.location_code.localeCompare(right.location_code, 'es', { numeric: true })
+      )));
+      setSelectedRack(rack);
+      setSearchTerm('');
+      setCreateLocationOpen(false);
+    } catch (error) {
+      console.error('Error creando locación:', error);
+      setCreateLocationError(error instanceof Error ? error.message : 'No se pudo guardar la locación.');
+    } finally {
+      setSavingNewLocation(false);
+    }
+  };
 
   /* ── Filtrar ── */
   const filtered = locations.filter((loc) => {
@@ -1413,16 +1481,23 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
             );
           })}
         </div>
-        <div className="relative ml-auto">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-          <input id="rack-location-search" name="rack_location_search" type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-            aria-label="Buscar locación, número de parte o PO" placeholder="Buscar locación, part number, PO..."
-            className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50 w-64" />
+        <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+            <input id="rack-location-search" name="rack_location_search" type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+              aria-label="Buscar locación, número de parte o PO" placeholder="Buscar locación, part number, PO..."
+              className="pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50 w-64 max-w-full" />
+          </div>
+          <button type="button" onClick={openCreateLocation}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2">
+            <Plus className="h-4 w-4" />
+            Nueva locación
+          </button>
+          <button type="button" onClick={fetchLocations} aria-label="Actualizar locaciones"
+            className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-        <button onClick={fetchLocations}
-          className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
-          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        </button>
       </div>
 
       {/* Grid de locaciones */}
@@ -1985,6 +2060,122 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
           </div>
         );
       })()}
+      {createLocationOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          onKeyDown={event => {
+            if (event.key === 'Escape' && !savingNewLocation) setCreateLocationOpen(false);
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-location-title"
+            onSubmit={event => void handleCreateLocation(event)}
+            className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-indigo-100 p-2">
+                  <MapPin className="h-4 w-4 text-indigo-600" />
+                </div>
+                <div>
+                  <h2 id="create-location-title" className="text-base font-bold text-gray-900">Crear locación</h2>
+                  <p className="mt-0.5 text-xs text-gray-500">Se guardará en la tabla de locaciones.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateLocationOpen(false)}
+                disabled={savingNewLocation}
+                aria-label="Cerrar formulario"
+                className="rounded-xl p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-6">
+              <div>
+                <label htmlFor="new-location-rack" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-600">Rack</label>
+                <input
+                  id="new-location-rack"
+                  name="new_location_rack"
+                  list="existing-rack-options"
+                  type="text"
+                  required
+                  maxLength={10}
+                  autoComplete="off"
+                  value={newLocationRack}
+                  onChange={event => setNewLocationRack(event.target.value.toUpperCase())}
+                  placeholder="Ej. A o TIENDAS"
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm uppercase text-gray-800 outline-none transition placeholder:normal-case placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                />
+                <datalist id="existing-rack-options">
+                  {racks.filter(rack => rack !== 'ALL').map(rack => <option key={rack} value={rack} />)}
+                </datalist>
+              </div>
+
+              <div>
+                <label htmlFor="new-location-code" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-600">Código de locación</label>
+                <input
+                  id="new-location-code"
+                  name="new_location_code"
+                  type="text"
+                  required
+                  maxLength={20}
+                  autoComplete="off"
+                  value={newLocationCode}
+                  onChange={event => setNewLocationCode(event.target.value.toUpperCase())}
+                  placeholder="Ej. A-49"
+                  className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm uppercase text-gray-800 outline-none transition placeholder:normal-case placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                />
+                <p className="mt-1 text-xs text-gray-400">Debe ser único y tener máximo 20 caracteres.</p>
+              </div>
+
+              <div>
+                <label htmlFor="new-location-description" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-600">Descripción <span className="font-normal normal-case text-gray-400">(opcional)</span></label>
+                <textarea
+                  id="new-location-description"
+                  name="new_location_description"
+                  maxLength={500}
+                  rows={3}
+                  value={newLocationDescription}
+                  onChange={event => setNewLocationDescription(event.target.value)}
+                  placeholder="Agrega una referencia para esta locación..."
+                  className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                />
+              </div>
+
+              {createLocationError && (
+                <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>{createLocationError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setCreateLocationOpen(false)}
+                disabled={savingNewLocation}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={savingNewLocation}
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingNewLocation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {savingNewLocation ? 'Guardando...' : 'Crear locación'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
