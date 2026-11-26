@@ -295,6 +295,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [detailSearchTerm, setDetailSearchTerm] = useState('');
   const [masterPalletListGenerating, setMasterPalletListGenerating] = useState(false);
   const [masterPalletListError, setMasterPalletListError] = useState<string | null>(null);
+  const [masterPalletListSelectionOpen, setMasterPalletListSelectionOpen] = useState(false);
+  const [selectedMasterPalletPartKeys, setSelectedMasterPalletPartKeys] = useState<Set<string>>(new Set());
 
   // Racks disponibles: conserva el orden histórico A-L y agrega los que existan
   // en base de datos, para no volver a hardcodear una locación nueva.
@@ -1412,12 +1414,12 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     await onAssignmentsChange?.();
   };
 
-  const handleGenerateMasterPalletList = async () => {
+  const handleGenerateMasterPalletList = async (selectedGroups: PartNumberGroup[]) => {
     if (!detailModal) return;
     setMasterPalletListGenerating(true);
     setMasterPalletListError(null);
     try {
-      const rows = groupLocationItems(detailModal.items ?? []).map(group => ({
+      const rows = selectedGroups.map(group => ({
         partNumber: group.partNumber,
         quantity: group.totalQty,
       }));
@@ -1426,6 +1428,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
         locationCode: detailModal.location_code,
         rows,
       });
+      setMasterPalletListSelectionOpen(false);
     } catch (error) {
       console.error('Error generando Master Pallet List:', error);
       setMasterPalletListError(error instanceof Error ? error.message : 'No se pudo generar la hoja.');
@@ -1439,6 +1442,29 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     : 0;
   const detailGroups = detailModal ? groupLocationItems(detailModal.items ?? []) : [];
   const visibleDetailGroups = filterLocationGroups(detailGroups, detailSearchTerm);
+  const selectedMasterPalletPartCount = detailGroups.filter(group => selectedMasterPalletPartKeys.has(group.key)).length;
+  const allMasterPalletPartsSelected = detailGroups.length > 0 && selectedMasterPalletPartCount === detailGroups.length;
+
+  const openMasterPalletListSelection = () => {
+    setMasterPalletListError(null);
+    setSelectedMasterPalletPartKeys(new Set(detailGroups.map(group => group.key)));
+    setMasterPalletListSelectionOpen(true);
+  };
+
+  const toggleMasterPalletPart = (partKey: string) => {
+    setSelectedMasterPalletPartKeys(current => {
+      const next = new Set(current);
+      if (next.has(partKey)) next.delete(partKey);
+      else next.add(partKey);
+      return next;
+    });
+  };
+
+  const toggleAllMasterPalletParts = () => {
+    setSelectedMasterPalletPartKeys(allMasterPalletPartsSelected
+      ? new Set()
+      : new Set(detailGroups.map(group => group.key)));
+  };
 
   if (loading) {
     return (
@@ -1820,7 +1846,7 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
               )}
               <button
                 type="button"
-                onClick={() => void handleGenerateMasterPalletList()}
+                onClick={openMasterPalletListSelection}
                 disabled={masterPalletListGenerating}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-60"
               >
@@ -1888,6 +1914,118 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {masterPalletListSelectionOpen && detailModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="master-pallet-list-selection-title"
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+              <div>
+                <h2 id="master-pallet-list-selection-title" className="text-base font-bold text-gray-900">
+                  Seleccionar números de parte
+                </h2>
+                <p className="mt-1 text-xs font-medium text-gray-500">
+                  Rack {detailModal.rack} · Locación {detailModal.location_code}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMasterPalletListSelectionOpen(false)}
+                aria-label="Cerrar selección de números de parte"
+                className="rounded-xl p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 overflow-y-auto px-6 py-4">
+              <p className="text-sm text-gray-600">
+                Por defecto se incluyen todos. Puedes quitar o agregar números de parte; las cantidades de asignaciones del mismo número se mantienen sumadas.
+              </p>
+
+              {detailGroups.length === 0 ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Esta locación no tiene números de parte asignados. Puedes generar una hoja vacía para llenarla a mano.
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                    <span className="text-sm font-bold text-indigo-800">
+                      {selectedMasterPalletPartCount} de {detailGroups.length} números seleccionados
+                    </span>
+                    <button
+                      type="button"
+                      onClick={toggleAllMasterPalletParts}
+                      className="text-xs font-bold text-indigo-700 underline hover:text-indigo-900"
+                    >
+                      {allMasterPalletPartsSelected ? 'Quitar todos' : 'Seleccionar todos'}
+                    </button>
+                  </div>
+                  <div className="grid max-h-[50vh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                    {detailGroups.map(group => (
+                      <label
+                        key={group.key}
+                        className={`flex min-w-0 cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${selectedMasterPalletPartKeys.has(group.key) ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-200 hover:bg-gray-50'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedMasterPalletPartKeys.has(group.key)}
+                          onChange={() => toggleMasterPalletPart(group.key)}
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block break-all font-mono text-xs font-bold text-gray-800">
+                            {group.partNumber}
+                          </span>
+                          <span className="mt-1 block text-[11px] text-gray-500">
+                            QTY {group.totalQty.toLocaleString()} · {group.count} {group.count === 1 ? 'asignación' : 'asignaciones'}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {masterPalletListError && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                  No se pudo generar la Master Pallet List: {masterPalletListError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-gray-100 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs font-medium text-gray-500">
+                {detailGroups.length === 0
+                  ? 'Se generará una hoja vacía.'
+                  : `${selectedMasterPalletPartCount} ${selectedMasterPalletPartCount === 1 ? 'parte seleccionada' : 'partes seleccionadas'}`}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMasterPalletListSelectionOpen(false)}
+                  className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 transition hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={masterPalletListGenerating || (detailGroups.length > 0 && selectedMasterPalletPartCount === 0)}
+                  onClick={() => void handleGenerateMasterPalletList(detailGroups.filter(group => selectedMasterPalletPartKeys.has(group.key)))}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {masterPalletListGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                  {masterPalletListGenerating ? 'Generando hoja...' : detailGroups.length === 0 ? 'Generar hoja vacía' : 'Generar PDF'}
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
       )}
 
