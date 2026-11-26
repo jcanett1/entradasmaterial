@@ -10,6 +10,7 @@ export interface MasterPalletListPdfOptions {
 }
 
 const MASTER_PALLET_FONT_SIZE = 48;
+const MASTER_PALLET_LABEL_FONT_SIZE = 26;
 
 const formatQuantity = (quantity: number) => new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
@@ -45,7 +46,7 @@ export async function createMasterPalletListPdf({ rack, locationCode, rows }: Ma
   const bodyStartY = 77;
 
   document.setFont('times', 'bold');
-  document.setFontSize(MASTER_PALLET_FONT_SIZE);
+  document.setFontSize(MASTER_PALLET_LABEL_FONT_SIZE);
   const quantityHeaderWidth = document.getTextWidth('QUANTITY');
   const rawQuantityHeaderCenter = tableLeft + partColumnWidth + (quantityColumnWidth / 2);
   const quantityHeaderCenter = Math.max(
@@ -87,6 +88,7 @@ export async function createMasterPalletListPdf({ rack, locationCode, rows }: Ma
       document.setLineWidth(0.7);
       document.line(margin, 29, pageWidth - margin, 29);
       document.setTextColor(75, 85, 99);
+      document.setFontSize(MASTER_PALLET_LABEL_FONT_SIZE);
       document.text(`RACK ${rack || '—'}`, margin, 48);
       document.text(`LOCATION ${locationCode}`, pageWidth - margin, 48, { align: 'right' });
       document.text('ITEM NUMBER', tableLeft + 3, tableHeaderY);
