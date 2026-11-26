@@ -5,3 +5,8 @@
 - [x] El filtro Disponibles conserva su comportamiento y se aplica en servidor; los estados de asignación/salida y las acciones Regresar a inventario corresponden a las filas visibles.
 - [x] Las tarjetas de totales conservan el total general del historial; Descargar CSV exporta todas las filas coincidentes, no solo la página visible.
 - [x] El Registro diario mantiene su carga y filtros actuales; los cambios no editan, duplican ni eliminan entradas.
+
+## Master Pallet List por locación
+
+- [x] Desde **Racks / Locaciones**, al abrir una ubicación seleccionada (por ejemplo, rack A, ubicación A-04), se puede generar una hoja imprimible titulada **MASTER PALLET LIST** para colocar físicamente en el rack; contiene las columnas **ITEM NUMBER** y **QUANTITY**, además de líneas de **SIGNATURE** y **LOCATION**.
+- [x] La hoja muestra una fila por número de parte distinto y su cantidad correspondiente; no reemplaza las cantidades por un total combinado de todos los números de parte de la ubicación. Si el mismo número de parte tiene varias asignaciones, solo se suman entre sí las cantidades de ese mismo número.

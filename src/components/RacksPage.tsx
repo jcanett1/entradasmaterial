@@ -4,10 +4,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { fetchTerminalExits } from '@/services/terminalExitService';
 import { isBlockedByTerminalExit } from '@/lib/terminalExitState';
 import { allowsFinalExit, allowsKitteoTransfer, getStoreLabel } from '@/lib/locationFlowPolicy';
+import { downloadMasterPalletListPdf } from '@/lib/masterPalletListPdf';
 import {
   MapPin, Package, CheckCircle2, Search, Loader2, X, Save,
   RefreshCw, LogOut, Unlock, Hash, Boxes, ClipboardList, Calendar,
-  AlertTriangle, Plus, Layers, Archive, CheckSquare, Square,
+  AlertTriangle, Plus, Layers, Archive, CheckSquare, Square, Printer,
 } from 'lucide-react';
 
 // Umbral visual de advertencia; no limita la selección ni el guardado.
@@ -292,6 +293,8 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
   const [actionSaving, setActionSaving] = useState(false);
   const [selectedDetailItemIds, setSelectedDetailItemIds] = useState<Set<number>>(new Set());
   const [detailSearchTerm, setDetailSearchTerm] = useState('');
+  const [masterPalletListGenerating, setMasterPalletListGenerating] = useState(false);
+  const [masterPalletListError, setMasterPalletListError] = useState<string | null>(null);
 
   // Racks disponibles: conserva el orden histórico A-L y agrega los que existan
   // en base de datos, para no volver a hardcodear una locación nueva.
@@ -1409,6 +1412,28 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
     await onAssignmentsChange?.();
   };
 
+  const handleGenerateMasterPalletList = async () => {
+    if (!detailModal) return;
+    setMasterPalletListGenerating(true);
+    setMasterPalletListError(null);
+    try {
+      const rows = groupLocationItems(detailModal.items ?? []).map(group => ({
+        partNumber: group.partNumber,
+        quantity: group.totalQty,
+      }));
+      await downloadMasterPalletListPdf({
+        rack: detailModal.rack,
+        locationCode: detailModal.location_code,
+        rows,
+      });
+    } catch (error) {
+      console.error('Error generando Master Pallet List:', error);
+      setMasterPalletListError(error instanceof Error ? error.message : 'No se pudo generar la hoja.');
+    } finally {
+      setMasterPalletListGenerating(false);
+    }
+  };
+
   const detailSelectedCount = detailModal
     ? (detailModal.items ?? []).filter(item => selectedDetailItemIds.has(item.id)).length
     : 0;
@@ -1788,6 +1813,20 @@ export function RacksPage({ onAssignmentsChange }: RacksPageProps) {
 
             {/* Footer acciones */}
             <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0 space-y-2">
+              {masterPalletListError && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                  No se pudo generar la Master Pallet List: {masterPalletListError}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleGenerateMasterPalletList()}
+                disabled={masterPalletListGenerating}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                {masterPalletListGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                {masterPalletListGenerating ? 'Generando hoja...' : 'Generar Master Pallet List (PDF)'}
+              </button>
               {detailSelectedCount > 0 && (
                 <>
                   <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
