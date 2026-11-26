@@ -8,5 +8,5 @@
 
 ## Master Pallet List por locación
 
-- [x] Desde **Racks / Locaciones**, al abrir una ubicación seleccionada (por ejemplo, rack A, ubicación A-04), se puede generar una hoja imprimible titulada **MASTER PALLET LIST** para colocar físicamente en el rack; contiene las columnas **ITEM NUMBER** y **QUANTITY**, además de líneas de **SIGNATURE** y **LOCATION**.
+- [x] Desde **Racks / Locaciones**, al abrir una ubicación seleccionada (por ejemplo, rack A, ubicación A-04), se puede generar una hoja imprimible titulada **MASTER PALLET LIST** para colocar físicamente en el rack; contiene las columnas **ITEM NUMBER** y **QUANTITY**, además de líneas de **SIGNATURE** y **LOCATION**. En el encabezado, **RACK A** y **LOCATION A-04** aparecen más grandes y en negritas; al pie, **LOCATION: A-04** aparece centrado.
 - [x] La hoja muestra una fila por número de parte distinto y su cantidad correspondiente; no reemplaza las cantidades por un total combinado de todos los números de parte de la ubicación. Si el mismo número de parte tiene varias asignaciones, solo se suman entre sí las cantidades de ese mismo número.

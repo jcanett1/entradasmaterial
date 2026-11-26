@@ -63,8 +63,8 @@ export async function downloadMasterPalletListPdf({ rack, locationCode, rows }: 
       document.setDrawColor(88, 88, 70);
       document.setLineWidth(0.7);
       document.line(margin, 26, pageWidth - margin, 26);
-      document.setFont('times', 'normal');
-      document.setFontSize(11);
+      document.setFont('times', 'bold');
+      document.setFontSize(14);
       document.setTextColor(75, 85, 99);
       document.text(`RACK ${rack || '—'}`, margin, 35);
       document.text(`LOCATION ${locationCode}`, pageWidth - margin, 35, { align: 'right' });
@@ -80,7 +80,9 @@ export async function downloadMasterPalletListPdf({ rack, locationCode, rows }: 
 
   const footerY = pageHeight - 22;
   const signatureX = margin;
-  const locationX = pageWidth / 2 + 5;
+  const locationStartX = pageWidth / 2;
+  const locationEndX = pageWidth - margin;
+  const locationCenterX = (locationStartX + locationEndX) / 2;
   document.setFont('times', 'normal');
   document.setFontSize(11);
   document.setTextColor(55, 65, 81);
@@ -88,10 +90,10 @@ export async function downloadMasterPalletListPdf({ rack, locationCode, rows }: 
   document.setDrawColor(88, 88, 70);
   document.setLineWidth(0.55);
   document.line(signatureX + 29, footerY + 1, pageWidth / 2 - 7, footerY + 1);
-  document.text('LOCATION:', locationX, footerY);
-  document.line(locationX + 25, footerY + 1, pageWidth - margin, footerY + 1);
   document.setFont('times', 'bold');
-  document.text(locationCode, pageWidth - margin - 1, footerY - 1, { align: 'right' });
+  document.setFontSize(13);
+  document.text(`LOCATION: ${locationCode}`, locationCenterX, footerY, { align: 'center' });
+  document.line(locationStartX + 6, footerY + 3, locationEndX - 6, footerY + 3);
 
   const safeLocation = `${rack}-${locationCode}`
     .normalize('NFKD')
